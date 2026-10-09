@@ -34,7 +34,7 @@ const test = base.extend<{}, { endpoint: string }>({
           "--db",
           path.join(temp, "control.db"),
           "--allow-unsigned-plugin",
-          "metricspanel-sdk-datasource,metricspanel-sdk-app,metricspanel-ext-provider-app,metricspanel-ext-provider-two-app,metricspanel-ext-consumer-app",
+          "metricspanel-sdk-datasource,metricspanel-sdk-app,metricspanel-ext-provider-app,metricspanel-ext-provider-two-app,metricspanel-ext-consumer-app,metricspanel-events-app",
         ],
         {
           cwd: root,
@@ -84,6 +84,298 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("SDK application events refresh real queries, notify ranges and preserve sibling panel subscriptions", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-events-e2e-"),
+  );
+  const fixture = path.join(
+    temp,
+    process.platform === "win32" ? "fixture.exe" : "fixture",
+  );
+  const archive = path.join(temp, "events.zip"),
+    run = promisify(execFile);
+  const errors: string[] = [];
+  let statsRequests = 0,
+    queries = 0;
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/stats") statsRequests++;
+    if (path === "/api/ds/query") queries++;
+  });
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-extension-events", archive], {
+      windowsHide: true,
+    });
+    const repeatedArchive = path.join(temp, "events-repeat.zip");
+    await run(fixture, ["--package-extension-events", repeatedArchive], {
+      windowsHide: true,
+    });
+    expect(
+      (await readFile(archive)).equals(await readFile(repeatedArchive)),
+    ).toBeTruthy();
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const seed = await page.request.post(endpoint + "/api/v1/ingest", {
+      data: {
+        samples: [
+          {
+            name: "events_fixture_value",
+            value: 233,
+            timestamp: Date.now() - 10000,
+          },
+        ],
+      },
+    });
+    expect(seed.ok(), await seed.text()).toBeTruthy();
+    const saved = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: {
+        dashboard: {
+          uid: "events-dashboard",
+          title: "Events dashboard",
+          panels: [1, 2].map((id) => ({
+            id,
+            title: "Events panel " + id,
+            type: "metricspanel-events-panel",
+            gridPos: { x: (id - 1) * 12, y: 0, w: 12, h: 8 },
+            targets: [
+              { refId: "A", expr: "events_fixture_value", instant: true },
+            ],
+          })),
+        },
+        overwrite: true,
+      },
+    });
+    expect(saved.ok(), await saved.text()).toBeTruthy();
+    await page.clock.install();
+    await page.goto(endpoint + "/d/events-dashboard/events");
+    const global = page.getByRole("region", {
+      name: "SDK global events",
+      exact: true,
+    });
+    const first = page.getByRole("region", {
+      name: "Events panel 1",
+      exact: true,
+    });
+    const second = page.getByRole("region", {
+      name: "Events panel 2",
+      exact: true,
+    });
+    await expect(first).toContainText("Panel value: 233");
+    await expect(second).toContainText("Panel value: 233");
+    await expect(global).toContainText("App refreshes:");
+    // Freeze only browser timers to separate explicit SDK events from the native five-second poll.
+    await page.clock.pauseAt(new Date());
+    const readCount = async (region: typeof global, prefix: string) =>
+      Number(
+        (await region.getByText(new RegExp("^" + prefix)).innerText()).match(
+          /: (\d+)/,
+        )![1],
+      );
+    const appCount = await readCount(global, "App refreshes:");
+    const firstCount = await readCount(first, "Panel refreshes:");
+    const secondCount = await readCount(second, "Panel refreshes:");
+    const timestamp = await page.evaluate(() => Date.now() - 100);
+    const changed = await page.request.post(endpoint + "/api/v1/ingest", {
+      data: {
+        samples: [{ name: "events_fixture_value", value: 234, timestamp }],
+      },
+    });
+    expect(changed.ok(), await changed.text()).toBeTruthy();
+    const beforeStats = statsRequests,
+      beforeQueries = queries;
+    await global
+      .getByRole("button", { name: "SDK global refresh", exact: true })
+      .click();
+    await expect(
+      global.getByText("App refreshes: " + (appCount + 1), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      first.getByText("Panel refreshes: " + (firstCount + 1), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      second.getByText("Panel refreshes: " + (secondCount + 1), {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(100);
+        return first.innerText();
+      })
+      .toContain("Panel value: 234");
+    await expect(second).toContainText("Panel value: 234");
+    expect(statsRequests).toBeGreaterThan(beforeStats);
+    expect(queries).toBeGreaterThan(beforeQueries);
+    await first
+      .getByRole("button", { name: "SDK panel refresh", exact: true })
+      .click();
+    await expect(
+      global.getByText("App refreshes: " + (appCount + 2), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      first.getByText("Panel refreshes: " + (firstCount + 2), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      second.getByText("Panel refreshes: " + (secondCount + 2), {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await global
+      .getByRole("button", { name: "SDK legacy refresh", exact: true })
+      .click();
+    await expect(
+      global.getByText("App refreshes: " + (appCount + 3), { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Time range", exact: true })
+      .selectOption("1h");
+    await expect(global).toContainText(
+      "App ranges: 1 / now-1h / now / 3600000",
+    );
+    await expect(first).toContainText("Panel ranges: 1");
+    await expect(second).toContainText("Panel ranges: 1");
+    await global
+      .getByRole("button", { name: "Publish custom SDK event", exact: true })
+      .click();
+    await expect(global).toContainText("Custom events: 1 / legacy: 2");
+    await global
+      .getByRole("button", { name: "Stop custom events", exact: true })
+      .click();
+    await global
+      .getByRole("button", { name: "Publish custom SDK event", exact: true })
+      .click();
+    await expect(global).toContainText("Custom events: 1 / legacy: 2");
+    await global
+      .getByRole("button", { name: "Resume custom events", exact: true })
+      .click();
+    await global
+      .getByRole("button", { name: "Publish custom SDK event", exact: true })
+      .click();
+    await expect(global).toContainText("Custom events: 2 / legacy: 4");
+    for (const [kind, role] of [
+      ["Success", "status"],
+      ["Warning", "alert"],
+      ["Error", "alert"],
+      ["Info", "status"],
+    ] as const) {
+      await global
+        .getByRole("button", {
+          name: "SDK " + kind + " notification",
+          exact: true,
+        })
+        .click();
+      const toast = page.locator(".toast");
+      await expect(toast).toHaveAttribute("role", role);
+      await expect(toast).toContainText(
+        "SDK " +
+          kind +
+          ": " +
+          (kind === "Error" ? "233 failure" : "233 detail"),
+      );
+      await expect(toast).toHaveClass("toast " + kind.toLowerCase());
+      await page.clock.runFor(250);
+      await toast
+        .getByRole("button", { name: "Dismiss notification", exact: true })
+        .click();
+      await expect(toast).toHaveCount(0);
+    }
+    const burstStats = statsRequests;
+    await global
+      .getByRole("button", { name: "SDK refresh burst", exact: true })
+      .click();
+    await expect(
+      global.getByText("App refreshes: " + (appCount + 28), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      first.getByText("Panel refreshes: " + (firstCount + 28), { exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => statsRequests - burstStats).toBeGreaterThan(0);
+    expect(statsRequests - burstStats).toBeLessThanOrEqual(2);
+    await global
+      .getByRole("button", { name: "SDK Warning notification", exact: true })
+      .click();
+    await page.clock.runFor(250);
+    await page.screenshot({
+      path: testInfo.outputPath("sdk-app-events-desktop.png"),
+      animations: "disabled",
+    });
+    // Unmount both local panel buses, then mount them again. The global bus survives.
+    await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+    await expect(first).toHaveCount(0);
+    await global
+      .getByRole("button", { name: "SDK global refresh", exact: true })
+      .click();
+    await expect(
+      global.getByText("App refreshes: " + (appCount + 29), { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Events dashboard", exact: true })
+      .click();
+    await expect(first).toContainText("Panel refreshes: 0");
+    await global
+      .getByRole("button", { name: "SDK global refresh", exact: true })
+      .click();
+    await expect(first).toContainText("Panel refreshes: 1");
+    await expect(second).toContainText("Panel refreshes: 1");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(async () => (await global.boundingBox())?.x ?? -1)
+      .toBeGreaterThanOrEqual(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await global
+      .getByRole("button", { name: "SDK Error notification", exact: true })
+      .click();
+    await page.clock.runFor(250);
+    await page.screenshot({
+      path: testInfo.outputPath("sdk-app-events-mobile.png"),
+      animations: "disabled",
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await page.clock.resume().catch(() => {});
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/events-dashboard",
+    );
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-events-app",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-events-e2e-")
+    )
+      throw new Error("Unsafe events test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
 });
 
 test("AppPlugin root, configuration pages, encrypted backend context and pinned navigation", async ({

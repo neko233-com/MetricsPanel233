@@ -11,6 +11,7 @@ import moment from "moment";
 import i18next from "i18next";
 import { registerOptionEditors } from "./option-editors";
 import { createLiveService } from "./live-runtime";
+import { installAppEvents } from "./app-events";
 import {
   installExtensionServices,
   registerAppExtensions,
@@ -304,6 +305,7 @@ async function init(): Promise<Runtime> {
     ]);
     runtime.config.theme2 = Data.createTheme({ colors: { mode: "dark" } });
     runtime.config.buildInfo.version = "13.2.3";
+    installAppEvents(runtime);
     registerOptionEditors();
     runtime.setBackendSrv(backendService());
     runtime.setGrafanaLiveSrv(createLiveService());

@@ -1,0 +1,1 @@
+{"id":"metricspanel-events-panel","name":"SDK Events Panel","type":"panel","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=13"}}

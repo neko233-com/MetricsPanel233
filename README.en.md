@@ -139,6 +139,23 @@ Agents can inspect declarations with `plugins get --id ID`; client callbacks req
 Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and mobile layout.
 See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
 
+## Grafana application events
+
+`getAppEvents()` returns the shared official SDK `EventBusSrv`: typed `publish/getStream/subscribe`, scoped buses
+and legacy `emit/on/off` work, including custom events between applications and extensions.
+Plugin `RefreshEvent` and legacy `refresh` trigger real workspace queries. Native refresh buttons and the five-second poll publish the same event.
+Concurrent refreshes are coalesced per workspace, with at most one pending follow-up while a request is running.
+Native range selection publishes `TimeRangeUpdatedEvent` with SDK DateTime values and raw `now-RANGE / now`.
+Independent panel buses relay refresh, time-range and theme events in both directions without echoing the source panel.
+Panel teardown removes only its own subscriptions; sibling panels and applications continue receiving events.
+
+`AppEvents.alertSuccess/alertWarning/alertError/alertInfo` show four native notification severities with title, detail and Error.message.
+Text is rendered without HTML and bounded to 8192 characters. Errors/warnings use `role=alert`; dismiss controls support Chinese and English.
+These are browser notifications; server alert notification delivery remains outstanding. The theme is currently dark-only.
+Native CopyPanelEvent handling, global hover/select from native charts and other app core services still need implementation.
+An independent app and two SDK panels test real query updates, duplicate prevention, unmount/remount, coalescing, notifications and mobile layout.
+See the [Grafana event subscription contract](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events).
+
 ## Grafana Live and agent subscriptions
 
 `/api/live/ws` implements the Centrifuge JSON WebSocket protocol. Channels use `ds/UID/path` or `plugin/ID/path`.

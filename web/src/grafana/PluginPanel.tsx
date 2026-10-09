@@ -22,6 +22,7 @@ import {
 import { merge } from "lodash";
 import { BrowserRouter } from "react-router";
 import { loadPanelPlugin, setPluginVariables } from "./plugin-runtime";
+import { connectPanelEvents } from "./app-events";
 import {
   rangeMilliseconds,
   message,
@@ -123,7 +124,7 @@ export default function PluginPanel({
     return () => observer.disconnect();
   }, []);
   const eventBus = useMemo(() => new EventBusSrv(), []);
-  useEffect(() => () => eventBus.removeAllListeners(), [eventBus]);
+  useEffect(() => connectPanelEvents(eventBus), [eventBus]);
   const end = Date.now(),
     timeRange = {
       from: dateTime(end - rangeMilliseconds(range)),

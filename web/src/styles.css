@@ -1143,6 +1143,16 @@ dialog::backdrop {
   border-color: #98626e;
   color: #ffd3d8;
 }
+.toast.warning {
+  background: #342d1e;
+  border-color: #a68644;
+  color: #ffdf9b;
+}
+.toast.info {
+  background: #1f2e3b;
+  border-color: #527a9c;
+  color: #d0e8fb;
+}
 .toast span {
   overflow-wrap: anywhere;
 }

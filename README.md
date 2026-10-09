@@ -223,6 +223,23 @@ metricspanel datasources health --id remote-prometheus
 自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和手机布局。
 契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
 
+## Grafana 应用事件
+
+`getAppEvents()` 现在返回共享的官方 SDK `EventBusSrv`，支持 typed `publish/getStream/subscribe`、
+scoped bus 和旧版 `emit/on/off`，自定义事件可在应用和扩展间通信。
+插件发出 `RefreshEvent` 或旧版 `refresh` 会触发实际工作空间查询；原生刷新按钮和五秒轮询也广播该事件。
+并发刷新按工作空间合并，运行中的请求最多保留一次后续刷新。
+原生时间范围选择广播 `TimeRangeUpdatedEvent`，包含 SDK DateTime 及原始 `now-RANGE / now`。
+面板独立事件总线与应用总线双向转发 refresh、time-range 和 theme 事件，源面板不会收到重复广播；
+卸载面板只清理自己的订阅，其他面板和应用继续工作。
+
+`AppEvents.alertSuccess/alertWarning/alertError/alertInfo` 显示四种原生通知，支持标题、描述及 Error.message，
+文字按纯文本展示，最多 8192 字符。错误和警告使用 `role=alert`；关闭按钮随中文 / 英文界面切换。
+这是浏览器通知；服务端告警通知投递仍待实现。主题目前固定为深色；CopyPanelEvent 的原生复制动作、
+原生图表的全局 hover/select，以及其他应用核心服务仍需继续接入。
+独立 App 和两个 SDK 面板测试覆盖真实查询更新、重复事件隔离、卸载 / 重挂载、限流、通知及手机布局。
+参考 [Grafana 事件订阅契约](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events)。
+
 ## Grafana Live 与 Agent 实时订阅
 
 `/api/live/ws` 提供 Centrifuge JSON WebSocket 协议。数据源通道为 `ds/UID/path`，插件通道为 `plugin/ID/path`。

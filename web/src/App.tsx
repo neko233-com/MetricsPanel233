@@ -13,6 +13,9 @@ import {
   Bell,
   ChartNoAxesColumn,
   CircleCheck,
+  CircleAlert,
+  Info,
+  TriangleAlert,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -41,6 +44,12 @@ import { AgentCLI } from "./features/AgentCLI";
 import { TemplateView } from "./features/TemplateView";
 import { Alerts } from "./features/Alerts";
 import { Plugins } from "./features/Plugins";
+import {
+  connectAppEvents,
+  refreshWorkspace,
+  updateWorkspaceTimeRange,
+  type NoticeSeverity,
+} from "./grafana/app-events";
 const AppPluginView = lazy(() => import("./grafana/AppPluginView"));
 const ExtensionHost = lazy(() => import("./grafana/ExtensionHost"));
 type View =
@@ -108,10 +117,11 @@ export default function App() {
     [connectionError, setConnectionError] = useState(""),
     [notice, setNotice] = useState<{
       text: string;
-      error: boolean;
+      severity: NoticeSeverity;
     } | null>(null);
   const notify = useCallback(
-    (text: string, error = false) => setNotice({ text, error }),
+    (text: string, error = false) =>
+      setNotice({ text, severity: error ? "error" : "success" }),
     [],
   );
   const load = useCallback(async () => {
@@ -170,16 +180,31 @@ export default function App() {
       } else setConnectionError(message(e));
     }
   }, []);
+  useEffect(
+    () =>
+      connectAppEvents({
+        refresh: load,
+        notify: (text, severity) => setNotice({ text, severity }),
+      }),
+    [load],
+  );
+  const changeRange = useCallback((next: string) => {
+    setRange(next);
+    updateWorkspaceTimeRange(next);
+  }, []);
   useEffect(() => {
     void load();
     const timer = setInterval(() => {
-      if (!document.hidden) void load();
+      if (!document.hidden) refreshWorkspace();
     }, 5000);
     return () => clearInterval(timer);
   }, [load]);
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), notice.error ? 8000 : 3500);
+    const timer = setTimeout(
+      () => setNotice(null),
+      notice.severity === "error" ? 8000 : 3500,
+    );
     return () => clearTimeout(timer);
   }, [notice]);
   useEffect(() => {
@@ -358,9 +383,9 @@ export default function App() {
                   key={current.id}
                   dashboard={current}
                   range={range}
-                  onRange={setRange}
+                  onRange={changeRange}
                   tick={tick}
-                  refresh={() => void load()}
+                  refresh={refreshWorkspace}
                 />
               ) : (
                 <DashboardView
@@ -370,8 +395,8 @@ export default function App() {
                   metrics={metrics}
                   tick={tick}
                   range={range}
-                  onRange={setRange}
-                  refresh={() => void load()}
+                  onRange={changeRange}
+                  refresh={refreshWorkspace}
                   reload={load}
                   notify={notify}
                   cli={() => navigate("cli")}
@@ -426,10 +451,22 @@ export default function App() {
       </div>
       {notice && (
         <div
-          className={`toast ${notice.error ? "error" : ""}`}
-          role={notice.error ? "alert" : "status"}
+          className={`toast ${notice.severity}`}
+          role={
+            notice.severity === "error" || notice.severity === "warning"
+              ? "alert"
+              : "status"
+          }
         >
-          <CircleCheck size={18} />
+          {notice.severity === "error" ? (
+            <CircleAlert size={18} />
+          ) : notice.severity === "warning" ? (
+            <TriangleAlert size={18} />
+          ) : notice.severity === "info" ? (
+            <Info size={18} />
+          ) : (
+            <CircleCheck size={18} />
+          )}
           <span>{notice.text}</span>
           <button
             className="icon-button"

@@ -21,23 +21,29 @@ func packageExtensions(destination, mode string) error {
 	if mode == "--package-extension-provider-v2" {
 		version = "2"
 	}
+	if mode == "--package-extension-events" {
+		variant = "events"
+	}
 	file, err := os.Create(destination)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 	archive := zip.NewWriter(file)
-	for _, extension := range []string{"json", "js"} {
-		body, err := extensionFixtures.ReadFile("extensions/" + variant + "." + extension)
+	files := []struct{ name, fixture string }{
+		{"plugin.json", variant + ".json"},
+		{"module.js", variant + ".js"},
+	}
+	if variant == "events" {
+		files = append(files, struct{ name, fixture string }{"panel/plugin.json", "events-panel.json"}, struct{ name, fixture string }{"panel/module.js", "events-panel.js"})
+	}
+	for _, fileEntry := range files {
+		body, err := extensionFixtures.ReadFile("extensions/" + fileEntry.fixture)
 		if err != nil {
 			return err
 		}
 		body = []byte(strings.ReplaceAll(strings.ReplaceAll(string(body), "__PROVIDER_ID__", id), "__VERSION__", version))
-		name := "module.js"
-		if extension == "json" {
-			name = "plugin.json"
-		}
-		entry, err := archive.Create(name)
+		entry, err := archive.Create(fileEntry.name)
 		if err != nil {
 			return err
 		}

@@ -1,0 +1,1 @@
+{"id":"metricspanel-events-app","name":"SDK Events Fixture","type":"app","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=13"},"includes":[{"type":"panel","name":"SDK Events Panel"}],"extensions":{"addedComponents":[{"title":"Event observer","description":"Global SDK events","targets":["grafana/app/chrome/v1"]}]}}
