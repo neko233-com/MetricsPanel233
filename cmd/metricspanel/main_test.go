@@ -77,14 +77,46 @@ func capture(t *testing.T, args ...string) (json.RawMessage, error) {
 	require.NoError(t, err)
 	os.Stdout = w
 	defer func() { os.Stdout = old; r.Close() }()
+	type captured struct {
+		data []byte
+		err  error
+	}
+	readDone := make(chan captured, 1)
+	go func() { data, err := io.ReadAll(r); readDone <- captured{data, err} }()
 	err = run(args)
 	w.Close()
-	data, readErr := io.ReadAll(r)
-	require.NoError(t, readErr)
+	result := <-readDone
+	data := result.data
+	require.NoError(t, result.err)
 	if err == nil {
 		require.True(t, json.Valid(data), string(data))
 	}
 	return data, err
+}
+func TestAlertCLIJSONRuleLifecycle(t *testing.T) {
+	t.Setenv("METRICSPANEL_TOKEN", "")
+	s, err := store.Open(filepath.Join(t.TempDir(), "alerts.db"))
+	require.NoError(t, err)
+	defer s.DB.Close()
+	h := httptest.NewServer(server.New(s, "", 30).Handler())
+	defer h.Close()
+	file := filepath.Join(t.TempDir(), "rule.json")
+	require.NoError(t, os.WriteFile(file, []byte(`{"uid":"cli-alert","title":"Agent alert","expr":"vector(1)","condition":"nonzero"}`), 0600))
+	data, err := capture(t, "alerts", "save", "--file", file, "--server", h.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "cli-alert")
+	for _, action := range []string{"get", "evaluate", "history"} {
+		data, err = capture(t, "alerts", action, "--id", "cli-alert", "--server", h.URL)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "cli-alert")
+	}
+	data, err = capture(t, "alerts", "list", "--server", h.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "Firing")
+	_, err = capture(t, "alerts", "delete", "--id", "cli-alert", "--server", h.URL)
+	require.NoError(t, err)
+	_, err = capture(t, "alerts", "get", "--id", "cli-alert", "--server", h.URL)
+	require.Error(t, err)
 }
 func TestCLIJSONContractsAndCommands(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "db"))

@@ -1,0 +1,13 @@
+{
+  "uid": "runtime-memory",
+  "title": "Runtime memory above 1 GiB",
+  "expr": "metricspanel_memory_bytes > bool 1073741824",
+  "condition": "nonzero",
+  "interval_seconds": 30,
+  "for_seconds": 120,
+  "keep_firing_for_seconds": 60,
+  "no_data_state": "NoData",
+  "error_state": "Error",
+  "labels": { "severity": "warning" },
+  "annotations": { "summary": "MetricsPanel Go heap exceeds the configured limit." }
+}

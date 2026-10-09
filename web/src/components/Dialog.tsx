@@ -14,7 +14,11 @@ export function Dialog({
   useEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
-    dialog.querySelector<HTMLElement>("[autofocus]")?.focus();
+    dialog
+      .querySelector<HTMLElement>(
+        "[autofocus], input:not([disabled]), textarea:not([disabled]), select:not([disabled])",
+      )
+      ?.focus();
     return () => dialog.close();
   }, []);
   return (

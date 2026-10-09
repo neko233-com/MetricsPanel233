@@ -61,6 +61,7 @@ Usage: metricspanel <command> [flags]
   targets      list | add | set | delete | scrape
   dashboards   list | save | export | delete
   patterns     capture | list | get | search | delete (persistent vector analysis)
+  alerts       list | get | save | import-grafana | evaluate | history | delete
   schema       Print machine-readable command and API discovery
   version      Print version
 
@@ -87,7 +88,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -136,6 +137,57 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "alerts":
+		switch action {
+		case "list":
+			return request("GET", "/api/v1/alerts/rules", nil)
+		case "history":
+			q := url.Values{"limit": {strconv.Itoa(*limit)}}
+			if *id != "" {
+				q.Set("uid", *id)
+			}
+			return request("GET", "/api/v1/alerts/history?"+q.Encode(), nil)
+		case "get", "delete", "evaluate":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			path := "/api/v1/alerts/rules/" + url.PathEscape(*id)
+			method := "GET"
+			if action == "delete" {
+				method = "DELETE"
+			}
+			if action == "evaluate" {
+				method = "POST"
+				path += "/evaluate"
+			}
+			return request(method, path, nil)
+		case "save", "import-grafana":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			var payload any
+			if err = json.Unmarshal(data, &payload); err != nil {
+				return err
+			}
+			if action == "save" {
+				if object, ok := payload.(map[string]any); ok {
+					delete(object, "runtime")
+				}
+			}
+			path := "/api/v1/alerts/rules"
+			if action == "import-grafana" {
+				path = "/api/v1/provisioning/alert-rules"
+			}
+			method := "POST"
+			if *id != "" {
+				method = "PUT"
+				path += "/" + url.PathEscape(*id)
+			}
+			return request(method, path, payload)
+		default:
+			return errors.New("alerts requires list, get, save, import-grafana, evaluate, history or delete")
+		}
 	case "patterns":
 		switch action {
 		case "list":
@@ -445,6 +497,12 @@ func schema() any {
 	routes["GET"] = append(routes["GET"], "/api/v1/patterns", "/api/v1/patterns/{id}")
 	routes["POST"] = append(routes["POST"], "/api/v1/patterns/capture", "/api/v1/patterns/search")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/patterns/{id}")
+	result["commands"] = append(result["commands"].([]string), "alerts list", "alerts get --id UID", "alerts save --file FILE|- [--id UID] (update requires version)", "alerts import-grafana --file FILE|- [--id UID]", "alerts evaluate --id UID", "alerts history [--id UID --limit 100]", "alerts delete --id UID")
+	routes["GET"] = append(routes["GET"], "/api/v1/alerts/rules", "/api/v1/alerts/rules/{uid}", "/api/v1/alerts/history", "/prometheus/api/v1/rules", "/prometheus/api/v1/alerts", "/api/v1/provisioning/alert-rules")
+	routes["POST"] = append(routes["POST"], "/api/v1/alerts/rules", "/api/v1/alerts/rules/{uid}/evaluate", "/api/v1/provisioning/alert-rules")
+	routes["PUT"] = append(routes["PUT"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
+	routes["DELETE"] = append(routes["DELETE"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
+	result["alerting"] = map[string]any{"conditions": []string{"presence (returned samples fire, including zero)", "nonzero (boolean expressions)"}, "states": []string{"Normal", "Pending", "Firing", "Recovering", "NoData", "Error"}, "durability": "SQLite WAL control-plane state, timers and last 100000 transitions survive restarts", "limits": map[string]int{"rules": 1000, "instances_per_query": 1000, "concurrent_evaluations": 4}, "notifications": "external notification delivery is not yet implemented"}
 	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
 	return result
 }

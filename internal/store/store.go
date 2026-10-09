@@ -69,7 +69,12 @@ CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
 CREATE TABLE IF NOT EXISTS targets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, interval_seconds INTEGER NOT NULL, labels TEXT NOT NULL, enabled INTEGER NOT NULL, last_scrape INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', samples INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS patterns(id TEXT PRIMARY KEY,metric TEXT NOT NULL,labels TEXT NOT NULL,normalization TEXT NOT NULL,aggregation TEXT NOT NULL,created_at INTEGER NOT NULL,payload TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS patterns_metric ON patterns(normalization,aggregation,metric,created_at);`)
+CREATE INDEX IF NOT EXISTS patterns_metric ON patterns(normalization,aggregation,metric,created_at);
+CREATE TABLE IF NOT EXISTS alert_rules(uid TEXT PRIMARY KEY,version INTEGER NOT NULL,config TEXT NOT NULL,runtime TEXT NOT NULL,last_evaluation INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS alert_schedule(uid TEXT PRIMARY KEY REFERENCES alert_rules(uid) ON DELETE CASCADE,interval_seconds INTEGER NOT NULL,paused INTEGER NOT NULL);
+INSERT OR IGNORE INTO alert_schedule(uid,interval_seconds,paused) SELECT uid,json_extract(config,'$.interval_seconds'),json_extract(config,'$.paused') FROM alert_rules;
+CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL,timestamp INTEGER NOT NULL,payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS alert_events_uid ON alert_events(uid,id);`)
 	if err != nil {
 		db.Close()
 		return nil, err

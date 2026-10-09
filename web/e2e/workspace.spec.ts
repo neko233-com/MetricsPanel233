@@ -75,6 +75,86 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI", async ({
+  page,
+  endpoint,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(endpoint + "/#alerts");
+  await page
+    .getByRole("button", { name: "Create alert", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("textbox", { name: "Rule name", exact: true })
+    .fill("E2E runtime alert");
+  await page
+    .getByRole("textbox", { name: "PromQL condition", exact: true })
+    .fill("metricspanel_memory_bytes > bool 0");
+  await page.getByLabel("Evaluate every (s)").fill("86400");
+  await page.getByRole("button", { name: "Save rule", exact: true }).click();
+  const row = page
+    .locator(".alert-rule")
+    .filter({ has: page.locator("strong", { hasText: "E2E runtime alert" }) });
+  await expect(row).toHaveCount(1);
+  await row
+    .getByRole("button", { name: "Evaluate E2E runtime alert", exact: true })
+    .click();
+  await expect(row.locator(".alert-rule-status")).toContainText("Firing");
+  await row.locator(".alert-rule-title").click();
+  await expect(row.locator(".alert-detail")).toContainText("metricspanel");
+  await row
+    .getByRole("button", { name: "Pause E2E runtime alert", exact: true })
+    .click();
+  await expect(row.locator(".alert-rule-status")).toContainText("Paused");
+  await page.reload();
+  await expect(row.locator(".alert-rule-status")).toContainText("Paused");
+  await row
+    .getByRole("button", { name: "Edit E2E runtime alert", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "PromQL condition", exact: true })
+    .fill("metricspanel_memory_bytes < bool 0");
+  await page.getByRole("button", { name: "Save rule", exact: true }).click();
+  await expect(row.locator("code")).toContainText("< bool 0");
+  await row
+    .getByRole("button", { name: "Resume E2E runtime alert", exact: true })
+    .click();
+  await expect(
+    row.getByRole("button", {
+      name: "Evaluate E2E runtime alert",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await row
+    .getByRole("button", { name: "Evaluate E2E runtime alert", exact: true })
+    .click();
+  await expect(row.locator(".alert-rule-status")).toContainText("Normal");
+  await expect(page.locator(".alert-history")).toContainText("Firing");
+  await page
+    .getByRole("button", { name: "Switch language", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "告警", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    ),
+  ).toBe(false);
+  await row
+    .getByRole("button", { name: "删除 E2E runtime alert", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "删除", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("Persistent pattern capture, nearest windows, language switch and mobile layout", async ({
   page,
   endpoint,

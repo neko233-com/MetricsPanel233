@@ -176,6 +176,35 @@ Docker 测试追加 4 个并发写入端：SQLite 10 万样本、ClickHouse 100 
 这验证有界工作负载，不代表百万活跃序列或长时间生产负载。
 `metricspanel stats` 的 series 指仍在保留期内的序列；写入速率是过去 60 秒平均值。
 
+## 持久化告警与记录规则
+
+网页「告警」支持创建、编辑、暂停、手动执行和查看每个标签实例的状态 / 历史。
+后台每条规则独立调度，最多四条并发查询；规则、等待触发 / 恢复计时和最近 100000 条状态变化写入 SQLite WAL 控制数据库。
+无论指标使用 SQLite 还是 ClickHouse，重启应用后计时继续。修改规则会重置实例，并记录恢复事件；原生更新需要携带 GET 返回的 `version`。
+
+```sh
+metricspanel alerts save --file examples/alerts/runtime-memory.json
+metricspanel alerts list
+metricspanel alerts evaluate --id runtime-memory
+metricspanel alerts history --id runtime-memory --limit 100
+metricspanel alerts get --id runtime-memory
+metricspanel alerts get --id runtime-memory > rule.json
+metricspanel alerts save --id runtime-memory --file rule.json
+metricspanel alerts import-grafana --file grafana-rule.json
+```
+
+`condition=presence` 使用 Prometheus 语义：返回的时序触发，包括值为 0 的时序。
+`condition=nonzero` 使用布尔值，网页默认使用这种方式：`up == bool 0`、`memory_bytes > bool 1073741824`。
+状态包括 Normal / Pending / Firing / Recovering / NoData / Error，无数据与错误策略可选择正常、触发、专用状态或保持上次状态。
+Prometheus 兼容 `/prometheus/api/v1/rules` 与 `/alerts` 可发现规则及活动实例。
+记录规则指定 `record` 指标名，将 PromQL 结果写回当前指标数据库，可供模板查询。
+
+Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET 可用。
+支持映射到 `metricspanel` 的 Prometheus instant / range 查询，以及严格 reduce（last/min/max/mean/sum/count）、threshold、单查询引用 math、单个 classic condition。
+原始数据查询图保留用于导出；未知数据源、节点、循环依赖、通知设置和恢复阈值明确拒绝。
+通过原生 API 修改表达式 / 判断方式 / 记录指标后，旧 Grafana 查询图会清除；CLI 可直接读取并更新含 `runtime` 的 GET 结果。
+这部分尚未完全覆盖 Grafana 告警语义：多查询引用 / 跨标签集合 math 联合、复合 classic 条件、规则组原子更新、注解模板、外部通知 / Alertmanager 尚待实现。
+
 ## 验证
 
 ```sh

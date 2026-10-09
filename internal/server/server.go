@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
@@ -32,6 +33,8 @@ import (
 type Server struct {
 	Store         *store.Store
 	Collector     *collector.Collector
+	Alerts        *alerting.Engine
+	Prometheus    *promcompat.API
 	Token         string
 	RetentionDays int
 	Started       time.Time
@@ -39,7 +42,8 @@ type Server struct {
 }
 
 func New(s *store.Store, token string, retention int) *Server {
-	return &Server{Store: s, Collector: collector.New(s), Token: token, RetentionDays: retention, Started: time.Now()}
+	prom := promcompat.New(s)
+	return &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Token: token, RetentionDays: retention, Started: time.Now()}
 }
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -92,10 +96,14 @@ func (s *Server) protect(next http.Handler) http.Handler {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	api := http.NewServeMux()
-	prom := promcompat.New(s.Store)
-	s.grafanaRoutes(api, prom.Handler())
+	prom := s.Prometheus
+	promRoutes := http.NewServeMux()
+	s.promAlertRoutes(promRoutes)
+	promRoutes.Handle("/", prom.Handler())
+	s.grafanaRoutes(api, promRoutes)
 	s.patternRoutes(api)
-	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", prom.Handler())))
+	s.alertRoutes(api)
+	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {
 			fail(w, 503, err)
@@ -400,6 +408,9 @@ func (s *Server) RunBackground(ctx context.Context) {
 	collectorDone := make(chan struct{})
 	go func() { s.Collector.Run(ctx); close(collectorDone) }()
 	defer func() { <-collectorDone }()
+	alertsDone := make(chan struct{})
+	go func() { s.Alerts.Run(ctx); close(alertsDone) }()
+	defer func() { <-alertsDone }()
 	sample := time.NewTicker(5 * time.Second)
 	defer sample.Stop()
 	prune := time.NewTicker(time.Hour)

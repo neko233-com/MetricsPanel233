@@ -3,6 +3,7 @@ import { getLocale, setLocale, type Locale } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
+  Bell,
   ChartNoAxesColumn,
   CircleCheck,
   LayoutDashboard,
@@ -30,18 +31,21 @@ import { Explore } from "./features/Explore";
 import { Collectors } from "./features/Collectors";
 import { AgentCLI } from "./features/AgentCLI";
 import { TemplateView } from "./features/TemplateView";
+import { Alerts } from "./features/Alerts";
 type View =
   | "overview"
   | "dashboards"
   | "dashboard"
   | "explore"
   | "collectors"
+  | "alerts"
   | "cli";
 const navigation = [
   { id: "overview", name: "Overview", icon: LayoutDashboard },
   { id: "dashboards", name: "Dashboards", icon: ChartNoAxesColumn },
   { id: "explore", name: "Explore", icon: Search },
   { id: "collectors", name: "Collectors", icon: Server },
+  { id: "alerts", name: "Alerts", icon: Bell },
   { id: "cli", name: "Agent CLI", icon: Terminal },
 ] as const;
 export default function App() {
@@ -61,9 +65,11 @@ export default function App() {
     </button>
   );
   const [view, setView] = useState<View>(() => {
-    const hash=location.hash.slice(1);
-    return navigation.some((n)=>n.id===hash) ? hash as View : "overview";
-  }),
+      const hash = location.hash.slice(1);
+      return navigation.some((n) => n.id === hash)
+        ? (hash as View)
+        : "overview";
+    }),
     [dashboardID, setDashboardID] = useState("system"),
     [sidebarOpen, setSidebarOpen] = useState(false);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]),
@@ -125,8 +131,13 @@ export default function App() {
     if (routeLoaded.current || !dashboards.length) return;
     routeLoaded.current = true;
     const uid = /^\/d\/([^/]+)/.exec(location.pathname)?.[1];
-    const dashboard = uid ? dashboards.find((d) => dashboardUID(d) === decodeURIComponent(uid)) : undefined;
-    if (dashboard) { setDashboardID(dashboard.id); setView("dashboard"); }
+    const dashboard = uid
+      ? dashboards.find((d) => dashboardUID(d) === decodeURIComponent(uid))
+      : undefined;
+    if (dashboard) {
+      setDashboardID(dashboard.id);
+      setView("dashboard");
+    }
   }, [dashboards]);
   function navigate(next: View) {
     setView(next);
@@ -308,7 +319,11 @@ export default function App() {
               notify={notify}
               open={(d) => {
                 setDashboardID(d.id);
-                history.replaceState({}, "", `/d/${encodeURIComponent(dashboardUID(d))}/${encodeURIComponent(d.name)}`);
+                history.replaceState(
+                  {},
+                  "",
+                  `/d/${encodeURIComponent(dashboardUID(d))}/${encodeURIComponent(d.name)}`,
+                );
                 navigate("dashboard");
               }}
             />
@@ -318,6 +333,9 @@ export default function App() {
             <Collectors targets={targets} reload={load} notify={notify} />
           )}
           {view === "cli" && <AgentCLI />}
+          {view === "alerts" && (
+            <Alerts tick={tick} metrics={metrics} notify={notify} />
+          )}
         </main>
       </div>
       {notice && (

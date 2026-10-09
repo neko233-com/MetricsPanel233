@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Evaluate alert rules",
+    detail:
+      "Persist rules, evaluate a condition, and inspect state changes as JSON.",
+    command:
+      "metricspanel alerts save --file examples/alerts/runtime-memory.json\nmetricspanel alerts evaluate --id runtime-memory\nmetricspanel alerts history --id runtime-memory --limit 100",
+  },
+  {
     title: "Compare metric patterns",
     detail:
       "Save a time window and search persistent vectors. Explicit start/end make repeat capture reproducible.",

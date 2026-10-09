@@ -370,12 +370,25 @@ func TestDockerEndToEnd(t *testing.T) {
 			}
 			e.loadAndAnalyze(address, batches)
 			patternID := e.capturePatternFixture(address)
+			alert := model.AlertRule{UID: "docker-alert", Title: "MySQL is online", Expr: "mysql_up == bool 1", Condition: "nonzero", IntervalSeconds: 86400, ForSeconds: 30}
+			data := e.must(address, "POST", "/api/v1/alerts/rules", alert)
+			data = e.must(address, "POST", "/api/v1/alerts/rules/docker-alert/evaluate", nil)
+			var before model.AlertRuleView
+			require.NoError(t, json.Unmarshal(data, &before))
+			require.NotEmpty(t, before.Runtime.Instances)
+			assert.Equal(t, "Pending", before.Runtime.Instances[0].State)
+			record := model.AlertRule{UID: "docker-record", Title: "MySQL availability recording", Expr: "mysql_up", Record: "mysql:availability", IntervalSeconds: 86400}
+			e.must(address, "POST", "/api/v1/alerts/rules", record)
+			e.must(address, "POST", "/api/v1/alerts/rules/docker-record/evaluate", nil)
+			v, ok := e.value(address, "mysql:availability")
+			require.True(t, ok)
+			assert.Equal(t, 1.0, v)
 			benchmarkID := ""
 			if backend.service == "clickhouse-app" {
 				benchmarkID = e.verifyHNSW()
 			}
 			params := url.Values{"query": {"sum(rate(business_http_requests_total[1m]))"}, "start": {strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)}, "end": {strconv.FormatInt(time.Now().Unix(), 10)}, "step": {"5"}}
-			data := e.must(address, "GET", "/prometheus/api/v1/query_range?"+params.Encode(), nil)
+			data = e.must(address, "GET", "/prometheus/api/v1/query_range?"+params.Encode(), nil)
 			assert.Contains(t, string(data), `"resultType":"matrix"`)
 			data = e.must(address, "GET", "/prometheus/api/v1/query?query=mysql_up", nil)
 			assert.Contains(t, string(data), `"1"`)
@@ -390,6 +403,16 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, err)
 			address = e.address(backend.service)
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
+			data = e.must(address, "GET", "/api/v1/alerts/rules/docker-alert", nil)
+			var after model.AlertRuleView
+			require.NoError(t, json.Unmarshal(data, &after))
+			require.Len(t, after.Runtime.Instances, len(before.Runtime.Instances))
+			assert.Equal(t, before.Runtime.Instances[0].ActiveAt, after.Runtime.Instances[0].ActiveAt, "restart reset pending timer")
+			assert.Equal(t, before.Runtime.LastEvaluation, after.Runtime.LastEvaluation)
+			assert.Contains(t, string(e.must(address, "GET", "/api/v1/alerts/history?uid=docker-alert", nil)), `"to":"Pending"`)
+			v, ok = e.value(address, "mysql:availability")
+			require.True(t, ok, "recording rule sample did not survive app restart")
+			assert.Equal(t, 1.0, v)
 			data = e.must(address, "GET", "/api/v1/targets", nil)
 			assert.Contains(t, string(data), "mysql-exporter")
 			data = e.must(address, "GET", "/api/v1/dashboards", nil)

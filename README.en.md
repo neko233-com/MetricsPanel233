@@ -98,6 +98,30 @@ ClickHouse 26.8 uses persistent HNSW with candidate rescoring. Selective filters
 `--exact` disables approximate indexing. SQLite uses exact top-K, capped at 50,000 filtered vectors per search.
 Saved vectors remain until explicitly deleted, independently of metric TTL. Both vector stores and the ClickHouse index survive tested restarts.
 
+## Durable alerts and recording rules
+
+The Alerts page creates, edits, pauses and evaluates PromQL rules, with individual label-instance states and recent history.
+The scheduler executes at most four queries concurrently. Configuration, pending/recovery timers and the latest 100,000 transitions persist in the SQLite WAL control database for both metric backends.
+API updates require the returned `version`; edits reset instances and record a resolution transition.
+
+```sh
+metricspanel alerts save --file examples/alerts/runtime-memory.json
+metricspanel alerts evaluate --id runtime-memory
+metricspanel alerts history --id runtime-memory --limit 100
+metricspanel alerts import-grafana --file grafana-rule.json
+```
+
+`condition=presence` follows Prometheus semantics: returned samples fire, including zero-valued samples.
+`condition=nonzero` evaluates booleans; the UI uses expressions such as `up == bool 0`.
+Rules support pending and keep-firing periods, no-data/error policies and durable per-instance history.
+Prometheus-compatible `/prometheus/api/v1/rules` and `/alerts` expose the rules and active instances.
+Set `record` to a metric name to store query results as a recording rule.
+
+Grafana provisioning rule CRUD and group GET accept local Prometheus queries, strict reduce, threshold, single-reference math and one classic condition.
+Map datasource UIDs to `metricspanel` before import. Unknown nodes, query cycles, notification settings and recovery thresholds are rejected.
+The original query graph is preserved for export. Full Grafana alerting compatibility is still incomplete: multiple-reference math and label-subset joins, compound classic conditions, atomic group updates, annotation templates, external notifications and Alertmanager remain outstanding.
+Native expression/condition/record changes discard an obsolete Grafana graph. The CLI accepts GET output directly when updating with `alerts save --id UID --file rule.json`, retaining its optimistic-concurrency version.
+
 ## Automated verification
 
 ```sh
