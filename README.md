@@ -196,6 +196,7 @@ metricspanel datasources health --id remote-prometheus
 `/api/live/ws` 提供 Centrifuge JSON WebSocket 协议。数据源通道为 `ds/UID/path`，插件通道为 `plugin/ID/path`。
 原始插件可通过 `getGrafanaLiveSrv()` 订阅；`DataSourceWithBackend` 的 DataFrame `meta.channel` 会自动接入实时流。
 浏览器使用官方 `StreamingDataFrame` 保存有界缓冲、执行已有转换和单位格式化；实时面板持续更新，普通查询保留定时刷新。
+混合面板按响应 key 合并数据；只重查普通查询，保留正在运行的实时订阅。
 同一通道共用一个后端 SDK RunStream；同页面共用一个 WebSocket，最后一个订阅离开即取消。
 更新数据源会取消旧配置并通知浏览器重新订阅；删除数据源、停用插件和关闭服务器会终止流。
 

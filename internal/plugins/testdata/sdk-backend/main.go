@@ -17,7 +17,7 @@ import (
 
 type fixture struct{}
 
-var liveStarted, liveActive, liveCancelled atomic.Int64
+var liveStarted, liveActive, liveCancelled, staticQueries atomic.Int64
 
 func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	out := backend.NewQueryDataResponse()
@@ -42,6 +42,8 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 		frame.RefID = q.RefID
 		if input.Live {
 			frame.Meta = &data.FrameMeta{Channel: "ds/" + settings.UID + "/counter"}
+		} else {
+			staticQueries.Add(1)
 		}
 		out.Responses[q.RefID] = backend.DataResponse{Frames: data.Frames{frame}}
 	}
@@ -56,7 +58,7 @@ func (fixture) CheckHealth(ctx context.Context, r *backend.CheckHealthRequest) (
 func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
 	body, _ := json.Marshal(map[string]any{"path": r.Path, "url": r.URL, "method": r.Method, "pid": os.Getpid(), "uid": r.PluginContext.DataSourceInstanceSettings.UID})
 	if r.Path == "stream-stats" {
-		body, _ = json.Marshal(map[string]int64{"started": liveStarted.Load(), "active": liveActive.Load(), "cancelled": liveCancelled.Load()})
+		body, _ = json.Marshal(map[string]int64{"started": liveStarted.Load(), "active": liveActive.Load(), "cancelled": liveCancelled.Load(), "static_queries": staticQueries.Load()})
 	}
 	return sender.Send(&backend.CallResourceResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
 }

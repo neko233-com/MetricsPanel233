@@ -177,6 +177,8 @@ export function createLiveService(): GrafanaLiveSrv {
           ? StreamingDataFrame.fromDataFrameJSON(options.frame, buffer)
           : StreamingDataFrame.empty(buffer);
         const refId = options.frame?.schema?.refId;
+        const key =
+          options.key || `${toLiveChannelId(options.addr)}#${refId || ""}`;
         const emit = () =>
           subscriber.next({
             data: [
@@ -191,6 +193,7 @@ export function createLiveService(): GrafanaLiveSrv {
                 : frame,
             ],
             state: LoadingState.Streaming,
+            key,
           });
         if (frame.length) {
           frame.refId = refId;

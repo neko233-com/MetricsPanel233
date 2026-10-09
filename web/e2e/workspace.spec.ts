@@ -184,6 +184,18 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
               type: "metricspanel-sdk-datasource",
             },
           },
+          ...(id === 1
+            ? [
+                {
+                  refId: "B",
+                  value: 777,
+                  datasource: {
+                    uid: "frontend-sdk",
+                    type: "metricspanel-sdk-datasource",
+                  },
+                },
+              ]
+            : []),
         ],
         options: { reduceOptions: { calcs: ["lastNotNull"], values: false } },
         fieldConfig: { defaults: { decimals: 0 }, overrides: [] },
@@ -201,9 +213,10 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
       ).json();
     const channels = async () =>
       (await page.request.get(endpoint + "/api/live/channels")).json();
+    const staticQueriesBeforeLive = (await streamStats()).static_queries;
     await page.goto(endpoint + "/d/frontend-live-dashboard/live");
     const liveValues = page.locator(".grafana-value strong");
-    await expect(liveValues).toHaveCount(2);
+    await expect(liveValues).toHaveCount(3);
     // Pass the app's five-second refresh boundary without restarting RunStream.
     await expect
       .poll(
@@ -229,6 +242,14 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
       })
       .toEqual([1, 1, 1]);
     expect(await streamStats()).toMatchObject({ started: 1, active: 1 });
+    expect((await streamStats()).static_queries).toBeGreaterThanOrEqual(
+      staticQueriesBeforeLive + 2,
+    );
+    await expect(
+      page
+        .getByRole("region", { name: "Live counter 1", exact: true })
+        .getByText("777", { exact: true }),
+    ).toBeVisible();
     // A changed datasource cancels the old context and the browser resubscribes.
     const updated = await page.request.put(
       endpoint + "/api/datasources/uid/frontend-sdk",

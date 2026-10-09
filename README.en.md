@@ -112,6 +112,7 @@ The CLI schema reports implemented and pending capabilities. Full compatibility 
 Plugins can call `getGrafanaLiveSrv()`; `DataSourceWithBackend` automatically connects frames with `meta.channel`.
 The browser uses the official `StreamingDataFrame`, bounded buffers and the existing transforms/field formatting.
 Streaming queries continue through dashboard refreshes; ordinary queries still refresh periodically.
+Mixed panels merge response keys and refresh only the static queries while retaining active subscriptions.
 Each channel shares one SDK RunStream, each page shares one socket, and the final unsubscribe cancels the backend stream.
 Datasource updates discard the old context and trigger resubscription; deletion, plugin disable and server shutdown stop streams.
 

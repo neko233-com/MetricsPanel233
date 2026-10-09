@@ -35,6 +35,12 @@ import {
   fromEvent,
   timeout,
   auditTime,
+  scan,
+  merge,
+  ReplaySubject,
+  finalize,
+  tap,
+  exhaustMap,
 } from "rxjs";
 import {
   message,
@@ -244,39 +250,106 @@ export function watchFrames(
       return runtime.getPluginDatasource(uid);
     }).pipe(
       switchMap((datasource) => {
-        const end = Date.now(),
-          start = end - rangeMilliseconds(range);
-        return from(
-          datasource.query({
-            requestId: `${panel.id}-${Date.now()}`,
-            interval: `${Math.max(1, Math.ceil((end - start) / 240000))}s`,
-            intervalMs: Math.max(
-              1000,
-              Math.ceil((end - start) / 240000) * 1000,
+        const query = (targets = queries) => {
+          const end = Date.now(),
+            start = end - rangeMilliseconds(range);
+          return from(
+            datasource.query({
+              requestId: `${panel.id}-${Date.now()}`,
+              interval: `${Math.max(1, Math.ceil((end - start) / 240000))}s`,
+              intervalMs: Math.max(
+                1000,
+                Math.ceil((end - start) / 240000) * 1000,
+              ),
+              targets: targets.map((query) => ({
+                ...query,
+                refId: query.refId!,
+                datasource: { uid: datasource.uid, type: datasource.type },
+              })),
+              range: {
+                from: dateTime(start),
+                to: dateTime(end),
+                raw: { from: "now-" + range, to: "now" },
+              },
+              rangeRaw: { from: "now-" + range, to: "now" },
+              scopedVars: Object.fromEntries(
+                Object.entries(values).map(([name, value]) => [
+                  name,
+                  { text: value, value },
+                ]),
+              ),
+              timezone: "browser",
+              app: "dashboard",
+              startTime: Date.now(),
+              maxDataPoints: 240,
+            }),
+          );
+        };
+        const finished = new ReplaySubject<void>(1),
+          liveRefs = new Set<string>();
+        let streaming = false;
+        return merge(
+          defer(() => query()).pipe(finalize(() => finished.next())),
+          refresh.pipe(
+            filter(
+              () =>
+                streaming &&
+                queries.some((target) => !liveRefs.has(target.refId!)),
             ),
-            targets: queries.map((query) => ({
-              ...query,
-              refId: query.refId!,
-              datasource: { uid: datasource.uid, type: datasource.type },
-            })),
-            range: {
-              from: dateTime(start),
-              to: dateTime(end),
-              raw: { from: "now-" + range, to: "now" },
-            },
-            rangeRaw: { from: "now-" + range, to: "now" },
-            scopedVars: Object.fromEntries(
-              Object.entries(values).map(([name, value]) => [
-                name,
-                { text: value, value },
-              ]),
+            exhaustMap(() =>
+              defer(() =>
+                query(queries.filter((target) => !liveRefs.has(target.refId!))),
+              ).pipe(
+                catchError((error) =>
+                  of({
+                    data: [],
+                    error: { message: message(error) },
+                    state: LoadingState.Error,
+                  } as DataQueryResponse),
+                ),
+              ),
             ),
-            timezone: "browser",
-            app: "dashboard",
-            startTime: Date.now(),
-            maxDataPoints: 240,
+            takeUntil(finished),
+          ),
+        ).pipe(
+          timeout({ first: 20000 }),
+          tap((response) => {
+            if (response.state === LoadingState.Streaming) {
+              streaming = true;
+              for (const frame of response.data) {
+                const refId =
+                  frame.refId ||
+                  (queries.length === 1 ? queries[0].refId : undefined);
+                if (refId) liveRefs.add(refId);
+              }
+            }
           }),
-        ).pipe(timeout({ first: 20000 }));
+          // DataSourceWithBackend merges separate Live frame observables with
+          // its static frames. Keep each response key until this query ends.
+          scan((chunks, response) => {
+            const key = response.key ? `key:${response.key}` : "__static__";
+            if (key.length > 2048 || (!chunks.has(key) && chunks.size >= 128))
+              throw new Error("Query response stream key limit exceeded");
+            chunks.set(key, response);
+            return chunks;
+          }, new Map<string, DataQueryResponse>()),
+          map((chunks) => {
+            const responses = Array.from(chunks.values());
+            return {
+              data: responses.flatMap((response) => response.data),
+              state: responses.some(
+                (response) => response.state === LoadingState.Streaming,
+              )
+                ? LoadingState.Streaming
+                : responses.some(
+                      (response) => response.state === LoadingState.Loading,
+                    )
+                  ? LoadingState.Loading
+                  : LoadingState.Done,
+              error: responses.find((response) => response.error)?.error,
+            } as DataQueryResponse;
+          }),
+        );
       }),
       catchError((error) =>
         of({
