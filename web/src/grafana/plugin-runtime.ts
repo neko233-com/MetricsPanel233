@@ -9,6 +9,7 @@ import * as RxOperators from "rxjs/operators";
 import moment from "moment";
 import i18next from "i18next";
 import { registerOptionEditors } from "./option-editors";
+import { createLiveService } from "./live-runtime";
 import { api, interpolate, type InterpolationValues } from "../api";
 import { getLocale } from "../i18n";
 import type {
@@ -193,7 +194,7 @@ async function init(): Promise<Runtime> {
         appUrl: location.origin + "/",
         appSubUrl: "",
         featureToggles: {},
-        liveEnabled: false,
+        liveEnabled: true,
         defaultDatasource: "metricspanel",
       },
       user: {
@@ -214,6 +215,7 @@ async function init(): Promise<Runtime> {
     runtime.config.buildInfo.version = "13.2.3";
     registerOptionEditors();
     runtime.setBackendSrv(backendService());
+    runtime.setGrafanaLiveSrv(createLiveService());
     runtime.setTemplateSrv({
       getVariables: () =>
         Object.entries(variableValues).map(([name, value]) => ({
@@ -404,48 +406,43 @@ export async function sdkRuntime() {
 }
 
 class LocalPrometheus extends Data.DataSourceApi {
+  constructor(private settings: DataSourceSettings) {
+    super(settings);
+  }
   query(
     request: Data.DataQueryRequest,
   ): RxJS.Observable<Data.DataQueryResponse> {
     return RxJS.defer(async () => {
-      const { framesFromResponse } = await import("./engine");
-      const frames = await Promise.all(
-        request.targets
-          .filter((q) => !q.hide)
-          .map(async (target) => {
+      const runtime = await init();
+      return new runtime.DataSourceWithBackend(this.settings);
+    }).pipe(
+      RxOperators.switchMap((adapter) => {
+        const values = { ...variableValues };
+        for (const [name, entry] of Object.entries(request.scopedVars || {}))
+          if (entry) values[name] = entry.value;
+        const rawFrom = request.range.raw.from;
+        const range =
+          typeof rawFrom === "string" && rawFrom.startsWith("now-")
+            ? rawFrom.slice(4)
+            : variableRange;
+        return adapter.query({
+          ...request,
+          targets: request.targets.map((target) => {
             const query = target as Data.DataQuery & {
               expr?: string;
-              instant?: boolean;
+              legendFormat?: string;
             };
-            const expr = interpolate(
-              query.expr || "",
-              variableValues,
-              variableRange,
-            );
-            const params = new URLSearchParams({ query: expr });
-            if (query.instant)
-              params.set("time", String(request.range.to.valueOf() / 1000));
-            else {
-              params.set("start", String(request.range.from.valueOf() / 1000));
-              params.set("end", String(request.range.to.valueOf() / 1000));
-              params.set(
-                "step",
-                String(Math.max(1, request.intervalMs / 1000)),
-              );
-            }
-            const endpoint = `/api/datasources/proxy/uid/${encodeURIComponent(this.uid)}/api/v1/${query.instant ? "query" : "query_range"}`;
-            const response = await api<
-              Parameters<typeof framesFromResponse>[0]
-            >(endpoint + "?" + params);
-            return framesFromResponse(
-              response,
-              { ...query, datasource: query.datasource || undefined },
-              !!query.instant,
-            );
+            return {
+              ...query,
+              expr: interpolate(query.expr || "", values, range),
+              legendFormat: query.legendFormat
+                ? interpolate(query.legendFormat, values, range)
+                : undefined,
+            };
           }),
-      );
-      return { data: frames.flat() };
-    });
+        });
+      }),
+    );
   }
   async testDatasource() {
     await api(`/api/datasources/uid/${encodeURIComponent(this.uid)}/health`);

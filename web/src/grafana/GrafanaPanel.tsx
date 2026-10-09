@@ -12,7 +12,8 @@ import { marked } from "marked";
 import { Chart } from "../components/Chart";
 import { message, type Panel, type InterpolationValues } from "../api";
 import { t } from "../i18n";
-import { queryFrames, framesAsSeries } from "./engine";
+import { watchFrames, framesAsSeries } from "./engine";
+import { Subject } from "rxjs";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
@@ -43,31 +44,35 @@ export default function GrafanaPanel({
 }) {
   const [frames, setFrames] = useState<DataFrame[]>([]),
     [error, setError] = useState(""),
-    [loading, setLoading] = useState(true);
+    [loading, setLoading] = useState(true),
+    [streaming, setStreaming] = useState(false);
   const config = panel.config,
     type = panel.visualization || "timeseries",
     key = JSON.stringify(values);
+  const refresh = useMemo(() => new Subject<void>(), []);
   useEffect(() => {
-    const controller = new AbortController();
     if (type === "text" || type === "row") {
       setLoading(false);
-      return () => controller.abort();
+      return;
     }
-    void queryFrames(panel, values, range, controller.signal)
-      .then((data) => {
-        setFrames(data);
-        setError("");
+    setLoading(true);
+    const listener = watchFrames(panel, values, range, refresh).subscribe({
+      next: (update) => {
+        setFrames(update.frames);
+        setError(update.error);
+        setLoading(update.loading);
+        setStreaming(update.streaming);
+      },
+      error: (e) => {
+        setFrames([]);
+        setError(message(e));
         setLoading(false);
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) {
-          setFrames([]);
-          setError(message(e));
-          setLoading(false);
-        }
-      });
-    return () => controller.abort();
-  }, [JSON.stringify(panel), key, range, tick]);
+        setStreaming(false);
+      },
+    });
+    return () => listener.unsubscribe();
+  }, [JSON.stringify(panel), key, range, refresh]);
+  useEffect(() => refresh.next(), [tick, refresh]);
   const series = useMemo(() => framesAsSeries(frames, range), [frames, range]);
   if (type === "timeseries") {
     const first = frames
@@ -80,6 +85,7 @@ export default function GrafanaPanel({
         tick={tick}
         result={series}
         resultError={error}
+        streaming={streaming}
         formatter={(v) => (first ? display(first, v).text : String(v))}
       />
     );
@@ -105,6 +111,7 @@ export default function GrafanaPanel({
           range={range}
           tick={tick}
           loading={loading}
+          streaming={streaming}
           queryError={error}
         />
       </Suspense>
@@ -163,6 +170,12 @@ export default function GrafanaPanel({
     >
       <div className="panel-heading">
         <h2 title={config?.description}>{panel.title}</h2>
+        {streaming && (
+          <span className="status healthy" role="status">
+            <i />
+            {t("Live")}
+          </span>
+        )}
       </div>
       {error && (
         <p className="form-error" role="alert">

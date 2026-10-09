@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Watch live data",
+    detail:
+      "Receive one JSON event per line. The last subscriber releases the backend stream.",
+    command:
+      "metricspanel live channels\nmetricspanel live watch --channel ds/MY_DATASOURCE/path --limit 10 --duration 1m\nmetricspanel live publish --channel ds/MY_DATASOURCE/path --file packet.json",
+  },
+  {
     title: "Manage Grafana plugins",
     detail:
       "Install signed packages and configure durable datasource connections.",
@@ -85,6 +92,11 @@ export function AgentCLI() {
           {tr("for a remote server and")}
           <code>{tr("METRICSPANEL_TOKEN")}</code>
           {tr("for authentication.")}
+        </p>
+        <p>
+          {tr(
+            "Live watch emits NDJSON: one initial frame or publication per line.",
+          )}
         </p>
         <p>
           {tr("Build the CLI from source with")}

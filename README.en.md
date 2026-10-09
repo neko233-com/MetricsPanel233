@@ -69,7 +69,7 @@ Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/das
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
-**Full Grafana ecosystem parity remains unfinished.** Grafana Live/chunked streaming, app plugin pages, legacy Angular plugins,
+**Full Grafana ecosystem parity remains unfinished.** Chunked QueryData, app plugin pages, legacy Angular plugins,
 annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
@@ -92,7 +92,7 @@ metricspanel datasources save --file examples/datasources/prometheus.json
 metricspanel datasources health --id remote-prometheus
 ```
 
-Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, CheckHealth and CallResource, including official DataFrame JSON/Arrow conversion.
+Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, CheckHealth, CallResource, SubscribeStream, RunStream and PublishStream, including official DataFrame JSON/Arrow conversion.
 Packages need `<executable>_<GOOS>_<GOARCH>[.exe]` for the host platform. Plugins using dynamic system libraries need those libraries installed.
 At most eight backend requests run concurrently. Plugin processes do not inherit workspace tokens/database passwords and exit on server shutdown, disable or uninstall.
 The datasource proxy supports HTTP(S), Basic Auth and secure custom headers. Plugin queries use `/api/ds/query`.
@@ -103,8 +103,33 @@ Plugin assets use a short-lived cookie restricted to asset paths; that cookie ca
 `--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
 Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
 
-Live/chunked streaming, app configuration/pages, complete plugin configuration editors, legacy Angular and some core services are still pending.
+Chunked QueryData, app configuration/pages, complete plugin configuration editors, legacy Angular and some core services are still pending.
 The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
+
+## Grafana Live and agent subscriptions
+
+`/api/live/ws` implements the Centrifuge JSON WebSocket protocol. Channels use `ds/UID/path` or `plugin/ID/path`.
+Plugins can call `getGrafanaLiveSrv()`; `DataSourceWithBackend` automatically connects frames with `meta.channel`.
+The browser uses the official `StreamingDataFrame`, bounded buffers and the existing transforms/field formatting.
+Streaming queries continue through dashboard refreshes; ordinary queries still refresh periodically.
+Each channel shares one SDK RunStream, each page shares one socket, and the final unsubscribe cancels the backend stream.
+Datasource updates discard the old context and trigger resubscription; deletion, plugin disable and server shutdown stop streams.
+
+```sh
+metricspanel live channels
+metricspanel live watch --channel ds/MY_DATASOURCE/path --limit 10 --duration 1m
+metricspanel live watch --channel ds/MY_DATASOURCE/path --metadata '{"key":"value"}' --limit 0 --duration 0
+metricspanel live publish --channel ds/MY_DATASOURCE/path --file packet.json
+```
+
+Watch emits NDJSON with `type`, `channel`, `timestamp` and `data`. The initial frame counts toward the limit.
+Defaults are 10 frames and one minute; zero disables either limit. Ctrl+C releases the subscription.
+Subscribe failures and disconnects produce JSON errors on stderr and a nonzero exit code; agents decide whether to reconnect.
+The plugin defines publication payloads and permissions. Subscribers on the same channel must use matching metadata.
+
+Browser cookies last 15 minutes, authorize only the WebSocket path, and renew before reconnecting. The CLI uses a Bearer upgrade header.
+Limits are 256 active channels, 128 channels per connection, 1 MiB per packet and 10,000 buffered frontend rows.
+Live transport is transient; plugin publications are not automatically ingested. Collector/ingest SQLite and ClickHouse storage remains durable.
 
 ## Vector pattern analysis
 

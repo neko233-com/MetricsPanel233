@@ -140,6 +140,9 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 			fail(w, 400, err)
 			return
 		}
+		if !input.Enabled {
+			s.Live.Invalidate("plugin", p.ID, false)
+		}
 		writeJSON(w, 200, publicPlugin(p))
 	})
 	api.HandleFunc("DELETE /api/v1/plugins/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +293,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			}
 			return
 		}
+		s.Live.Invalidate("ds", ds.UID, true)
 		writeJSON(w, 200, map[string]any{"id": ds.ID, "uid": ds.UID, "name": ds.Name, "message": "Datasource saved", "datasource": ds})
 	}
 	api.HandleFunc("POST /api/datasources", save)
@@ -303,6 +307,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			resourceError(w, err)
 			return
 		}
+		s.Live.Invalidate("ds", r.PathValue("uid"), false)
 		writeJSON(w, 200, map[string]string{"message": "Datasource deleted"})
 	})
 	api.HandleFunc("GET /api/datasources/uid/{uid}/health", func(w http.ResponseWriter, r *http.Request) {

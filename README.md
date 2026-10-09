@@ -126,8 +126,9 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 支持版本冲突检查 / overwrite。提供数据源发现、health 和 `/api/datasources/proxy/uid/metricspanel/...` 查询代理。
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
-**当前不是所有 Grafana 插件的替代运行时。** 自定义 panel/data-source 插件、Loki / Tempo、Grafana expression 数据源、
-Grafana Live / chunked streaming、应用插件页面、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+**当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
+但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、chunked QueryData、
+应用插件页面、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -177,7 +178,7 @@ metricspanel datasources list
 metricspanel datasources health --id remote-prometheus
 ```
 
-后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、CheckHealth、CallResource；查询返回官方 DataFrame JSON / Arrow 转换结果。
+后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、CheckHealth、CallResource、SubscribeStream、RunStream 和 PublishStream；查询返回官方 DataFrame JSON / Arrow 转换结果。
 运行时选择 `<executable>_<GOOS>_<GOARCH>[.exe]`，安装包必须提供当前平台可执行文件；需要系统动态库的插件还需部署相应运行库。
 后端插件最多八个并发请求，不继承应用令牌 / 数据库密码。服务关闭、插件停用或卸载时关闭对应子进程。
 数据源代理支持 HTTP(S)、Basic Auth 和 `jsonData.httpHeaderNameN` / `secureJsonData.httpHeaderValueN`（N=1–32）；插件查询走 `/api/ds/query`。
@@ -187,8 +188,32 @@ metricspanel datasources health --id remote-prometheus
 `--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
 开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
 
-目前仍未达到完整 Grafana 插件运行时兼容：Live / chunked streaming、应用配置页面、完整插件配置编辑器、旧 Angular 插件和部分核心服务待补齐。
+目前仍未达到完整 Grafana 插件运行时兼容：chunked QueryData、应用配置页面、完整插件配置编辑器、旧 Angular 插件和部分核心服务待补齐。
 支持的能力和剩余项也会出现在 `metricspanel schema` 中。
+
+## Grafana Live 与 Agent 实时订阅
+
+`/api/live/ws` 提供 Centrifuge JSON WebSocket 协议。数据源通道为 `ds/UID/path`，插件通道为 `plugin/ID/path`。
+原始插件可通过 `getGrafanaLiveSrv()` 订阅；`DataSourceWithBackend` 的 DataFrame `meta.channel` 会自动接入实时流。
+浏览器使用官方 `StreamingDataFrame` 保存有界缓冲、执行已有转换和单位格式化；实时面板持续更新，普通查询保留定时刷新。
+同一通道共用一个后端 SDK RunStream；同页面共用一个 WebSocket，最后一个订阅离开即取消。
+更新数据源会取消旧配置并通知浏览器重新订阅；删除数据源、停用插件和关闭服务器会终止流。
+
+```sh
+metricspanel live channels
+metricspanel live watch --channel ds/MY_DATASOURCE/path --limit 10 --duration 1m
+metricspanel live watch --channel ds/MY_DATASOURCE/path --metadata '{"key":"value"}' --limit 0 --duration 0
+metricspanel live publish --channel ds/MY_DATASOURCE/path --file packet.json
+```
+
+`watch` 每个初始帧 / 推送帧输出一行 JSON（NDJSON）：`type`、`channel`、`timestamp`、`data`。
+默认最多 10 帧 / 1 分钟，初始帧计入限额；`0` 分别关闭帧数 / 时间限额。Ctrl+C 释放订阅。
+订阅失败或连接中断返回 JSON 错误和非零退出码，Agent 可以决定是否重新连接。
+`publish` 的数据结构和权限由插件决定；同一通道的订阅 metadata 必须一致。
+
+浏览器会话 cookie 有效 15 分钟，只授权 WebSocket 路径，重连前自动刷新；CLI 使用 Bearer 升级头。
+最多 256 个活动通道、每连接 128 个通道、单包 1 MiB；前端缓冲最多 10,000 行。
+实时传输本身不落盘，插件推送不会自动写入指标库；采集器 / ingest 的 SQLite 和 ClickHouse 持久化不受影响。
 
 ## 性能、持久化与边界
 
@@ -252,7 +277,7 @@ Windows：`pwsh -File scripts/test-docker.ps1 -Repeat 2`；race 测试需本机 
 不清理其他项目或公共基础镜像，BuildKit 缓存会复用。若进程被强制杀死，下次执行会清理旧项目。
 
 测试涵盖真实 Go 抓取 / 主动上报、MySQL exporter、两种后端的重复写入、应用重启、ClickHouse 重启、
-Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源接口 / 重启及资源清理。
+Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源 / Live、Agent NDJSON 订阅、重启及资源清理。
 
 浏览器自动化：先构建网页和 `bin/metricspanel[.exe]`，再运行：
 

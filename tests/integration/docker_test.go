@@ -25,6 +25,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/neko233-com/MetricsPanel233/internal/analysis"
+	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -135,7 +136,7 @@ func (e environment) sdkArchive(t *testing.T) []byte {
 	require.NoError(t, z.Close())
 	return archive.Bytes()
 }
-func (e environment) verifySDKPlugin(address string) {
+func (e environment) verifySDKPlugin(address, service string) {
 	e.t.Helper()
 	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/health", nil)), "Grafana SDK backend is working")
 	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/resources/check?round=233", nil)), `"uid":"docker-sdk"`)
@@ -145,6 +146,33 @@ func (e environment) verifySDKPlugin(address string) {
 	require.NoError(e.t, json.Unmarshal(raw, &result))
 	require.Len(e.t, result.Responses["A"].Frames, 1)
 	assert.Equal(e.t, float64(233), result.Responses["A"].Frames[0].Fields[1].At(0))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	events := []live.Event{}
+	require.NoError(e.t, live.Watch(ctx, live.WatchOptions{Endpoint: address, Token: token, Channel: "ds/docker-sdk/counter", Limit: 3}, func(event live.Event) error { events = append(events, event); return nil }))
+	require.Len(e.t, events, 3)
+	assert.Equal(e.t, "initial", events[0].Type)
+	assert.Equal(e.t, "publication", events[2].Type)
+	output, err := e.compose("exec", "-T", service, "metricspanel", "live", "watch", "--channel", "ds/docker-sdk/counter", "--limit", "3", "--duration", "10s")
+	require.NoError(e.t, err, output)
+	lines := strings.Split(output, "\n")
+	require.Len(e.t, lines, 3)
+	for _, line := range lines {
+		var event live.Event
+		require.NoError(e.t, json.Unmarshal([]byte(line), &event))
+		assert.Equal(e.t, "ds/docker-sdk/counter", event.Channel)
+		assert.True(e.t, json.Valid(event.Data))
+	}
+	require.Eventually(e.t, func() bool {
+		var state live.Snapshot
+		status, raw, err := e.request(address, "GET", "/api/live/channels", nil)
+		return err == nil && status == 200 && json.Unmarshal(raw, &state) == nil && len(state.Channels) == 0 && state.Connections == 0
+	}, 5*time.Second, 20*time.Millisecond, "Live watch limit left subscriptions or connections")
+	raw = e.must(address, "GET", "/api/datasources/uid/docker-sdk/resources/stream-stats", nil)
+	var counters map[string]int
+	require.NoError(e.t, json.Unmarshal(raw, &counters))
+	assert.Zero(e.t, counters["active"])
+	assert.Equal(e.t, counters["started"], counters["cancelled"])
 }
 func (e environment) value(address, metric string) (float64, bool) {
 	status, data, err := e.request(address, "GET", "/api/v1/query?"+url.Values{"metric": {metric}, "range": {"15m"}, "aggregation": {"last"}}.Encode(), nil)
@@ -406,7 +434,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			first = e.installPlugin(address, sdkArchive)
 			assert.JSONEq(t, string(first), string(e.installPlugin(address, sdkArchive)))
 			e.must(address, "POST", "/api/datasources", map[string]any{"uid": "docker-sdk", "name": "Docker SDK datasource", "type": "metricspanel-sdk-datasource", "secureJsonData": map[string]string{"apiKey": "test-secret-233"}})
-			e.verifySDKPlugin(address)
+			e.verifySDKPlugin(address, backend.service)
 			for _, target := range []model.Target{{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true}, {Name: "go", URL: "http://" + backend.goService + ":8080/metrics", IntervalSeconds: 5, Enabled: true}} {
 				e.must(address, "POST", "/api/v1/targets", target)
 			}
@@ -468,7 +496,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, err)
 			address = e.address(backend.service)
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
-			e.verifySDKPlugin(address)
+			e.verifySDKPlugin(address, backend.service)
 			data = e.must(address, "GET", "/api/v1/plugins/grafana-clock-panel", nil)
 			assert.Contains(t, string(data), `"signature":"grafana"`)
 			data = e.must(address, "GET", "/public/plugins/grafana-clock-panel/module.js", nil)

@@ -40,6 +40,7 @@ export function Chart({
   result,
   resultError,
   formatter = formatValue,
+  streaming = false,
 }: {
   panel: Panel;
   range: string;
@@ -50,6 +51,7 @@ export function Chart({
   result?: QueryResult;
   resultError?: string;
   formatter?: (value: number, unit?: string) => string;
+  streaming?: boolean;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
@@ -181,6 +183,12 @@ export function Chart({
       <div className="panel-heading">
         <h2>{tr(panel.title)}</h2>
         <div className="panel-actions">
+          {streaming && (
+            <span className="status healthy" role="status">
+              <i />
+              {tr("Live")}
+            </span>
+          )}
           {latest !== undefined && (
             <span className="latest-value">
               {formatter(latest, panel.unit)}

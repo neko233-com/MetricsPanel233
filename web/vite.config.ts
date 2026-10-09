@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:7333",
+      "/api": {target:"http://127.0.0.1:7333",ws:true},
       "/metrics": "http://127.0.0.1:7333",
       "/prometheus": "http://127.0.0.1:7333",
       "/public/plugins": "http://127.0.0.1:7333",

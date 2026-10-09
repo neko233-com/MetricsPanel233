@@ -57,6 +57,7 @@ export default function PluginPanel({
   range,
   tick,
   loading,
+  streaming,
   queryError,
 }: {
   panel: Panel;
@@ -65,6 +66,7 @@ export default function PluginPanel({
   range: string;
   tick: number;
   loading: boolean;
+  streaming: boolean;
   queryError: string;
 }) {
   const [plugin, setPlugin] = useState<PanelPlugin | null>(null),
@@ -140,7 +142,9 @@ export default function PluginPanel({
         ? LoadingState.Error
         : loading
           ? LoadingState.Loading
-          : LoadingState.Done,
+          : streaming
+            ? LoadingState.Streaming
+            : LoadingState.Done,
       timeRange,
       error: queryError ? { message: queryError } : undefined,
     },

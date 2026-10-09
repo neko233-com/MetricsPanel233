@@ -18,3 +18,8 @@ Its SHA-256 is `b2dc870d732f39edf4a37fd20ad0e0fa9efa3730efff46b2a5b23213e3b0507f
 The package contains its original MIT license and copyright notice (Grafana, 2016), signed manifest and bundled dependency notices.
 Public signature verification keys are pinned from <https://grafana.com/api/plugins/ci/keys>.
 The backend host uses Grafana's Apache-2.0 `grafana-plugin-sdk-go`; other Go modules retain the licenses included in their source distributions.
+
+Grafana Live transport uses the MIT-licensed `centrifugal/centrifuge` Go server, `centrifugal/protocol` and `centrifuge` JavaScript client.
+The agent subscription client uses the ISC-licensed `coder/websocket` library.
+Sources and included notices: <https://github.com/centrifugal/centrifuge>, <https://github.com/centrifugal/protocol>,
+<https://github.com/centrifugal/centrifuge-js> and <https://github.com/coder/websocket>.

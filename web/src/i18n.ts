@@ -11,6 +11,12 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  Live: "实时",
+  "Watch live data": "订阅实时数据",
+  "Receive one JSON event per line. The last subscriber releases the backend stream.":
+    "每个事件输出一行 JSON，最后一个订阅离开后释放后端数据流。",
+  "Live watch emits NDJSON: one initial frame or publication per line.":
+    "live watch 输出 NDJSON：每个初始帧或推送帧对应一行 JSON。",
   Plugins: "插件",
   Enabled: "已启用",
   Type: "类型",

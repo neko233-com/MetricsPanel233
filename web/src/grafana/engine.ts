@@ -6,6 +6,8 @@ import {
   getFieldDisplayName,
   dateTime,
   toDataFrame,
+  LoadingState,
+  type DataQueryResponse,
   standardTransformers,
   standardTransformersRegistry,
   transformDataFrame,
@@ -13,9 +15,29 @@ import {
   type DataTransformerConfig,
   type FieldConfigSource,
 } from "@grafana/data";
-import { firstValueFrom } from "rxjs";
 import {
-  api,
+  firstValueFrom,
+  Observable,
+  EMPTY,
+  defer,
+  from,
+  of,
+  throwError,
+  combineLatest,
+  switchMap,
+  map,
+  catchError,
+  repeat,
+  startWith,
+  take,
+  takeUntil,
+  filter,
+  fromEvent,
+  timeout,
+  auditTime,
+} from "rxjs";
+import {
+  message,
   interpolate,
   rangeMilliseconds,
   type Labels,
@@ -176,133 +198,154 @@ export function framesFromResponse(
   });
 }
 
+export type FrameUpdate = {
+  frames: DataFrame[];
+  loading: boolean;
+  streaming: boolean;
+  error: string;
+};
+export function watchFrames(
+  panel: Panel,
+  values: InterpolationValues,
+  range: string,
+  refresh: Observable<unknown>,
+): Observable<FrameUpdate> {
+  const targets: GrafanaTarget[] =
+    panel.config?.targets ||
+    (panel.expressions || [panel.expr || ""]).map((expr, i) => ({
+      expr,
+      refId: String.fromCharCode(65 + i),
+    }));
+  if (targets.length > 32)
+    return throwError(() => new Error("A panel supports at most 32 queries"));
+  const groups = new Map<string, GrafanaTarget[]>();
+  targets
+    .filter((target) => !target.hide)
+    .forEach((target, i) => {
+      const ref = target.datasource || panel.config?.datasource;
+      let uid = interpolate(
+        typeof ref === "object" ? ref.uid || "" : ref || "",
+        values,
+        range,
+      );
+      if (uid === "prometheus") uid = "metricspanel";
+      if (uid === "default") uid = "";
+      const existing = groups.get(uid) || [];
+      existing.push({
+        ...target,
+        refId: target.refId || String.fromCharCode(65 + i),
+      });
+      groups.set(uid, existing);
+    });
+  const streams = Array.from(groups, ([uid, queries]) =>
+    defer(async () => {
+      const runtime = await import("./plugin-runtime");
+      runtime.setPluginVariables(values, range);
+      return runtime.getPluginDatasource(uid);
+    }).pipe(
+      switchMap((datasource) => {
+        const end = Date.now(),
+          start = end - rangeMilliseconds(range);
+        return from(
+          datasource.query({
+            requestId: `${panel.id}-${Date.now()}`,
+            interval: `${Math.max(1, Math.ceil((end - start) / 240000))}s`,
+            intervalMs: Math.max(
+              1000,
+              Math.ceil((end - start) / 240000) * 1000,
+            ),
+            targets: queries.map((query) => ({
+              ...query,
+              refId: query.refId!,
+              datasource: { uid: datasource.uid, type: datasource.type },
+            })),
+            range: {
+              from: dateTime(start),
+              to: dateTime(end),
+              raw: { from: "now-" + range, to: "now" },
+            },
+            rangeRaw: { from: "now-" + range, to: "now" },
+            scopedVars: Object.fromEntries(
+              Object.entries(values).map(([name, value]) => [
+                name,
+                { text: value, value },
+              ]),
+            ),
+            timezone: "browser",
+            app: "dashboard",
+            startTime: Date.now(),
+            maxDataPoints: 240,
+          }),
+        ).pipe(timeout({ first: 20000 }));
+      }),
+      catchError((error) =>
+        of({
+          data: [],
+          state: LoadingState.Error,
+          error: { message: message(error) },
+        } as DataQueryResponse),
+      ),
+      repeat({ delay: () => refresh.pipe(take(1)) }),
+      startWith({ data: [], state: LoadingState.Loading } as DataQueryResponse),
+    ),
+  );
+  if (streams.length === 0)
+    return of({ frames: [], loading: false, streaming: false, error: "" });
+  return combineLatest(streams).pipe(
+    auditTime(50),
+    switchMap((responses) =>
+      from(
+        decorateFrames(
+          panel,
+          values,
+          range,
+          responses.flatMap((response) =>
+            response.data.map((frame) => toDataFrame(frame)),
+          ),
+        ),
+      ).pipe(
+        map((frames) => ({
+          frames,
+          loading: responses.some(
+            (response) => response.state === LoadingState.Loading,
+          ),
+          streaming: responses.some(
+            (response) => response.state === LoadingState.Streaming,
+          ),
+          error: responses
+            .map((response) => response.error?.message || "")
+            .filter(Boolean)
+            .join("; "),
+        })),
+      ),
+    ),
+  );
+}
 export async function queryFrames(
   panel: Panel,
   values: InterpolationValues,
   range: string,
   signal: AbortSignal,
 ): Promise<DataFrame[]> {
-  const config = panel.config;
-  const targets: GrafanaTarget[] =
-    config?.targets ||
-    (panel.expressions || [panel.expr || ""]).map((expr, i) => ({
-      expr,
-      refId: String.fromCharCode(65 + i),
-    }));
-  const end = Date.now() / 1000,
-    start = end - rangeMilliseconds(range) / 1000;
-  const responses = await Promise.all(
-    targets
-      .filter((t) => !t.hide)
-      .map(async (target, i) => {
-        const source = target.datasource || config?.datasource;
-        const uid = interpolate(
-          typeof source === "object" ? source.uid || "" : source || "",
-          values,
-          range,
-        );
-        if (
-          uid &&
-          uid !== "metricspanel" &&
-          uid !== "default" &&
-          uid !== "prometheus" &&
-          uid !== "-- Mixed --"
-        ) {
-          const { getPluginDatasource, setPluginVariables } = await import(
-            "./plugin-runtime"
-          );
-          setPluginVariables(values, range);
-          const datasource = await getPluginDatasource(uid);
-          const { firstValueFrom, from, fromEvent, takeUntil, timeout } =
-            await import("rxjs");
-          if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-          const response = await firstValueFrom(
-            from(
-              datasource.query({
-                requestId: `${panel.id}-${i}-${Date.now()}`,
-                interval: `${Math.max(1, Math.ceil((end - start) / 240))}s`,
-                intervalMs: Math.max(
-                  1000,
-                  Math.ceil((end - start) / 240) * 1000,
-                ),
-                targets: [
-                  {
-                    ...target,
-                    refId: target.refId || String.fromCharCode(65 + i),
-                    datasource: { uid: datasource.uid, type: datasource.type },
-                  },
-                ],
-                range: {
-                  from: dateTime(start * 1000),
-                  to: dateTime(end * 1000),
-                  raw: { from: "now-" + range, to: "now" },
-                },
-                scopedVars: Object.fromEntries(
-                  Object.entries(values).map(([name, value]) => [
-                    name,
-                    { text: value, value },
-                  ]),
-                ),
-                timezone: "browser",
-                app: "dashboard",
-                startTime: Date.now(),
-                maxDataPoints: 240,
-              }),
-            ).pipe(takeUntil(fromEvent(signal, "abort")), timeout(20000)),
-          );
-          if (response.error)
-            throw new Error(
-              response.error.message || "Datasource query failed",
-            );
-          return response.data.map((frame) => toDataFrame(frame));
-        }
-        if (!target.expr)
-          throw new Error(
-            `Query ${target.refId || i + 1} has no PromQL expression`,
-          );
-        const datasource =
-          typeof source === "object"
-            ? source.type
-            : source === "__expr__"
-              ? source
-              : undefined;
-        if (
-          datasource &&
-          datasource !== "prometheus" &&
-          !datasource.startsWith("$") &&
-          datasource !== "default"
-        ) {
-          throw new Error(`Datasource ${datasource} needs an adapter`);
-        }
-        const expr = interpolate(target.expr, values, range),
-          instant = target.instant === true && target.range !== true;
-        const params = new URLSearchParams({ query: expr });
-        if (instant) params.set("time", String(end));
-        else {
-          params.set("start", String(start));
-          params.set("end", String(end));
-          params.set(
-            "step",
-            String(Math.max(1, Math.ceil((end - start) / 240))),
-          );
-        }
-        const result = await api<PromResponse>(
-          `/prometheus/api/v1/${instant ? "query" : "query_range"}?${params}`,
-          { signal },
-        );
-        return framesFromResponse(
-          result,
-          {
-            ...target,
-            refId: target.refId || String.fromCharCode(65 + i),
-            legendFormat: target.legendFormat
-              ? interpolate(target.legendFormat, values, range)
-              : undefined,
-          },
-          instant,
-        );
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  return firstValueFrom(
+    watchFrames(panel, values, range, EMPTY).pipe(
+      takeUntil(fromEvent(signal, "abort")),
+      filter((update) => !update.loading),
+      map((update) => {
+        if (update.error) throw new Error(update.error);
+        return update.frames;
       }),
+    ),
   );
+}
+async function decorateFrames(
+  panel: Panel,
+  values: InterpolationValues,
+  range: string,
+  input: DataFrame[],
+): Promise<DataFrame[]> {
+  const config = panel.config;
   const transformations = config?.transformations || [];
   for (const transform of transformations)
     if (
@@ -312,11 +355,11 @@ export async function queryFrames(
       throw new Error(`Unsupported transformation: ${transform.id}`);
   const replace = (text: string) => interpolate(text, values, range);
   const transformed = await firstValueFrom(
-    transformDataFrame(transformations, responses.flat(), {
+    transformDataFrame(transformations, input, {
       interpolate: replace,
     }),
   );
-  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
   const source = config?.fieldConfig || {
     defaults: { unit: panel.unit === "seconds" ? "s" : panel.unit },
     overrides: [],

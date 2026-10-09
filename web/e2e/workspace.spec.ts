@@ -4,6 +4,12 @@ import { promisify } from "node:util";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 const test = base.extend<{}, { endpoint: string }>({
   endpoint: [
@@ -11,7 +17,7 @@ const test = base.extend<{}, { endpoint: string }>({
       const temp = await mkdtemp(
         path.join(os.tmpdir(), "metricspanel233-e2e-"),
       );
-      const root = path.resolve(".."),
+      const root = repoRoot,
         binary =
           process.env.METRICSPANEL_TEST_BINARY ||
           path.join(
@@ -84,11 +90,11 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
   page,
   endpoint,
 }) => {
-  test.setTimeout(60000);
+  test.setTimeout(120000);
   const temp = await mkdtemp(
     path.join(os.tmpdir(), "metricspanel233-sdk-e2e-"),
   );
-  const root = path.resolve(".."),
+  const root = repoRoot,
     binary = path.join(
       temp,
       process.platform === "win32" ? "fixture.exe" : "fixture",
@@ -159,8 +165,114 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
     });
     await page.reload();
     await expect(page.locator(".grafana-value strong")).toContainText("233");
+    const liveDashboard = {
+      uid: "frontend-live-dashboard",
+      title: "SDK Live bridge",
+      panels: [1, 2].map((id) => ({
+        id,
+        type: "stat",
+        title: `Live counter ${id}`,
+        gridPos: { x: (id - 1) * 12, y: 0, w: 12, h: 8 },
+        targets: [
+          {
+            refId: "A",
+            value: 233,
+            live: true,
+            directLive: id === 2,
+            datasource: {
+              uid: "frontend-sdk",
+              type: "metricspanel-sdk-datasource",
+            },
+          },
+        ],
+        options: { reduceOptions: { calcs: ["lastNotNull"], values: false } },
+        fieldConfig: { defaults: { decimals: 0 }, overrides: [] },
+      })),
+    };
+    const liveSaved = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: { dashboard: liveDashboard, overwrite: true },
+    });
+    expect(liveSaved.ok(), await liveSaved.text()).toBeTruthy();
+    const streamStats = async () =>
+      (
+        await page.request.get(
+          endpoint + "/api/datasources/uid/frontend-sdk/resources/stream-stats",
+        )
+      ).json();
+    const channels = async () =>
+      (await page.request.get(endpoint + "/api/live/channels")).json();
+    await page.goto(endpoint + "/d/frontend-live-dashboard/live");
+    const liveValues = page.locator(".grafana-value strong");
+    await expect(liveValues).toHaveCount(2);
+    // Pass the app's five-second refresh boundary without restarting RunStream.
+    await expect
+      .poll(
+        async () =>
+          (await liveValues.allTextContents())
+            .map((value) => Number(value.replaceAll(",", "")))
+            .every((value) => value >= 310),
+        { timeout: 20000 },
+      )
+      .toBeTruthy();
+    await expect(page.locator(".grafana-panel .status")).toHaveText([
+      "Live",
+      "Live",
+    ]);
+    await expect
+      .poll(async () => {
+        const state = await channels();
+        return [
+          state.connections,
+          state.channels.length,
+          state.channels[0]?.subscribers,
+        ];
+      })
+      .toEqual([1, 1, 1]);
+    expect(await streamStats()).toMatchObject({ started: 1, active: 1 });
+    // A changed datasource cancels the old context and the browser resubscribes.
+    const updated = await page.request.put(
+      endpoint + "/api/datasources/uid/frontend-sdk",
+      {
+        data: {
+          uid: "frontend-sdk",
+          name: "Updated SDK",
+          type: "metricspanel-sdk-datasource",
+        },
+      },
+    );
+    expect(updated.ok(), await updated.text()).toBeTruthy();
+    await expect
+      .poll(streamStats)
+      .toMatchObject({ started: 2, active: 1, cancelled: 1 });
+    await expect
+      .poll(async () =>
+        (await liveValues.allTextContents()).every(
+          (value) => Number(value.replaceAll(",", "")) > 240,
+        ),
+      )
+      .toBeTruthy();
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    await expect
+      .poll(async () => {
+        const state = await channels();
+        return [state.connections, state.channels.length];
+      })
+      .toEqual([0, 0]);
+    await expect.poll(streamStats).toMatchObject({ active: 0, cancelled: 2 });
+    await page.goto(endpoint + "/d/frontend-live-dashboard/live");
+    await expect.poll(streamStats).toMatchObject({ started: 3, active: 1 });
+    await page.request.put(
+      endpoint + "/api/v1/plugins/metricspanel-sdk-datasource",
+      { data: { enabled: false } },
+    );
+    await expect(page.locator(".grafana-panel .form-error")).toHaveCount(2);
+    await expect.poll(async () => (await channels()).channels.length).toBe(0);
     expect(errors).toEqual([]);
   } finally {
+    await page.goto(endpoint + "/#overview");
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/frontend-live-dashboard",
+    );
     await page.request.delete(
       endpoint + "/api/dashboards/uid/frontend-sdk-dashboard",
     );
@@ -185,7 +297,10 @@ test("Plugin management and official signed Clock render from its unchanged AMD 
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const raw = await readFile(
-    path.resolve("../internal/plugins/testdata/grafana-clock-panel-3.2.4.zip"),
+    path.join(
+      repoRoot,
+      "internal/plugins/testdata/grafana-clock-panel-3.2.4.zip",
+    ),
   );
   const installed = await page.request.post(
     endpoint + "/api/v1/plugins/install",

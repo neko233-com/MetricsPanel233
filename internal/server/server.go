@@ -24,6 +24,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
+	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/promcompat"
@@ -37,6 +38,7 @@ type Server struct {
 	Alerts        *alerting.Engine
 	Prometheus    *promcompat.API
 	Plugins       *plugins.Manager
+	Live          *live.Hub
 	Token         string
 	RetentionDays int
 	Started       time.Time
@@ -45,7 +47,9 @@ type Server struct {
 
 func New(s *store.Store, token string, retention int) *Server {
 	prom := promcompat.New(s)
-	return &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Plugins: plugins.New(s, "", nil), Token: token, RetentionDays: retention, Started: time.Now()}
+	server := &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Plugins: plugins.New(s, "", nil), Token: token, RetentionDays: retention, Started: time.Now()}
+	server.Live = live.New(func() *plugins.Manager { return server.Plugins })
+	return server
 }
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -106,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	s.patternRoutes(api)
 	s.alertRoutes(api)
 	s.pluginRoutes(api, mux)
+	s.liveRoutes(api, mux)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {
@@ -410,6 +415,7 @@ func (s *Server) prometheus(w http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) RunBackground(ctx context.Context) {
 	defer s.Plugins.Close()
+	defer s.Live.Close()
 	collectorDone := make(chan struct{})
 	go func() { s.Collector.Run(ctx); close(collectorDone) }()
 	defer func() { <-collectorDone }()

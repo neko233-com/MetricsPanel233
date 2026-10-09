@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
@@ -67,10 +68,12 @@ Usage: metricspanel <command> [flags]
   alerts       list | get | save | import-grafana | evaluate | history | delete
   plugins      list | get | install | catalog | enable | disable | delete
   datasources  list | get | save | health | delete
+  live         channels | watch | publish (watch emits NDJSON)
   schema       Print machine-readable command and API discovery
   version      Print version
 
-All client commands return JSON on stdout. Errors are JSON on stderr (exit 1).
+Client commands return JSON on stdout; live watch emits NDJSON (one event per line).
+Errors are JSON on stderr (exit 1).
 Client flags: --server URL, --token TOKEN, --json (JSON is already the default).
 Environment: METRICSPANEL_URL, METRICSPANEL_TOKEN.
 Run metricspanel <command> --help for command flags.
@@ -93,7 +96,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -120,10 +123,13 @@ func run(args []string) error {
 	start := f.Int64("start", 0, "pattern window start: Unix milliseconds (optional)")
 	end := f.Int64("end", 0, "pattern window end: Unix milliseconds (optional)")
 	normalization := f.String("normalization", "shape", "pattern comparison: shape (remove level/scale) or raw")
-	limit := f.Int("limit", 10, "pattern search result limit (1–100); list limit (1–1000)")
+	limit := f.Int("limit", 10, "pattern search limit (1–100), list limit (1–1000), Live event limit (0 unlimited)")
 	exact := f.Bool("exact", false, "exact vector scan instead of approximate HNSW search")
 	includeSelf := f.Bool("include-self", false, "include the reference pattern in search results")
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
+	channel := f.String("channel", "", "Grafana Live channel: ds/UID/path or plugin/ID/path")
+	metadata := f.String("metadata", "null", "Live subscription metadata (JSON)")
+	duration := f.Duration("duration", time.Minute, "Live watch duration (0 waits until interrupted)")
 	if err := f.Parse(rest); err != nil {
 		return err
 	}
@@ -143,6 +149,42 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "live":
+		switch action {
+		case "channels":
+			return request("GET", "/api/live/channels", nil)
+		case "publish":
+			if _, _, _, err := live.ParseChannel(*channel); err != nil {
+				return err
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if len(data) > 1<<20 || !json.Valid(data) {
+				return errors.New("publication must be JSON under 1 MiB")
+			}
+			return request("POST", "/api/live/publish", map[string]any{"channel": *channel, "data": json.RawMessage(data)})
+		case "watch":
+			if *duration < 0 {
+				return errors.New("--duration must be nonnegative")
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if *duration > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, *duration)
+				defer cancel()
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			err := live.Watch(ctx, live.WatchOptions{Endpoint: client.endpoint, Token: client.token, Channel: *channel, Metadata: json.RawMessage(*metadata), Limit: *limit}, func(event live.Event) error { return encoder.Encode(event) })
+			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				return nil
+			}
+			return err
+		default:
+			return errors.New("live requires channels, watch or publish")
+		}
 	case "plugins":
 		switch action {
 		case "list":
@@ -646,6 +688,10 @@ func schema() any {
 	routes["POST"] = append(routes["POST"], "/api/v1/plugins/install", "/api/v1/plugins/catalog", "/api/v1/plugins/assets-session", "/api/datasources", "/api/ds/query")
 	routes["PUT"] = append(routes["PUT"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
-	result["plugins"] = map[string]any{"frontend_runtime": "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS", "backend_protocol": "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource", "installation": "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive", "secrets": "AES-256-GCM encrypted datasource secrets; back up secrets.key beside the control DB", "unsigned": "only package IDs explicitly allowed by --allow-unsigned-plugin for development", "limits": map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32}, "pending_capabilities": []string{"Grafana Live / chunked streaming", "app pages and app settings", "Angular legacy plugins", "full Grafana core services"}}
+	result["plugins"] = map[string]any{"frontend_runtime": "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS", "backend_protocol": "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource, SubscribeStream, RunStream, PublishStream", "installation": "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive", "secrets": "AES-256-GCM encrypted datasource secrets; back up secrets.key beside the control DB", "unsigned": "only package IDs explicitly allowed by --allow-unsigned-plugin for development", "limits": map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32}, "pending_capabilities": []string{"chunked QueryData streaming", "app pages and app settings", "Angular legacy plugins", "full Grafana core services"}}
+	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
+	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")
+	routes["POST"] = append(routes["POST"], "/api/live/session", "/api/live/publish")
+	result["live"] = map[string]any{"protocol": "Centrifuge JSON WebSocket", "channels": []string{"ds/UID/path", "plugin/ID/path"}, "multiplexing": "one SDK RunStream per channel; cancellation after last subscriber", "watch_output": "NDJSON: type, channel, timestamp, data; initial frame counts toward limit; 0 means unlimited", "limits": map[string]int{"channels": 256, "channels_per_connection": 128, "packet_MiB": 1, "frontend_buffer_rows": 10000}, "durability": "live transport is transient; collection and SQLite/ClickHouse storage remain durable"}
 	return result
 }
