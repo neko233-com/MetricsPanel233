@@ -1,6 +1,7 @@
 import { test as base, expect } from "@playwright/test";
-import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,11 +12,13 @@ const test = base.extend<{}, { endpoint: string }>({
         path.join(os.tmpdir(), "metricspanel233-e2e-"),
       );
       const root = path.resolve(".."),
-        binary = path.join(
-          root,
-          "bin",
-          process.platform === "win32" ? "metricspanel.exe" : "metricspanel",
-        );
+        binary =
+          process.env.METRICSPANEL_TEST_BINARY ||
+          path.join(
+            root,
+            "bin",
+            process.platform === "win32" ? "metricspanel.exe" : "metricspanel",
+          );
       const server = spawn(
         binary,
         [
@@ -24,6 +27,8 @@ const test = base.extend<{}, { endpoint: string }>({
           "127.0.0.1:0",
           "--db",
           path.join(temp, "control.db"),
+          "--allow-unsigned-plugin",
+          "metricspanel-sdk-datasource",
         ],
         {
           cwd: root,
@@ -73,6 +78,229 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(60000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-sdk-e2e-"),
+  );
+  const root = path.resolve(".."),
+    binary = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "fixture.zip");
+  const run = promisify(execFile),
+    errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  try {
+    await run(
+      "go",
+      ["build", "-o", binary, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: root, windowsHide: true },
+    );
+    await run(binary, ["--package", archive], { windowsHide: true });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const source = await page.request.post(endpoint + "/api/datasources", {
+      data: {
+        uid: "frontend-sdk",
+        name: "Frontend SDK",
+        type: "metricspanel-sdk-datasource",
+        secureJsonData: { apiKey: "test-secret-233" },
+      },
+    });
+    expect(source.ok(), await source.text()).toBeTruthy();
+    const dashboard = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: {
+        dashboard: {
+          uid: "frontend-sdk-dashboard",
+          title: "SDK bridge",
+          panels: [
+            {
+              id: 1,
+              type: "stat",
+              title: "SDK value",
+              gridPos: { x: 0, y: 0, w: 24, h: 8 },
+              targets: [
+                {
+                  refId: "A",
+                  value: 233,
+                  datasource: {
+                    uid: "frontend-sdk",
+                    type: "metricspanel-sdk-datasource",
+                  },
+                },
+              ],
+              options: {
+                reduceOptions: { calcs: ["lastNotNull"], values: false },
+              },
+              fieldConfig: { defaults: {}, overrides: [] },
+            },
+          ],
+        },
+        overwrite: true,
+      },
+    });
+    expect(dashboard.ok(), await dashboard.text()).toBeTruthy();
+    await page.goto(endpoint + "/d/frontend-sdk-dashboard/sdk");
+    await expect(page.locator(".grafana-value strong")).toContainText("233", {
+      timeout: 20000,
+    });
+    await page.reload();
+    await expect(page.locator(".grafana-value strong")).toContainText("233");
+    expect(errors).toEqual([]);
+  } finally {
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/frontend-sdk-dashboard",
+    );
+    await page.request.delete(endpoint + "/api/datasources/uid/frontend-sdk");
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-sdk-datasource",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-sdk-e2e-")
+    )
+      throw new Error("Unsafe SDK test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("Plugin management and official signed Clock render from its unchanged AMD package", async ({
+  page,
+  endpoint,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const raw = await readFile(
+    path.resolve("../internal/plugins/testdata/grafana-clock-panel-3.2.4.zip"),
+  );
+  const installed = await page.request.post(
+    endpoint + "/api/v1/plugins/install",
+    { data: raw, headers: { "Content-Type": "application/zip" } },
+  );
+  expect(installed.ok(), await installed.text()).toBeTruthy();
+  expect((await installed.json()).signature).toBe("grafana");
+  const saved = await page.request.post(endpoint + "/api/dashboards/db", {
+    data: {
+      dashboard: {
+        uid: "official-clock",
+        title: "Official Clock",
+        schemaVersion: 41,
+        panels: [
+          {
+            id: 1,
+            title: "Signed clock",
+            type: "grafana-clock-panel",
+            pluginVersion: "3.2.4",
+            gridPos: { x: 0, y: 0, w: 24, h: 10 },
+            targets: [],
+            options: {
+              mode: "time",
+              clockType: "24 hour",
+              timeSettings: { fontSize: "48px", fontWeight: "normal" },
+              dateSettings: {
+                showDate: true,
+                dateFormat: "YYYY-MM-DD",
+                fontSize: "20px",
+                fontWeight: "normal",
+              },
+              timezone: "utc",
+            },
+            fieldConfig: { defaults: {}, overrides: [] },
+          },
+        ],
+      },
+      overwrite: true,
+    },
+  });
+  expect(saved.ok(), await saved.text()).toBeTruthy();
+  await page.goto(endpoint + "/#plugins");
+  await expect(
+    page.getByRole("heading", { name: "Plugins & datasources", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".plugin-row")).toContainText("3.2.4");
+  await page
+    .getByRole("button", { name: "Add datasource", exact: true })
+    .click();
+  await page
+    .getByLabel("Datasource name", { exact: true })
+    .fill("Browser datasource");
+  await page.getByLabel("URL", { exact: true }).fill(endpoint + "/prometheus");
+  await page
+    .getByRole("button", { name: "Save datasource", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".plugin-sources")).toContainText(
+    "Browser datasource",
+  );
+  await page.reload();
+  await expect(page.locator(".plugin-sources")).toContainText(
+    "Browser datasource",
+  );
+  await page
+    .getByRole("button", { name: "Delete Browser datasource", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await expect(page.locator(".plugin-sources")).not.toContainText(
+    "Browser datasource",
+  );
+  await page
+    .getByRole("button", { name: "Switch language", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "插件与数据源", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.goto(endpoint + "/d/official-clock/clock");
+  const content = page.locator(".grafana-plugin-content");
+  await expect(content).toContainText(/\d{2}:\d{2}:\d{2}/, { timeout: 30000 });
+  const before = await content.innerText();
+  await expect
+    .poll(() => content.innerText(), { timeout: 5000 })
+    .not.toBe(before);
+  await page.reload();
+  await expect(content).toContainText(/\d{2}:\d{2}:\d{2}/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(content).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  expect(errors).toEqual([]);
+  expect(
+    (
+      await page.request.delete(endpoint + "/api/dashboards/uid/official-clock")
+    ).ok(),
+  ).toBeTruthy();
+  expect(
+    (
+      await page.request.delete(
+        endpoint + "/api/v1/plugins/grafana-clock-panel",
+      )
+    ).ok(),
+  ).toBeTruthy();
 });
 
 test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI", async ({

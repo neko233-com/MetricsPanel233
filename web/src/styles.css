@@ -416,7 +416,7 @@ pre {
   padding: 0;
   margin: 0;
   flex: none;
-  accent-color: var(--accent);
+  accent-color: var(--orange);
 }
 .pattern-help {
   color: var(--muted);
@@ -519,7 +519,7 @@ pre {
   line-height: 1.65;
 }
 .grafana-text a {
-  color: var(--accent);
+  color: var(--orange);
 }
 .grafana-panel pre {
   white-space: pre-wrap;
@@ -1558,6 +1558,16 @@ dialog::backdrop {
 .stat-panel .form-error {
   padding: 10px 18px;
 }
+.grafana-external-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+}
+.grafana-plugin-content {
+  flex: 1;
+  min-height: 220px;
+  width: 100%;
+}
 .template-grid {
   align-items: start;
 }
@@ -1810,5 +1820,96 @@ dialog::backdrop {
   }
   .alert-filters button {
     padding: 5px 10px;
+  }
+}
+.plugin-list {
+  padding: 0 22px;
+}
+.plugin-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+.plugin-row:first-child {
+  border-top: 0;
+}
+.plugin-icon {
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  color: var(--orange);
+  flex-shrink: 0;
+}
+.plugin-description {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.plugin-description code {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.plugin-meta {
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.plugin-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.plugin-enabled input {
+  width: auto;
+}
+.plugin-sources {
+  margin-top: 24px;
+}
+.plugin-upload {
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  margin-top: 20px;
+}
+.plugin-upload input {
+  margin-top: 8px;
+}
+.section-heading > .subtle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.plugin-sources details {
+  margin-top: 16px;
+}
+.plugin-sources summary {
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  .plugin-list {
+    padding: 0 14px;
+  }
+  .plugin-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .plugin-description {
+    flex-basis: calc(100% - 64px);
+  }
+  .plugin-enabled {
+    margin-left: 60px;
+  }
+  .section-heading > .subtle {
+    display: none;
   }
 }

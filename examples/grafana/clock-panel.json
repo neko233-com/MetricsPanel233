@@ -1,0 +1,23 @@
+{
+  "uid": "metricspanel-clock-example",
+  "title": "Grafana Clock",
+  "schemaVersion": 41,
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Local time",
+      "type": "grafana-clock-panel",
+      "pluginVersion": "3.2.4",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 10 },
+      "targets": [],
+      "options": {
+        "mode": "time",
+        "clockType": "24 hour",
+        "timeSettings": { "fontSize": "48px", "fontWeight": "normal" },
+        "dateSettings": { "showDate": true, "dateFormat": "YYYY-MM-DD", "fontSize": "20px", "fontWeight": "normal" }
+      },
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    }
+  ]
+}

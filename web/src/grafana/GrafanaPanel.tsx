@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   FieldType,
   getFieldDisplayName,
@@ -13,6 +13,7 @@ import { Chart } from "../components/Chart";
 import { message, type Panel, type InterpolationValues } from "../api";
 import { t } from "../i18n";
 import { queryFrames, framesAsSeries } from "./engine";
+const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
   field: Field,
@@ -92,6 +93,22 @@ export default function GrafanaPanel({
   const supported = ["stat", "gauge", "bargauge", "table", "text"].includes(
     type,
   );
+  if (!supported)
+    return (
+      <Suspense
+        fallback={<div className="chart-panel">{t("Loading plugin…")}</div>}
+      >
+        <PluginPanel
+          panel={panel}
+          frames={frames}
+          values={values}
+          range={range}
+          tick={tick}
+          loading={loading}
+          queryError={error}
+        />
+      </Suspense>
+    );
   const reduce = config?.options?.reduceOptions || {},
     reducer = reduce.calcs?.[0] || "lastNotNull";
   let fields = frames.flatMap((frame) =>

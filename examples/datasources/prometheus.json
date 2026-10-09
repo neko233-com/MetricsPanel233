@@ -1,0 +1,8 @@
+{
+  "uid": "remote-prometheus",
+  "name": "Remote Prometheus",
+  "type": "prometheus",
+  "access": "proxy",
+  "url": "http://127.0.0.1:9090",
+  "jsonData": { "httpMethod": "GET", "timeInterval": "15s" }
+}

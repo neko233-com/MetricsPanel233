@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/neko233-com/MetricsPanel233/internal/model"
+	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 )
@@ -62,6 +65,8 @@ Usage: metricspanel <command> [flags]
   dashboards   list | save | export | delete
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | evaluate | history | delete
+  plugins      list | get | install | catalog | enable | disable | delete
+  datasources  list | get | save | health | delete
   schema       Print machine-readable command and API discovery
   version      Print version
 
@@ -88,7 +93,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -118,6 +123,7 @@ func run(args []string) error {
 	limit := f.Int("limit", 10, "pattern search result limit (1–100); list limit (1–1000)")
 	exact := f.Bool("exact", false, "exact vector scan instead of approximate HNSW search")
 	includeSelf := f.Bool("include-self", false, "include the reference pattern in search results")
+	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
 	if err := f.Parse(rest); err != nil {
 		return err
 	}
@@ -137,6 +143,89 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "plugins":
+		switch action {
+		case "list":
+			return request("GET", "/api/v1/plugins", nil)
+		case "get", "enable", "disable", "delete":
+			if *id == "" {
+				return errors.New("--id required")
+			}
+			method := "GET"
+			var payload any
+			if action == "delete" {
+				method = "DELETE"
+			}
+			if action == "enable" || action == "disable" {
+				method = "PUT"
+				payload = map[string]bool{"enabled": action == "enable"}
+			}
+			return request(method, "/api/v1/plugins/"+url.PathEscape(*id), payload)
+		case "catalog":
+			if *id == "" || *pluginVersion == "" {
+				return errors.New("--id and --plugin-version required")
+			}
+			return request("POST", "/api/v1/plugins/catalog", map[string]string{"id": *id, "version": *pluginVersion})
+		case "install":
+			if *file == "-" {
+				return errors.New("plugin installation needs --file ZIP")
+			}
+			f, err := os.Open(*file)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			data, err := io.ReadAll(io.LimitReader(f, plugins.MaxArchiveBytes+1))
+			if err != nil {
+				return err
+			}
+			if len(data) > plugins.MaxArchiveBytes {
+				return errors.New("plugin ZIP exceeds 64 MiB")
+			}
+			result, err := client.uploadPlugin(data)
+			if err != nil {
+				return err
+			}
+			return output(result)
+		default:
+			return errors.New("plugins requires list, get, install, catalog, enable, disable or delete")
+		}
+	case "datasources":
+		switch action {
+		case "list":
+			return request("GET", "/api/datasources", nil)
+		case "get", "health", "delete":
+			if *id == "" {
+				return errors.New("--id required")
+			}
+			method := "GET"
+			path := "/api/datasources/uid/" + url.PathEscape(*id)
+			if action == "health" {
+				path += "/health"
+			}
+			if action == "delete" {
+				method = "DELETE"
+			}
+			return request(method, path, nil)
+		case "save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			var payload any
+			if err = json.Unmarshal(data, &payload); err != nil {
+				return err
+			}
+			method := "POST"
+			path := "/api/datasources"
+			if *id != "" {
+				method = "PUT"
+				path += "/uid/" + url.PathEscape(*id)
+			}
+			return request(method, path, payload)
+		default:
+			return errors.New("datasources requires list, get, save, health or delete")
+		}
 	case "alerts":
 		switch action {
 		case "list":
@@ -360,6 +449,35 @@ func readFile(path string) ([]byte, error) {
 
 type apiClient struct{ endpoint, token string }
 
+func (c apiClient) uploadPlugin(data []byte) (json.RawMessage, error) {
+	req, err := http.NewRequest("POST", c.endpoint+"/api/v1/plugins/install", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	req.Header.Set("Content-Type", "application/zip")
+	req.Header.Set("X-Archive-SHA256", hex.EncodeToString(sum[:]))
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	response, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if !json.Valid(raw) {
+		return nil, errors.New("server returned invalid JSON")
+	}
+	return raw, nil
+}
+
 func (c apiClient) call(method, path string, payload any) (json.RawMessage, error) {
 	var body io.Reader
 	if payload != nil {
@@ -379,7 +497,11 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	timeout := 20 * time.Second
+	if path == "/api/v1/plugins/catalog" {
+		timeout = 60 * time.Second
+	}
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -413,6 +535,9 @@ func serve(args []string) error {
 	backend := f.String("storage", env("METRICSPANEL_STORAGE", "sqlite"), "metrics backend: sqlite or clickhouse")
 	clickhouseURL := f.String("clickhouse-url", env("CLICKHOUSE_URL", "http://127.0.0.1:8123"), "ClickHouse HTTP endpoint")
 	token := f.String("token", env("METRICSPANEL_TOKEN", ""), "API token; mandatory on non-loopback interfaces")
+	pluginDir := f.String("plugins-dir", env("METRICSPANEL_PLUGINS_DIR", ""), "plugin packages directory; default beside the control database")
+	allowUnsigned := f.String("allow-unsigned-plugin", env("METRICSPANEL_ALLOW_UNSIGNED_PLUGINS", ""), "comma-separated development plugin IDs explicitly allowed without signatures")
+	rootURL := f.String("root-url", env("METRICSPANEL_ROOT_URL", "http://127.0.0.1:7333"), "public application URL; used for private plugin signatures")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -456,9 +581,21 @@ func serve(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	srv := server.New(storage, *token, *retention)
+	allowed := []string{}
+	for _, id := range strings.Split(*allowUnsigned, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			if !model.PluginID.MatchString(id) {
+				listener.Close()
+				return errors.New("invalid unsigned plugin ID")
+			}
+			allowed = append(allowed, id)
+		}
+	}
+	srv.Plugins = plugins.New(storage, *pluginDir, allowed)
+	srv.Plugins.RootURL = *rootURL
 	backgroundDone := make(chan struct{})
 	go func() { srv.RunBackground(ctx); close(backgroundDone) }()
-	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 75 * time.Second, IdleTimeout: 60 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
 	slog.Info("MetricsPanel233 started", "address", listener.Addr().String(), "database", *dbPath, "retention_days", *retention, "auth", *token != "")
@@ -504,5 +641,11 @@ func schema() any {
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
 	result["alerting"] = map[string]any{"conditions": []string{"presence (returned samples fire, including zero)", "nonzero (boolean expressions)"}, "states": []string{"Normal", "Pending", "Firing", "Recovering", "NoData", "Error"}, "durability": "SQLite WAL control-plane state, timers and last 100000 transitions survive restarts", "limits": map[string]int{"rules": 1000, "instances_per_query": 1000, "concurrent_evaluations": 4}, "notifications": "external notification delivery is not yet implemented"}
 	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
+	result["commands"] = append(result["commands"].([]string), "plugins list", "plugins get --id ID", "plugins install --file PACKAGE.zip", "plugins catalog --id ID --plugin-version EXACT", "plugins enable --id ID", "plugins disable --id ID", "plugins delete --id PACKAGE_ID", "datasources list", "datasources get --id UID", "datasources save --file FILE|- [--id UID] (update requires version)", "datasources health --id UID", "datasources delete --id UID")
+	routes["GET"] = append(routes["GET"], "/api/v1/plugins", "/api/v1/plugins/{id}", "/api/plugins", "/api/plugins/{id}/settings", "/api/datasources", "/api/datasources/uid/{uid}", "/api/datasources/uid/{uid}/health", "/public/plugins/{id}/{asset}")
+	routes["POST"] = append(routes["POST"], "/api/v1/plugins/install", "/api/v1/plugins/catalog", "/api/v1/plugins/assets-session", "/api/datasources", "/api/ds/query")
+	routes["PUT"] = append(routes["PUT"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
+	routes["DELETE"] = append(routes["DELETE"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
+	result["plugins"] = map[string]any{"frontend_runtime": "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS", "backend_protocol": "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource", "installation": "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive", "secrets": "AES-256-GCM encrypted datasource secrets; back up secrets.key beside the control DB", "unsigned": "only package IDs explicitly allowed by --allow-unsigned-plugin for development", "limits": map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32}, "pending_capabilities": []string{"Grafana Live / chunked streaming", "app pages and app settings", "Angular legacy plugins", "full Grafana core services"}}
 	return result
 }

@@ -101,7 +101,7 @@ export async function api<T>(
 ): Promise<T> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
   const response = await fetch(
-    path.startsWith("/prometheus/") ? path : `/api/v1${path}`,
+    path.startsWith("/prometheus/")||path.startsWith("/api/") ? path : `/api/v1${path}`,
     {
       ...options,
       headers: {

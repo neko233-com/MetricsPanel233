@@ -70,6 +70,44 @@ func TestPatternCLIJSONAndIdempotentCapture(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPluginAndDatasourceCLIJSONLifecycle(t *testing.T) {
+	t.Setenv("METRICSPANEL_TOKEN", "")
+	s, err := store.Open(filepath.Join(t.TempDir(), "control.db"))
+	require.NoError(t, err)
+	defer s.DB.Close()
+	srv := server.New(s, "", 30)
+	defer srv.Plugins.Close()
+	h := httptest.NewServer(srv.Handler())
+	defer h.Close()
+	args := []string{"plugins", "install", "--file", "../../internal/plugins/testdata/grafana-clock-panel-3.2.4.zip", "--server", h.URL}
+	first, err := capture(t, args...)
+	require.NoError(t, err)
+	second, err := capture(t, args...)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(first), string(second))
+	for _, action := range []string{"get", "disable", "enable", "delete"} {
+		result, err := capture(t, "plugins", action, "--id", "grafana-clock-panel", "--server", h.URL)
+		require.NoError(t, err)
+		require.True(t, json.Valid(result))
+	}
+	file := filepath.Join(t.TempDir(), "datasource.json")
+	require.NoError(t, os.WriteFile(file, []byte(`{"uid":"agent-prom","name":"Agent datasource","type":"prometheus","url":"http://localhost:9090"}`), 0600))
+	result, err := capture(t, "datasources", "save", "--file", file, "--server", h.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(result), "agent-prom")
+	for _, action := range []string{"get", "delete"} {
+		_, err = capture(t, "datasources", action, "--id", "agent-prom", "--server", h.URL)
+		require.NoError(t, err)
+	}
+	result, err = capture(t, "datasources", "health", "--id", "metricspanel", "--server", h.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(result), "OK")
+	result, err = capture(t, "schema")
+	require.NoError(t, err)
+	assert.Contains(t, string(result), "plugins install --file")
+	assert.Contains(t, string(result), "/api/ds/query")
+}
+
 func capture(t *testing.T, args ...string) (json.RawMessage, error) {
 	t.Helper()
 	old := os.Stdout

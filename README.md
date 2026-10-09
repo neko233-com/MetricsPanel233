@@ -113,7 +113,7 @@ PromQL 聚合、正则 selector、rate、histogram_quantile、子查询和常用
 - 使用 **Grafana 官方 `@grafana/data`** 的标准转换算子、reducer、单位、阈值颜色和 value mapping；未知转换会明确报错。
 - query / custom / constant / textbox / interval 变量；`label_values`、`label_names`、`metrics`、`query_result`、regex / sort、多选 / All、重复面板。
 - `$__interval`、`$__rate_interval`、`$__range` 等宏，以及 regex / raw / pipe / csv / json 等变量格式；支持 `var-NAME` URL 参数。
-- 原始资源可原样导出，再由 Grafana 本体使用；未知插件配置保留并提示需要渲染器。
+- 原始资源可原样导出，再由 Grafana 本体使用；安装的 React 面板插件通过官方 SDK 加载，未安装的插件显示具体错误。
 - 导入测试包含固定版本的社区 Node Exporter Full 模板。面板按可见区域加载，官方渲染依赖只在模板页加载。
 
 [Go runtime 示例](examples/dashboards/go-runtime.json) 展示真实运行指标、instant 表格转换、仪表和曲线：
@@ -127,7 +127,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
 **当前不是所有 Grafana 插件的替代运行时。** 自定义 panel/data-source 插件、Loki / Tempo、Grafana expression 数据源、
-告警、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+Grafana Live / chunked streaming、应用插件页面、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -157,6 +157,38 @@ ClickHouse 26.8 使用 `Array(Float32)` 和持久化 HNSW，`--exact` 关闭近�
 SQLite 采用精确 top-K 扫描，限制每次最多 50,000 个匹配向量。向量库独立保留，直到主动删除，不随原始指标 TTL 清理。
 ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一个 WAL 数据库中。两种模式均验证了重启持久化。
 向量捕获目前使用原生指标 / 标签查询，尚未直接将任意 PromQL 派生结果转成向量。
+
+## Grafana 插件与数据源
+
+网页「插件」支持安装、启用 / 停用、卸载插件和管理数据源。可从官方目录指定准确版本，也可以上传原始 ZIP。
+默认验证 Grafana 官方 PGP 签名及所有文件的 SHA-256；相同安装包重复安装保留原安装时间，不增加目录。
+React 面板通过共享的 Grafana 13.2.3 `data` / `runtime` / `ui` SDK 运行，支持 AMD 与 SystemJS 包。
+已用未修改的官方 Clock 3.2.4 签名安装包验证实际渲染、时钟更新、页面刷新和移动布局。
+
+```sh
+metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
+metricspanel plugins install --file grafana-clock-panel-3.2.4.zip
+metricspanel plugins list
+metricspanel plugins get --id grafana-clock-panel
+metricspanel plugins disable --id grafana-clock-panel
+metricspanel plugins enable --id grafana-clock-panel
+metricspanel datasources save --file examples/datasources/prometheus.json
+metricspanel datasources list
+metricspanel datasources health --id remote-prometheus
+```
+
+后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、CheckHealth、CallResource；查询返回官方 DataFrame JSON / Arrow 转换结果。
+运行时选择 `<executable>_<GOOS>_<GOARCH>[.exe]`，安装包必须提供当前平台可执行文件；需要系统动态库的插件还需部署相应运行库。
+后端插件最多八个并发请求，不继承应用令牌 / 数据库密码。服务关闭、插件停用或卸载时关闭对应子进程。
+数据源代理支持 HTTP(S)、Basic Auth 和 `jsonData.httpHeaderNameN` / `secureJsonData.httpHeaderValueN`（N=1–32）；插件查询走 `/api/ds/query`。
+
+数据源密钥通过 AES-256-GCM 加密保存。**备份时同时保留 SQLite 数据库、同目录 `secrets.key` 和 `plugins/`**；
+丢失密钥后必须恢复原密钥，不能用新密钥读取旧配置。插件资源只使用限于资源路径的短时 cookie，不授予数据 API 权限。
+`--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
+开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
+
+目前仍未达到完整 Grafana 插件运行时兼容：Live / chunked streaming、应用配置页面、完整插件配置编辑器、旧 Angular 插件和部分核心服务待补齐。
+支持的能力和剩余项也会出现在 `metricspanel schema` 中。
 
 ## 性能、持久化与边界
 
@@ -220,7 +252,7 @@ Windows：`pwsh -File scripts/test-docker.ps1 -Repeat 2`；race 测试需本机 
 不清理其他项目或公共基础镜像，BuildKit 缓存会复用。若进程被强制杀死，下次执行会清理旧项目。
 
 测试涵盖真实 Go 抓取 / 主动上报、MySQL exporter、两种后端的重复写入、应用重启、ClickHouse 重启、
-Grafana 查询 / 模板以及资源清理。
+Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源接口 / 重启及资源清理。
 
 浏览器自动化：先构建网页和 `bin/metricspanel[.exe]`，再运行：
 

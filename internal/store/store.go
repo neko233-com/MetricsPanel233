@@ -14,9 +14,10 @@ import (
 )
 
 type Store struct {
-	DB      *sql.DB
-	Path    string
-	Backend MetricBackend
+	DB        *sql.DB
+	Path      string
+	Backend   MetricBackend
+	secretKey []byte
 }
 
 // MetricBackend separates durable metrics from the small SQLite control plane.
@@ -62,6 +63,29 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db, Path: path}
+	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
+		var exists int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='datasources'`).Scan(&exists); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if exists > 0 {
+			var count int
+			if err := db.QueryRow(`SELECT count(*) FROM datasources`).Scan(&count); err != nil {
+				db.Close()
+				return nil, err
+			}
+			if count > 0 {
+				db.Close()
+				return nil, fmt.Errorf("datasources exist but secrets.key is missing; restore the original key from backup")
+			}
+		}
+	}
+	s.secretKey, err = loadSecretKey(path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS series(id INTEGER PRIMARY KEY, name TEXT NOT NULL, labels TEXT NOT NULL, UNIQUE(name,labels));
 CREATE TABLE IF NOT EXISTS samples(series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE, timestamp INTEGER NOT NULL, value REAL NOT NULL, PRIMARY KEY(series_id,timestamp)) WITHOUT ROWID;
@@ -74,7 +98,9 @@ CREATE TABLE IF NOT EXISTS alert_rules(uid TEXT PRIMARY KEY,version INTEGER NOT 
 CREATE TABLE IF NOT EXISTS alert_schedule(uid TEXT PRIMARY KEY REFERENCES alert_rules(uid) ON DELETE CASCADE,interval_seconds INTEGER NOT NULL,paused INTEGER NOT NULL);
 INSERT OR IGNORE INTO alert_schedule(uid,interval_seconds,paused) SELECT uid,json_extract(config,'$.interval_seconds'),json_extract(config,'$.paused') FROM alert_rules;
 CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL,timestamp INTEGER NOT NULL,payload TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS alert_events_uid ON alert_events(uid,id);`)
+CREATE INDEX IF NOT EXISTS alert_events_uid ON alert_events(uid,id);
+CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
 	if err != nil {
 		db.Close()
 		return nil, err

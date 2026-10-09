@@ -25,6 +25,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
+	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/promcompat"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	webassets "github.com/neko233-com/MetricsPanel233/web"
@@ -35,6 +36,7 @@ type Server struct {
 	Collector     *collector.Collector
 	Alerts        *alerting.Engine
 	Prometheus    *promcompat.API
+	Plugins       *plugins.Manager
 	Token         string
 	RetentionDays int
 	Started       time.Time
@@ -43,7 +45,7 @@ type Server struct {
 
 func New(s *store.Store, token string, retention int) *Server {
 	prom := promcompat.New(s)
-	return &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Token: token, RetentionDays: retention, Started: time.Now()}
+	return &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Plugins: plugins.New(s, "", nil), Token: token, RetentionDays: retention, Started: time.Now()}
 }
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -103,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	s.grafanaRoutes(api, promRoutes)
 	s.patternRoutes(api)
 	s.alertRoutes(api)
+	s.pluginRoutes(api, mux)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {
@@ -184,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 500, err)
 			return
 		}
+		result.Warnings = s.filterPluginWarnings(r.Context(), result.Warnings)
 		writeJSON(w, 200, result)
 	})
 	api.HandleFunc("PUT /api/v1/dashboards/{id}", s.saveDashboard)
@@ -405,6 +409,7 @@ func (s *Server) prometheus(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 func (s *Server) RunBackground(ctx context.Context) {
+	defer s.Plugins.Close()
 	collectorDone := make(chan struct{})
 	go func() { s.Collector.Run(ctx); close(collectorDone) }()
 	defer func() { <-collectorDone }()

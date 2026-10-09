@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Manage Grafana plugins",
+    detail:
+      "Install signed packages and configure durable datasource connections.",
+    command:
+      "metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4\nmetricspanel plugins list\nmetricspanel datasources list\nmetricspanel datasources save --file datasource.json",
+  },
+  {
     title: "Evaluate alert rules",
     detail:
       "Persist rules, evaluate a condition, and inspect state changes as JSON.",

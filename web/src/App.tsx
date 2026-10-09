@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   Monitor,
+  Puzzle,
   Search,
   Server,
   Terminal,
@@ -32,6 +33,7 @@ import { Collectors } from "./features/Collectors";
 import { AgentCLI } from "./features/AgentCLI";
 import { TemplateView } from "./features/TemplateView";
 import { Alerts } from "./features/Alerts";
+import { Plugins } from "./features/Plugins";
 type View =
   | "overview"
   | "dashboards"
@@ -39,6 +41,7 @@ type View =
   | "explore"
   | "collectors"
   | "alerts"
+  | "plugins"
   | "cli";
 const navigation = [
   { id: "overview", name: "Overview", icon: LayoutDashboard },
@@ -46,6 +49,7 @@ const navigation = [
   { id: "explore", name: "Explore", icon: Search },
   { id: "collectors", name: "Collectors", icon: Server },
   { id: "alerts", name: "Alerts", icon: Bell },
+  { id: "plugins", name: "Plugins", icon: Puzzle },
   { id: "cli", name: "Agent CLI", icon: Terminal },
 ] as const;
 export default function App() {
@@ -333,6 +337,7 @@ export default function App() {
             <Collectors targets={targets} reload={load} notify={notify} />
           )}
           {view === "cli" && <AgentCLI />}
+          {view === "plugins" && <Plugins notify={notify} />}
           {view === "alerts" && (
             <Alerts tick={tick} metrics={metrics} notify={notify} />
           )}

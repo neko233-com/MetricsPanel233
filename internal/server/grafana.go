@@ -77,7 +77,7 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 			fail(w, 500, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"id": document["id"], "uid": uid, "slug": slug(saved.Name), "url": "/d/" + url.PathEscape(uid) + "/" + slug(saved.Name), "status": "success", "version": version, "warnings": result.Warnings})
+		writeJSON(w, 200, map[string]any{"id": document["id"], "uid": uid, "slug": slug(saved.Name), "url": "/d/" + url.PathEscape(uid) + "/" + slug(saved.Name), "status": "success", "version": version, "warnings": s.filterPluginWarnings(r.Context(), result.Warnings)})
 	})
 	api.HandleFunc("GET /api/dashboards/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		d, found, err := s.grafanaDashboard(r.Context(), r.PathValue("uid"))
@@ -151,38 +151,7 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 		}
 		writeJSON(w, 200, result[start:end])
 	})
-	datasource := map[string]any{"id": 1, "uid": "metricspanel", "orgId": 1, "name": "MetricsPanel233", "type": "prometheus", "access": "proxy", "url": "/prometheus", "isDefault": true, "jsonData": map[string]any{"httpMethod": "POST", "timeInterval": "5s"}, "secureJsonFields": map[string]any{}}
-	api.HandleFunc("GET /api/datasources", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, []any{datasource}) })
-	api.HandleFunc("GET /api/datasources/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("uid") != "metricspanel" {
-			fail(w, 404, errors.New("datasource not found"))
-			return
-		}
-		writeJSON(w, 200, datasource)
-	})
-	api.HandleFunc("GET /api/datasources/uid/{uid}/health", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("uid") != "metricspanel" {
-			fail(w, 404, errors.New("datasource not found"))
-			return
-		}
-		if err := s.Store.Health(r.Context()); err != nil {
-			fail(w, 503, err)
-			return
-		}
-		writeJSON(w, 200, map[string]string{"status": "OK", "message": "Data source is working"})
-	})
-	api.HandleFunc("/api/datasources/proxy/uid/{uid}/{rest...}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("uid") != "metricspanel" {
-			fail(w, 404, errors.New("datasource not found"))
-			return
-		}
-		clone := r.Clone(r.Context())
-		path := *r.URL
-		path.Path = "/" + r.PathValue("rest")
-		path.RawPath = ""
-		clone.URL = &path
-		prometheus.ServeHTTP(w, clone)
-	})
+	s.datasourceRoutes(api, prometheus)
 }
 
 func (s *Server) grafanaDashboard(ctx context.Context, uid string) (model.Dashboard, bool, error) {

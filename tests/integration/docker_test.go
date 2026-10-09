@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/neko233-com/MetricsPanel233/internal/analysis"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
@@ -89,6 +91,60 @@ func (e environment) must(address, method, path string, payload any) []byte {
 	require.NoError(e.t, err)
 	require.Equal(e.t, 200, status, string(data))
 	return data
+}
+
+func (e environment) installPlugin(address string, raw []byte) []byte {
+	e.t.Helper()
+	request, err := http.NewRequest("POST", address+"/api/v1/plugins/install", bytes.NewReader(raw))
+	require.NoError(e.t, err)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/zip")
+	response, err := e.client.Do(request)
+	require.NoError(e.t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(e.t, err)
+	require.Equal(e.t, 200, response.StatusCode, string(body))
+	return body
+}
+
+func (e environment) sdkArchive(t *testing.T) []byte {
+	t.Helper()
+	architecture, err := e.docker("info", "--format", "{{.Architecture}}")
+	require.NoError(t, err)
+	arch := map[string]string{"x86_64": "amd64", "aarch64": "arm64", "amd64": "amd64", "arm64": "arm64"}[architecture]
+	require.NotEmpty(t, arch, "unsupported test Docker architecture")
+	name := "fixture_linux_" + arch
+	binary := filepath.Join(t.TempDir(), name)
+	command := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", binary, "./internal/plugins/testdata/sdk-backend")
+	command.Dir = e.root
+	command.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	executable, err := os.ReadFile(binary)
+	require.NoError(t, err)
+	var archive bytes.Buffer
+	z := zip.NewWriter(&archive)
+	files := map[string][]byte{"plugin.json": []byte(`{"id":"metricspanel-sdk-datasource","name":"SDK Fixture","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaVersion":">=12"}}`), "module.js": []byte(`System.register([],function(){return {execute:function(){}}})`), name: executable}
+	for name, body := range files {
+		f, err := z.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write(body)
+		require.NoError(t, err)
+	}
+	require.NoError(t, z.Close())
+	return archive.Bytes()
+}
+func (e environment) verifySDKPlugin(address string) {
+	e.t.Helper()
+	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/health", nil)), "Grafana SDK backend is working")
+	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/resources/check?round=233", nil)), `"uid":"docker-sdk"`)
+	now := time.Now().UnixMilli()
+	raw := e.must(address, "POST", "/api/ds/query", map[string]any{"from": strconv.FormatInt(now-60000, 10), "to": strconv.FormatInt(now, 10), "queries": []any{map[string]any{"refId": "A", "value": 233, "datasource": map[string]string{"uid": "docker-sdk", "type": "metricspanel-sdk-datasource"}}}})
+	var result backend.QueryDataResponse
+	require.NoError(e.t, json.Unmarshal(raw, &result))
+	require.Len(e.t, result.Responses["A"].Frames, 1)
+	assert.Equal(e.t, float64(233), result.Responses["A"].Frames[0].Fields[1].At(0))
 }
 func (e environment) value(address, metric string) (float64, bool) {
 	status, data, err := e.request(address, "GET", "/api/v1/query?"+url.Values{"metric": {metric}, "range": {"15m"}, "aggregation": {"last"}}.Encode(), nil)
@@ -318,6 +374,9 @@ func TestDockerEndToEnd(t *testing.T) {
 	})
 	_, err = e.compose("down", "--volumes", "--remove-orphans")
 	require.NoError(t, err)
+	sdkArchive := e.sdkArchive(t)
+	clockArchive, err := os.ReadFile(filepath.Join(root, "internal/plugins/testdata/grafana-clock-panel-3.2.4.zip"))
+	require.NoError(t, err)
 	var out string
 	for attempt := 1; attempt <= 3; attempt++ {
 		out, err = e.compose("build", "sqlite", "go-sqlite")
@@ -342,6 +401,12 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.t = t
 			address := e.address(backend.service)
 			e.must(address, "GET", "/api/v1/health", nil)
+			first := e.installPlugin(address, clockArchive)
+			assert.JSONEq(t, string(first), string(e.installPlugin(address, clockArchive)))
+			first = e.installPlugin(address, sdkArchive)
+			assert.JSONEq(t, string(first), string(e.installPlugin(address, sdkArchive)))
+			e.must(address, "POST", "/api/datasources", map[string]any{"uid": "docker-sdk", "name": "Docker SDK datasource", "type": "metricspanel-sdk-datasource", "secureJsonData": map[string]string{"apiKey": "test-secret-233"}})
+			e.verifySDKPlugin(address)
 			for _, target := range []model.Target{{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true}, {Name: "go", URL: "http://" + backend.goService + ":8080/metrics", IntervalSeconds: 5, Enabled: true}} {
 				e.must(address, "POST", "/api/v1/targets", target)
 			}
@@ -403,6 +468,17 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, err)
 			address = e.address(backend.service)
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
+			e.verifySDKPlugin(address)
+			data = e.must(address, "GET", "/api/v1/plugins/grafana-clock-panel", nil)
+			assert.Contains(t, string(data), `"signature":"grafana"`)
+			data = e.must(address, "GET", "/public/plugins/grafana-clock-panel/module.js", nil)
+			assert.Contains(t, string(data), "define(")
+			e.must(address, "DELETE", "/api/datasources/uid/docker-sdk", nil)
+			e.must(address, "DELETE", "/api/v1/plugins/metricspanel-sdk-datasource", nil)
+			e.must(address, "DELETE", "/api/v1/plugins/grafana-clock-panel", nil)
+			directories, err := e.compose("exec", "-T", backend.service, "find", "/data/plugins", "-mindepth", "1", "-maxdepth", "1")
+			require.NoError(t, err)
+			assert.Empty(t, directories, "uninstall left plugin directories")
 			data = e.must(address, "GET", "/api/v1/alerts/rules/docker-alert", nil)
 			var after model.AlertRuleView
 			require.NoError(t, json.Unmarshal(data, &after))

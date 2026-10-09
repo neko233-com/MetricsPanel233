@@ -10,13 +10,22 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@emotion/css": "11.13.5",
+    "@emotion/react": "11.14.0",
     "@grafana/data": "13.2.3",
+    "@grafana/runtime": "13.2.3",
+    "@grafana/ui": "13.2.3",
     "dompurify": "^3.4.16",
+    "i18next": "25.4.0",
+    "lodash": "4.18.1",
     "lucide-react": "^0.577.0",
     "marked": "^16.3.0",
+    "moment": "2.31.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "rxjs": "^7.8.2"
+    "react-router": "7.18.4",
+    "rxjs": "^7.8.2",
+    "systemjs": "6.15.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",
@@ -26,5 +35,11 @@
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.3.0"
+  },
+  "overrides": {
+    "react-router-dom-v5-compat": "npm:react-router-dom@7.18.4",
+    "react-router-dom": {
+      "react-router": "5.3.4"
+    }
   }
 }

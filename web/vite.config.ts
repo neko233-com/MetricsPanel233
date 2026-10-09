@@ -7,6 +7,8 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:7333",
       "/metrics": "http://127.0.0.1:7333",
+      "/prometheus": "http://127.0.0.1:7333",
+      "/public/plugins": "http://127.0.0.1:7333",
     },
   },
 });

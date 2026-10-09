@@ -4,6 +4,8 @@ import {
   fieldMatchers,
   getDisplayProcessor,
   getFieldDisplayName,
+  dateTime,
+  toDataFrame,
   standardTransformers,
   standardTransformersRegistry,
   transformDataFrame,
@@ -24,6 +26,7 @@ import {
 
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
+  [key: string]: unknown;
   expr?: string;
   refId?: string;
   legendFormat?: string;
@@ -83,7 +86,7 @@ type PromResponse = {
   data: { resultType: string; result: PromSeries[] | [number, string] };
 };
 
-function framesFromResponse(
+export function framesFromResponse(
   response: PromResponse,
   target: GrafanaTarget,
   instant: boolean,
@@ -192,11 +195,71 @@ export async function queryFrames(
     targets
       .filter((t) => !t.hide)
       .map(async (target, i) => {
+        const source = target.datasource || config?.datasource;
+        const uid = interpolate(
+          typeof source === "object" ? source.uid || "" : source || "",
+          values,
+          range,
+        );
+        if (
+          uid &&
+          uid !== "metricspanel" &&
+          uid !== "default" &&
+          uid !== "prometheus" &&
+          uid !== "-- Mixed --"
+        ) {
+          const { getPluginDatasource, setPluginVariables } = await import(
+            "./plugin-runtime"
+          );
+          setPluginVariables(values, range);
+          const datasource = await getPluginDatasource(uid);
+          const { firstValueFrom, from, fromEvent, takeUntil, timeout } =
+            await import("rxjs");
+          if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+          const response = await firstValueFrom(
+            from(
+              datasource.query({
+                requestId: `${panel.id}-${i}-${Date.now()}`,
+                interval: `${Math.max(1, Math.ceil((end - start) / 240))}s`,
+                intervalMs: Math.max(
+                  1000,
+                  Math.ceil((end - start) / 240) * 1000,
+                ),
+                targets: [
+                  {
+                    ...target,
+                    refId: target.refId || String.fromCharCode(65 + i),
+                    datasource: { uid: datasource.uid, type: datasource.type },
+                  },
+                ],
+                range: {
+                  from: dateTime(start * 1000),
+                  to: dateTime(end * 1000),
+                  raw: { from: "now-" + range, to: "now" },
+                },
+                scopedVars: Object.fromEntries(
+                  Object.entries(values).map(([name, value]) => [
+                    name,
+                    { text: value, value },
+                  ]),
+                ),
+                timezone: "browser",
+                app: "dashboard",
+                startTime: Date.now(),
+                maxDataPoints: 240,
+              }),
+            ).pipe(takeUntil(fromEvent(signal, "abort")), timeout(20000)),
+          );
+          if (response.error)
+            throw new Error(
+              response.error.message || "Datasource query failed",
+            );
+          return response.data.map((frame) => toDataFrame(frame));
+        }
         if (!target.expr)
           throw new Error(
             `Query ${target.refId || i + 1} has no PromQL expression`,
           );
-        const source = target.datasource || config?.datasource;
         const datasource =
           typeof source === "object"
             ? source.type

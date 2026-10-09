@@ -69,11 +69,42 @@ Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/das
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
-**Full Grafana ecosystem parity is not implemented.** Custom plugins, non-Prometheus/expression datasources, alerts, annotations,
-folders/organizations/permissions, library panels and the full backend API remain unfinished.
+**Full Grafana ecosystem parity remains unfinished.** Grafana Live/chunked streaming, app plugin pages, legacy Angular plugins,
+annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
 Full compatibility remains an objective, not a claim for this release.
+
+## Grafana plugins and datasources
+
+The Plugins page installs original ZIP packages or exact versions from the official catalog, enables/disables plugins and manages datasources.
+Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.
+React panels share Grafana 13.2.3's public data/runtime/ui packages; AMD and SystemJS bundles are supported.
+The unchanged official signed Clock 3.2.4 package is tested for rendering, live clock updates, reloads and mobile layout.
+
+```sh
+metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
+metricspanel plugins install --file grafana-clock-panel-3.2.4.zip
+metricspanel plugins list
+metricspanel plugins disable --id grafana-clock-panel
+metricspanel plugins enable --id grafana-clock-panel
+metricspanel datasources save --file examples/datasources/prometheus.json
+metricspanel datasources health --id remote-prometheus
+```
+
+Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, CheckHealth and CallResource, including official DataFrame JSON/Arrow conversion.
+Packages need `<executable>_<GOOS>_<GOARCH>[.exe]` for the host platform. Plugins using dynamic system libraries need those libraries installed.
+At most eight backend requests run concurrently. Plugin processes do not inherit workspace tokens/database passwords and exit on server shutdown, disable or uninstall.
+The datasource proxy supports HTTP(S), Basic Auth and secure custom headers. Plugin queries use `/api/ds/query`.
+
+Datasource secrets are encrypted with AES-256-GCM. **Back up the control database, adjacent `secrets.key` and `plugins/` together.**
+An existing datasource database without its original key fails to open with a restore instruction.
+Plugin assets use a short-lived cookie restricted to asset paths; that cookie cannot authorize data APIs.
+`--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
+Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
+
+Live/chunked streaming, app configuration/pages, complete plugin configuration editors, legacy Angular and some core services are still pending.
+The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
 
 ## Vector pattern analysis
 
