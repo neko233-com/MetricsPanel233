@@ -516,6 +516,10 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 		if query.IntervalMS == 0 {
 			query.IntervalMS = input.IntervalMS
 		}
+		if query.IntervalMS < 0 || query.IntervalMS > int64((1<<63-1)/time.Millisecond) {
+			fail(w, 400, errors.New("intervalMs must be nonnegative and within the duration limit"))
+			return
+		}
 		if query.IntervalMS < 1000 {
 			query.IntervalMS = 15000
 		}
@@ -530,6 +534,13 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		groups[query.Datasource.UID] = append(groups[query.Datasource.UID], backend.DataQuery{RefID: query.RefID, QueryType: query.QueryType, JSON: raw, Interval: time.Duration(query.IntervalMS) * time.Millisecond, MaxDataPoints: query.MaxDataPoints, TimeRange: backend.TimeRange{From: time.UnixMilli(from), To: time.UnixMilli(to)}})
+	}
+	s.writeQueryGroups(w, r, groups)
+}
+func (s *Server) writeQueryGroups(w http.ResponseWriter, r *http.Request, groups map[string][]backend.DataQuery) {
+	if requestsChunks(r.Header.Get("Accept")) {
+		s.streamQueryGroups(w, r, groups)
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()

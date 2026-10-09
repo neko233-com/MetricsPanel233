@@ -111,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	s.alertRoutes(api)
 	s.pluginRoutes(api, mux)
 	s.appRoutes(api)
+	s.chunkedRoutes(api)
 	s.liveRoutes(api, mux)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +210,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]bool{"deleted": true})
 	})
 	mux.Handle("/api/", s.protect(api))
+	mux.Handle("/apis/", s.protect(api))
 	mux.Handle("GET /metrics", s.protect(http.HandlerFunc(s.prometheus)))
 	assets := webassets.Files
 	files := http.FileServer(http.FS(assets))

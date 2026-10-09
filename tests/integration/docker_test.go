@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -54,6 +55,13 @@ func (e environment) docker(args ...string) (string, error) {
 }
 func (e environment) compose(args ...string) (string, error) {
 	return e.docker(append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
+}
+func (e environment) composeInput(input string, args ...string) (string, error) {
+	command := exec.Command("docker", append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
+	command.Dir = e.root
+	command.Stdin = strings.NewReader(input)
+	output, err := command.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
 }
 func (e environment) address(service string) string {
 	e.t.Helper()
@@ -162,6 +170,45 @@ func (e environment) verifySDKPlugin(address, service string) {
 	require.NoError(e.t, json.Unmarshal(raw, &result))
 	require.Len(e.t, result.Responses["A"].Frames, 1)
 	assert.Equal(e.t, float64(233), result.Responses["A"].Frames[0].Fields[1].At(0))
+	chunkQuery := `{"from":"now-1m","to":"now","queries":[{"refId":"A","value":233,"chunks":3,"delayMs":100,"requireApp":true}]}`
+	chunkOutput, err := e.composeInput(chunkQuery, "exec", "-T", service, "metricspanel", "datasources", "query", "--id", "docker-sdk", "--stream", "--file", "-")
+	require.NoError(e.t, err, chunkOutput)
+	chunkLines := strings.Split(chunkOutput, "\n")
+	require.Len(e.t, chunkLines, 3)
+	assert.Contains(e.t, chunkLines[0], `"schema"`)
+	assert.Contains(e.t, chunkLines[0], "上海🌍")
+	assert.NotContains(e.t, chunkLines[1], `"schema"`)
+	assert.Contains(e.t, chunkLines[2], "235")
+	failedOutput, err := e.composeInput(`{"from":"now-1m","to":"now","queries":[{"refId":"A","value":233,"chunks":1},{"refId":"B","fail":true}]}`, "exec", "-T", service, "metricspanel", "datasources", "query", "--id", "docker-sdk", "--stream", "--file", "-")
+	require.Error(e.t, err)
+	assert.Contains(e.t, failedOutput, `"frame"`)
+	assert.Contains(e.t, failedOutput, "fixture chunked query failed")
+	assert.Contains(e.t, failedOutput, "1 datasource queries failed")
+	// Real Linux SDK cancellation must work after the first HTTP flush.
+	chunkCtx, stopChunk := context.WithCancel(context.Background())
+	defer stopChunk()
+	chunkRequest, err := http.NewRequestWithContext(chunkCtx, "POST", address+"/apis/metricspanel-sdk-datasource.datasource.grafana.app/v0alpha1/namespaces/default/connections/docker-sdk/query", strings.NewReader(`{"from":"now-1m","to":"now","queries":[{"refId":"A","value":233,"chunks":1000,"delayMs":100}]}`))
+	require.NoError(e.t, err)
+	chunkRequest.Header.Set("Authorization", "Bearer "+token)
+	chunkRequest.Header.Set("Content-Type", "application/json")
+	chunkRequest.Header.Set("Accept", "text/jsonl")
+	chunkResponse, err := e.client.Do(chunkRequest)
+	require.NoError(e.t, err)
+	defer chunkResponse.Body.Close()
+	require.Equal(e.t, 200, chunkResponse.StatusCode)
+	_, err = bufio.NewReader(chunkResponse.Body).ReadBytes('\n')
+	require.NoError(e.t, err)
+	var chunkCounters map[string]int
+	raw = e.must(address, "GET", "/api/datasources/uid/docker-sdk/resources/chunked-stats", nil)
+	require.NoError(e.t, json.Unmarshal(raw, &chunkCounters))
+	assert.Equal(e.t, 1, chunkCounters["active"], "chunked HTTP buffered until backend completion")
+	beforeChunkCancellation := chunkCounters["cancelled"]
+	stopChunk()
+	chunkResponse.Body.Close()
+	require.Eventually(e.t, func() bool {
+		status, raw, err := e.request(address, "GET", "/api/datasources/uid/docker-sdk/resources/chunked-stats", nil)
+		return err == nil && status == 200 && json.Unmarshal(raw, &chunkCounters) == nil && chunkCounters["active"] == 0 && chunkCounters["cancelled"] > beforeChunkCancellation
+	}, 5*time.Second, 20*time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	events := []live.Event{}

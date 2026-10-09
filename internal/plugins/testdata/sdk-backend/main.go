@@ -7,12 +7,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fixture struct{}
@@ -24,7 +29,117 @@ function Config({plugin}){const [label,setLabel]=React.useState(plugin.meta.json
 const plugin=new data.AppPlugin().setRootPage(Root).addConfigPage({id:'configuration',title:'SDK settings',body:Config});plugin.init=async function(){initCalls++};_export('plugin',plugin)
 }}})`
 
+// This external plugin intentionally uses only the public Grafana SDK imports.
+// It exercises BackendSrv.chunked, including schema-once DataFrame appends.
+const datasourceModule = `System.register(["@grafana/data","@grafana/runtime","rxjs"],function(_export){let data,runtime,rx;return{setters:[m=>data=m,m=>runtime=m,m=>rx=m],execute:function(){
+class Fixture extends runtime.DataSourceWithBackend {
+constructor(settings){super(settings);this.uid=settings.uid}
+query(request){
+if(request.targets.some(t=>t.directLive)){return runtime.getGrafanaLiveSrv().getDataStream({addr:{scope:"ds",namespace:this.uid,path:"counter"},filter:{fields:["Value"]},buffer:{maxLength:3}})}
+if(!request.targets.some(t=>t.directChunks)){return super.query(request)}
+return new rx.Observable(observer=>{
+const frames=new Map(),errors=new Map(),decoder=new TextDecoder('utf-8',{fatal:true});let pending='',total=0;
+const emit=state=>observer.next({data:Array.from(frames.values(),entry=>entry.frame),state,error:errors.size?{message:Array.from(errors,([ref,message])=>ref+': '+message).join('; ')}:undefined});
+const line=value=>{
+if(!value)return;const chunk=JSON.parse(value);if(chunk.error)errors.set(chunk.refId,chunk.error);
+if(chunk.frame){const key=JSON.stringify([chunk.refId,chunk.frameId]),previous=frames.get(key),schema=chunk.frame.schema||previous?.schema;if(!schema)throw new Error('Missing initial chunk schema');const next=data.dataFrameFromJSON({schema,data:chunk.frame.data});next.refId=chunk.refId;
+if(previous){next.fields=next.fields.map((field,index)=>({...field,values:previous.frame.fields[index].values.concat(field.values)}));next.length=previous.frame.length+next.length}
+if(next.length>10000)throw new Error('Fixture frame row limit exceeded');frames.set(key,{schema,frame:next})}
+emit(data.LoadingState.Streaming)
+};
+const consume=bytes=>{pending+=decoder.decode(bytes,{stream:true});let boundary;while((boundary=pending.indexOf('\n'))>=0){line(pending.slice(0,boundary));pending=pending.slice(boundary+1)}if(pending.length>8*1024*1024)throw new Error('Chunk line limit exceeded')};
+const listener=runtime.getBackendSrv().chunked({url:'/apis/'+this.type+'.datasource.grafana.app/v0alpha1/namespaces/default/connections/'+this.uid+'/query',method:'POST',headers:{Accept:'text/jsonl'},data:{from:String(request.range.from.valueOf()),to:String(request.range.to.valueOf()),queries:request.targets.map(target=>({...target,intervalMs:request.intervalMs,maxDataPoints:request.maxDataPoints}))}}).subscribe({next:response=>{try{if(response.status>=300)throw new Error('Query HTTP '+response.status);if(response.data){total+=response.data.byteLength;if(total>32*1024*1024)throw new Error('Query byte limit exceeded');if(request.targets.some(t=>t.fragmentUTF8)){for(const byte of response.data)consume(new Uint8Array([byte]))}else consume(response.data)}else{pending+=decoder.decode();if(pending.trim())throw new Error('Truncated query line');emit(data.LoadingState.Done)}}catch(error){observer.error(error)}},error:error=>observer.error(error),complete:()=>observer.complete()});
+return()=>listener.unsubscribe()
+})
+}}
+_export('plugin',new data.DataSourcePlugin(Fixture))
+}}})`
+
 var liveStarted, liveActive, liveCancelled, staticQueries atomic.Int64
+var chunkedStarted, chunkedActive, chunkedCancelled atomic.Int64
+var chunkedRefs sync.Map
+
+func (fixture) QueryChunkedData(ctx context.Context, r *backend.QueryChunkedDataRequest, writer backend.ChunkedDataWriter) error {
+	// Older Data servers return this gRPC status for the absent streaming RPC.
+	if strings.Contains(filepath.Base(os.Args[0]), "_legacy_") {
+		return status.Error(codes.Unimplemented, "legacy fixture has no chunked RPC")
+	}
+	chunkedStarted.Add(1)
+	chunkedActive.Add(1)
+	defer func() {
+		chunkedActive.Add(-1)
+		if ctx.Err() != nil {
+			chunkedCancelled.Add(1)
+		}
+	}()
+	for _, query := range r.Queries {
+		counter, _ := chunkedRefs.LoadOrStore(query.RefID, &atomic.Int64{})
+		counter.(*atomic.Int64).Add(1)
+		var input struct {
+			Value                   float64 `json:"value"`
+			Chunks                  int     `json:"chunks"`
+			DelayMS                 int     `json:"delayMs"`
+			FirstDelayMS            int     `json:"firstDelayMs"`
+			RequireApp              bool    `json:"requireApp"`
+			UnknownRef              bool    `json:"unknownRef"`
+			Fail                    bool    `json:"fail"`
+			Secondary               bool    `json:"secondary"`
+			UnimplementedAfterChunk bool    `json:"unimplementedAfterChunk"`
+		}
+		if err := json.Unmarshal(query.JSON, &input); err != nil {
+			return err
+		}
+		if input.Fail {
+			if err := writer.WriteError(ctx, query.RefID, backend.StatusBadRequest, fmt.Errorf("fixture chunked query failed")); err != nil {
+				return err
+			}
+			continue
+		}
+		settings := r.PluginContext.DataSourceInstanceSettings
+		if settings == nil || settings.DecryptedSecureJSONData["apiKey"] != "test-secret-233" {
+			return fmt.Errorf("decrypted datasource secret missing")
+		}
+		if input.RequireApp && (r.PluginContext.AppInstanceSettings == nil || r.PluginContext.AppInstanceSettings.DecryptedSecureJSONData["apiKey"] != "app-secret-233") {
+			return fmt.Errorf("decrypted app secret missing")
+		}
+		if input.Chunks <= 0 {
+			input.Chunks = 3
+		}
+		if input.Chunks > 1000 || input.DelayMS < 0 || input.DelayMS > 3000 || input.FirstDelayMS < 0 || input.FirstDelayMS > 3000 {
+			return fmt.Errorf("invalid fixture chunk count/delay")
+		}
+		for index := 0; index < input.Chunks; index++ {
+			delay := input.DelayMS
+			if index == 0 {
+				delay = input.FirstDelayMS
+			}
+			if delay > 0 {
+				select {
+				case <-time.After(time.Duration(delay) * time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			frame := data.NewFrame("sdk-chunked", data.NewField("Time", nil, []time.Time{query.TimeRange.To.Add(time.Duration(index) * time.Second)}), data.NewField("Value", data.Labels{"source": settings.UID}, []float64{input.Value + float64(index)}), data.NewField("Region", nil, []string{"上海🌍"}))
+			if input.UnknownRef {
+				return writer.WriteFrame(ctx, "unknown", "primary", frame)
+			}
+			if err := writer.WriteFrame(ctx, query.RefID, "primary", frame); err != nil {
+				return err
+			}
+			if input.Secondary {
+				second := data.NewFrame("sdk-secondary", data.NewField("Value", nil, []float64{input.Value*2 + float64(index)}))
+				if err := writer.WriteFrame(ctx, query.RefID, "secondary", second); err != nil {
+					return err
+				}
+			}
+			if input.UnimplementedAfterChunk {
+				return status.Error(codes.Unimplemented, "fixture failed after first chunk")
+			}
+		}
+	}
+	return nil
+}
 
 func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	out := backend.NewQueryDataResponse()
@@ -76,18 +191,27 @@ func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest,
 	if r.Path == "stream-stats" {
 		body, _ = json.Marshal(map[string]int64{"started": liveStarted.Load(), "active": liveActive.Load(), "cancelled": liveCancelled.Load(), "static_queries": staticQueries.Load()})
 	}
+	if r.Path == "chunked-stats" {
+		counters := map[string]int64{"started": chunkedStarted.Load(), "active": chunkedActive.Load(), "cancelled": chunkedCancelled.Load(), "static_queries": staticQueries.Load()}
+		chunkedRefs.Range(func(ref, counter any) bool {
+			counters["ref_"+ref.(string)] = counter.(*atomic.Int64).Load()
+			return true
+		})
+		body, _ = json.Marshal(counters)
+	}
 	return sender.Send(&backend.CallResourceResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
 }
 func main() {
-	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app") {
-		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app"); err != nil {
+	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app" || os.Args[1] == "--package-legacy") {
+		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app", os.Args[1] == "--package-legacy"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
 	f := fixture{}
-	if err := backend.Manage("metricspanel-sdk-datasource", backend.ServeOpts{QueryDataHandler: f, CheckHealthHandler: f, CallResourceHandler: f, StreamHandler: f}); err != nil {
+	opts := backend.ServeOpts{QueryDataHandler: f, QueryChunkedDataHandler: f, CheckHealthHandler: f, CallResourceHandler: f, StreamHandler: f}
+	if err := backend.Manage("metricspanel-sdk-datasource", opts); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -136,8 +260,12 @@ func (fixture) RunStream(ctx context.Context, r *backend.RunStreamRequest, sende
 	}
 }
 
-func packageVariant(destination string, app bool) error {
-	name := "fixture_" + runtime.GOOS + "_" + runtime.GOARCH
+func packageVariant(destination string, app, legacy bool) error {
+	prefix := "fixture"
+	if legacy {
+		prefix += "_legacy"
+	}
+	name := prefix + "_" + runtime.GOOS + "_" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -155,8 +283,11 @@ func packageVariant(destination string, app bool) error {
 	}
 	defer file.Close()
 	archive := zip.NewWriter(file)
-	module := `System.register(["@grafana/data","@grafana/runtime"],function(_export){let data,runtime;return{setters:[function(m){data=m},function(m){runtime=m}],execute:function(){class Fixture extends runtime.DataSourceWithBackend{constructor(settings){super(settings);this.uid=settings.uid}query(request){if(request.targets.some(t=>t.directLive)){return runtime.getGrafanaLiveSrv().getDataStream({addr:{scope:"ds",namespace:this.uid,path:"counter"},filter:{fields:["Value"]},buffer:{maxLength:3}})}return super.query(request)}};_export("plugin",new data.DataSourcePlugin(Fixture))}}})`
+	module := datasourceModule
 	files := map[string][]byte{"plugin.json": []byte(`{"id":"metricspanel-sdk-datasource","name":"SDK Fixture","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`), "module.js": []byte(module), name: binary}
+	if legacy {
+		files["plugin.json"] = []byte(strings.ReplaceAll(string(files["plugin.json"]), `"executable":"fixture"`, `"executable":"fixture_legacy"`))
+	}
 	if app {
 		files["plugin.json"] = []byte(`{"id":"metricspanel-sdk-app","name":"SDK App Fixture","type":"app","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`)
 		files["child/plugin.json"] = []byte(`{"id":"metricspanel-sdk-datasource","name":"Bundled SDK datasource","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`)

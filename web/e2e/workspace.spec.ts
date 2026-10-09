@@ -304,6 +304,117 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
     });
     await page.reload();
     await expect(page.locator(".grafana-value strong")).toContainText("233");
+    const chunkStats = async () =>
+      (
+        await page.request.get(
+          endpoint +
+            "/api/datasources/uid/frontend-sdk/resources/chunked-stats",
+        )
+      ).json();
+    const chunkTarget = {
+      refId: "A",
+      value: 233,
+      directChunks: true,
+      fragmentUTF8: true,
+      datasource: { uid: "frontend-sdk", type: "metricspanel-sdk-datasource" },
+    };
+    const chunksSaved = await page.request.post(
+      endpoint + "/api/dashboards/db",
+      {
+        data: {
+          overwrite: true,
+          dashboard: {
+            uid: "frontend-chunks-dashboard",
+            title: "SDK chunked queries",
+            panels: [
+              {
+                id: 1,
+                type: "stat",
+                title: "Progressive sums",
+                gridPos: { x: 0, y: 0, w: 12, h: 8 },
+                targets: [
+                  { ...chunkTarget, chunks: 8, delayMs: 1000, secondary: true },
+                  { ...chunkTarget, refId: "B", fail: true },
+                ],
+                options: { reduceOptions: { calcs: ["sum"], values: false } },
+                fieldConfig: { defaults: { decimals: 0 }, overrides: [] },
+              },
+              {
+                id: 2,
+                type: "table",
+                title: "Unicode append",
+                gridPos: { x: 12, y: 0, w: 12, h: 8 },
+                targets: [
+                  { ...chunkTarget, refId: "T", chunks: 3, delayMs: 400 },
+                ],
+                options: {},
+                fieldConfig: { defaults: {}, overrides: [] },
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(chunksSaved.ok(), await chunksSaved.text()).toBeTruthy();
+    await page.goto(endpoint + "/d/frontend-chunks-dashboard/chunks");
+    const sums = page.getByRole("region", {
+      name: "Progressive sums",
+      exact: true,
+    });
+    await expect(sums.locator(".grafana-value strong")).toHaveText([
+      "233",
+      "466",
+    ]);
+    expect((await chunkStats()).active).toBeGreaterThan(0);
+    const table = page.getByRole("region", {
+      name: "Unicode append",
+      exact: true,
+    });
+    await expect(table.getByText("上海🌍", { exact: true })).toHaveCount(3);
+    // Seven seconds crosses the app refresh boundary; no extra finite request is allowed.
+    await expect(sums.locator(".grafana-value strong")).toHaveText(
+      ["1892", "3756"],
+      { timeout: 15000 },
+    );
+    await expect(sums.getByRole("alert")).toContainText(
+      "B: fixture chunked query failed",
+    );
+    await expect
+      .poll(chunkStats)
+      .toMatchObject({ ref_A: 1, ref_B: 1, active: 0 });
+    const cancelSaved = await page.request.post(
+      endpoint + "/api/dashboards/db",
+      {
+        data: {
+          overwrite: true,
+          dashboard: {
+            uid: "frontend-chunks-cancel",
+            title: "Cancel chunk query",
+            panels: [
+              {
+                id: 1,
+                type: "stat",
+                title: "Long chunk query",
+                gridPos: { x: 0, y: 0, w: 24, h: 8 },
+                targets: [{ ...chunkTarget, chunks: 1000, delayMs: 100 }],
+                options: {
+                  reduceOptions: { calcs: ["lastNotNull"], values: false },
+                },
+                fieldConfig: { defaults: {}, overrides: [] },
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(cancelSaved.ok(), await cancelSaved.text()).toBeTruthy();
+    const cancelledBefore = (await chunkStats()).cancelled;
+    await page.goto(endpoint + "/d/frontend-chunks-cancel/cancel");
+    await expect.poll(chunkStats).toMatchObject({ active: 1 });
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    await expect
+      .poll(chunkStats)
+      .toMatchObject({ active: 0, cancelled: cancelledBefore + 1 });
     const liveDashboard = {
       uid: "frontend-live-dashboard",
       title: "SDK Live bridge",
@@ -430,6 +541,12 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
     expect(errors).toEqual([]);
   } finally {
     await page.goto(endpoint + "/#overview");
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/frontend-chunks-dashboard",
+    );
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/frontend-chunks-cancel",
+    );
     await page.request.delete(
       endpoint + "/api/dashboards/uid/frontend-live-dashboard",
     );
@@ -997,6 +1114,17 @@ test("English and Chinese, panels, PromQL, dashboards and collector forms", asyn
   await expect(
     page.getByRole("heading", { name: "JSON in. JSON out.", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Stream datasource queries",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Switch language" }).click();
+  await expect(
+    page.getByRole("heading", { name: "分块查询数据源", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Switch language" }).click();
   expect(errors).toEqual([]);
 });
 

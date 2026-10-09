@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/genproto/pluginv2"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -96,6 +97,14 @@ func TestRealAppSDKContextBundledLifecycleAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(response[0].Body), `"configured":true`)
 	rootProcess, childProcess := m.processes[parent.ID], m.processes[ds.Type]
+	chunks := 0
+	err = m.QueryChunked(ctx, ds, []backend.DataQuery{{RefID: "A", JSON: json.RawMessage(`{"value":233,"chunks":2,"requireApp":true}`)}}, func(chunk *pluginv2.QueryChunkedDataResponse) error {
+		assert.Equal(t, "A", chunk.RefId)
+		chunks++
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, chunks)
 	require.NotNil(t, rootProcess)
 	require.NotNil(t, childProcess)
 	_, err = m.SetEnabled(ctx, ds.Type, false)

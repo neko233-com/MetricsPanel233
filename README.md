@@ -127,7 +127,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
-但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、chunked QueryData、
+但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、
 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
@@ -192,7 +192,7 @@ metricspanel datasources list
 metricspanel datasources health --id remote-prometheus
 ```
 
-后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、CheckHealth、CallResource、SubscribeStream、RunStream 和 PublishStream；查询返回官方 DataFrame JSON / Arrow 转换结果。
+后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、QueryChunkedData、CheckHealth、CallResource、SubscribeStream、RunStream 和 PublishStream；查询返回官方 DataFrame JSON / Arrow 转换结果。
 运行时选择 `<executable>_<GOOS>_<GOARCH>[.exe]`，安装包必须提供当前平台可执行文件；需要系统动态库的插件还需部署相应运行库。
 后端插件最多八个并发请求，不继承应用令牌 / 数据库密码。服务关闭、插件停用或卸载时关闭对应子进程。
 数据源代理支持 HTTP(S)、Basic Auth 和 `jsonData.httpHeaderNameN` / `secureJsonData.httpHeaderValueN`（N=1–32）；插件查询走 `/api/ds/query`。
@@ -202,7 +202,7 @@ metricspanel datasources health --id remote-prometheus
 `--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
 开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
 
-目前仍未达到完整 Grafana 插件运行时兼容：chunked QueryData、UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
+目前仍未达到完整 Grafana 插件运行时兼容：UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
 支持的能力和剩余项也会出现在 `metricspanel schema` 中。
 
 ## Grafana Live 与 Agent 实时订阅
@@ -229,6 +229,26 @@ metricspanel live publish --channel ds/MY_DATASOURCE/path --file packet.json
 浏览器会话 cookie 有效 15 分钟，只授权 WebSocket 路径，重连前自动刷新；CLI 使用 Bearer 升级头。
 最多 256 个活动通道、每连接 128 个通道、单包 1 MiB；前端缓冲最多 10,000 行。
 实时传输本身不落盘，插件推送不会自动写入指标库；采集器 / ingest 的 SQLite 和 ClickHouse 持久化不受影响。
+
+## 分块查询与 Agent NDJSON
+
+原生支持 Grafana 连接查询接口 `POST /apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query`。
+请求采用官方 SDK DTO：`from` / `to` 支持时间表达式，查询也可提供独立 `timeRange`。默认返回普通 JSON；
+设置 `Accept: text/jsonl` 后调用 SDK `QueryChunkedData`，每个 JSON 行立即 flush，Arrow 转为官方 DataFrame JSON。
+`/api/ds/query` 也支持该 Accept，保留其原有请求格式。接口要求工作空间 Bearer token，并检查 Origin。
+
+```sh
+metricspanel datasources query --id metricspanel --file examples/datasources/query.json
+metricspanel datasources query --id MY_DATASOURCE --file query.json --stream
+```
+
+`--stream` 每行输出 `refId`、`frameId`、`frame` 或 `error` / `errorSource`。
+同一 `(refId, frameId)` 的首块包含 schema，后续块追加数据。正常 EOF 结束，没有默认帧数截断；
+部分查询失败仍保留已输出的数据，完成后返回 JSON stderr 错误和退出码 1。Ctrl+C 会取消后端请求。
+不支持分块 RPC 的旧插件只在尚未输出任何块时回退到 QueryData，避免重复数据。
+浏览器提供官方 `BackendSrv.chunked` 原始字节 Observable，插件自行解析和追加；有限查询执行期间不会被定时刷新重启。
+限额为 32 个查询、1024 个 frame、每块 8 MiB、每请求 32 MiB、后端 60 秒，最多 4 个数据源并行。
+CLI `--duration` 默认 1 分钟，`0` 关闭客户端期限；服务器期限仍适用。
 
 ## 性能、持久化与边界
 

@@ -287,14 +287,13 @@ export function watchFrames(
         };
         const finished = new ReplaySubject<void>(1),
           liveRefs = new Set<string>();
-        let streaming = false;
+        let live = false;
         return merge(
           defer(() => query()).pipe(finalize(() => finished.next())),
           refresh.pipe(
             filter(
               () =>
-                streaming &&
-                queries.some((target) => !liveRefs.has(target.refId!)),
+                live && queries.some((target) => !liveRefs.has(target.refId!)),
             ),
             exhaustMap(() =>
               defer(() =>
@@ -315,8 +314,13 @@ export function watchFrames(
           timeout({ first: 20000 }),
           tap((response) => {
             if (response.state === LoadingState.Streaming) {
-              streaming = true;
               for (const frame of response.data) {
+                if (
+                  !frame.meta?.channel &&
+                  !/^(ds|plugin)\//.test(response.key || "")
+                )
+                  continue;
+                live = true;
                 const refId =
                   frame.refId ||
                   (queries.length === 1 ? queries[0].refId : undefined);

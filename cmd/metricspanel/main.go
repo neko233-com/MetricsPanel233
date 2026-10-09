@@ -68,12 +68,12 @@ Usage: metricspanel <command> [flags]
   alerts       list | get | save | import-grafana | evaluate | history | delete
   plugins      list | get | install | catalog | enable | disable | delete
                settings | configure (Grafana application settings)
-  datasources  list | get | save | health | delete
+  datasources  list | get | save | query | health | delete
   live         channels | watch | publish (watch emits NDJSON)
   schema       Print machine-readable command and API discovery
   version      Print version
 
-Client commands return JSON on stdout; live watch emits NDJSON (one event per line).
+Client commands return JSON on stdout; live watch and query --stream emit NDJSON.
 Errors are JSON on stderr (exit 1).
 Client flags: --server URL, --token TOKEN, --json (JSON is already the default).
 Environment: METRICSPANEL_URL, METRICSPANEL_TOKEN.
@@ -130,7 +130,8 @@ func run(args []string) error {
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
 	channel := f.String("channel", "", "Grafana Live channel: ds/UID/path or plugin/ID/path")
 	metadata := f.String("metadata", "null", "Live subscription metadata (JSON)")
-	duration := f.Duration("duration", time.Minute, "Live watch duration (0 waits until interrupted)")
+	duration := f.Duration("duration", time.Minute, "Live watch / datasource query duration (0 disables client deadline)")
+	stream := f.Bool("stream", false, "datasource query: emit Grafana text/jsonl chunks as NDJSON")
 	if err := f.Parse(rest); err != nil {
 		return err
 	}
@@ -253,6 +254,25 @@ func run(args []string) error {
 		}
 	case "datasources":
 		switch action {
+		case "query":
+			if *id == "" {
+				return errors.New("--id required")
+			}
+			if *duration < 0 {
+				return errors.New("--duration must be nonnegative")
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if *duration > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, *duration)
+				defer cancel()
+			}
+			return client.queryDatasource(ctx, *id, data, *stream, os.Stdout)
 		case "list":
 			return request("GET", "/api/datasources", nil)
 		case "get", "health", "delete":
@@ -285,7 +305,7 @@ func run(args []string) error {
 			}
 			return request(method, path, payload)
 		default:
-			return errors.New("datasources requires list, get, save, health or delete")
+			return errors.New("datasources requires list, get, save, query, health or delete")
 		}
 	case "alerts":
 		switch action {
@@ -503,7 +523,12 @@ func run(args []string) error {
 
 func readFile(path string) ([]byte, error) {
 	if path != "-" {
-		return os.ReadFile(path)
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		return io.ReadAll(io.LimitReader(file, 4*1024*1024+1))
 	}
 	return io.ReadAll(io.LimitReader(os.Stdin, 4*1024*1024+1))
 }
@@ -709,12 +734,12 @@ func schema() any {
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
 	result["plugins"] = map[string]any{
 		"frontend_runtime":     "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS",
-		"backend_protocol":     "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource, SubscribeStream, RunStream, PublishStream",
+		"backend_protocol":     "Grafana plugin SDK gRPC protocol 2: QueryData, QueryChunkedData, CheckHealth, CallResource, SubscribeStream, RunStream, PublishStream",
 		"installation":         "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive; upgrades preserve enabled preferences",
 		"secrets":              "AES-256-GCM encrypted datasource and application secrets; back up secrets.key beside the control DB",
 		"unsigned":             "only package IDs explicitly allowed by --allow-unsigned-plugin for development",
 		"limits":               map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32},
-		"pending_capabilities": []string{"chunked QueryData streaming", "UI extension points and some app core services", "Angular legacy plugins", "full Grafana core services"},
+		"pending_capabilities": []string{"UI extension points and some app core services", "Angular legacy plugins", "full Grafana core services"},
 	}
 	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")
@@ -725,5 +750,8 @@ func schema() any {
 	routes["POST"] = append(routes["POST"], "/api/plugins/{id}/settings")
 	routes["PUT"] = append(routes["PUT"], "/api/v1/plugins/{id}/app-settings")
 	result["apps"] = map[string]any{"frontend": "AppPlugin root and React configuration pages at /a/PLUGIN_ID/; pinned navigation", "configuration": "durable JSON and AES-256-GCM secrets; native writes require current version (initially 0), conflict HTTP 409", "backend": "official AppInstanceSettings on resources, health and Live; bundled datasource contexts inherit app settings", "organization": 1}
+	result["commands"] = append(result["commands"].([]string), "datasources query --id UID --file FILE|- [--stream --duration 1m] (stream emits NDJSON until EOF; errors preserve partial data and exit 1)")
+	routes["POST"] = append(routes["POST"], "/apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query")
+	result["chunked_queries"] = map[string]any{"accept": "text/jsonl", "record": []string{"refId", "frameId", "frame (DataFrame JSON; schema in first chunk, later data appends)", "error", "errorSource"}, "legacy_route": "/api/ds/query also accepts text/jsonl", "fallback": "unary QueryData only when streaming RPC is unimplemented before any chunk", "frontend": "public BackendSrv.chunked emits raw Uint8Array chunks and final undefined; plugin owns parsing/append", "limits": map[string]int{"chunk_MiB": 8, "request_MiB": 32, "frames": 1024, "queries": 32, "duration_seconds": 60, "concurrent_sources": 4}, "example": map[string]any{"from": "now-5m", "to": "now", "queries": []any{map[string]any{"refId": "A", "expr": "sum(up)", "instant": true}}}}
 	return result
 }

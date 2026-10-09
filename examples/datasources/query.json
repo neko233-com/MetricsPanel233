@@ -1,0 +1,5 @@
+{
+  "from": "now-5m",
+  "to": "now",
+  "queries": [{ "refId": "A", "expr": "sum(up)", "instant": true }]
+}

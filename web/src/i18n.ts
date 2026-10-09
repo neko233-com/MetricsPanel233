@@ -11,6 +11,11 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Stream datasource queries": "分块查询数据源",
+  "Receive DataFrame chunks as they arrive. Partial failures keep data and return exit code 1.":
+    "数据到达即输出 DataFrame 分块。部分查询失败时保留数据并返回退出码 1。",
+  "Datasource query --stream emits NDJSON until the query ends.":
+    "datasources query --stream 持续输出 NDJSON，直到查询结束。",
   app: "应用",
   Application: "应用",
   Configure: "配置",

@@ -54,10 +54,10 @@ let variableValues: InterpolationValues = {},
   variableRange = "30m";
 let sources: DataSourceSettings[] = [];
 
-async function fetchRequest<T>(
+async function fetchResponse(
   options: BackendSrvRequest,
   signal: AbortSignal,
-): Promise<FetchResponse<T>> {
+): Promise<Response> {
   const url = new URL(options.url, location.origin + "/");
   if (url.origin !== location.origin)
     throw new Error("External requests must use a configured datasource proxy");
@@ -73,7 +73,7 @@ async function fetchRequest<T>(
       : typeof options.data === "string" || options.data instanceof FormData
         ? options.data
         : JSON.stringify(options.data);
-  const response = await fetch(url, {
+  return fetch(url, {
     method: options.method || "GET",
     body,
     signal,
@@ -86,6 +86,12 @@ async function fetchRequest<T>(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });
+}
+async function fetchRequest<T>(
+  options: BackendSrvRequest,
+  signal: AbortSignal,
+): Promise<FetchResponse<T>> {
+  const response = await fetchResponse(options, signal);
   const data = (
     options.responseType === "text"
       ? await response.text()
@@ -162,11 +168,54 @@ function backendService(): BackendSrv {
       request({ ...options, url, data, method: "DELETE" }),
     datasourceRequest: (options) =>
       RxJS.lastValueFrom(fetchObservable(options)),
-    chunked: () =>
-      new RxJS.Observable((subscriber) =>
-        subscriber.error(
-          new Error("Chunked datasource streaming is not available yet"),
-        ),
+    chunked: (options) =>
+      new RxJS.Observable<FetchResponse<Uint8Array | undefined>>(
+        (subscriber) => {
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          options.abortSignal?.addEventListener("abort", abort, { once: true });
+          if (options.abortSignal?.aborted) controller.abort();
+          let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+          void (async () => {
+            const response = await fetchResponse(options, controller.signal);
+            const metadata = {
+              status: response.status,
+              statusText: response.statusText,
+              ok: response.ok,
+              headers: response.headers,
+              redirected: response.redirected,
+              type: response.type,
+              url: response.url,
+              config: options,
+            };
+            if (!response.body) {
+              subscriber.next({ ...metadata, data: undefined });
+              subscriber.complete();
+              return;
+            }
+            reader = response.body.getReader();
+            try {
+              while (!subscriber.closed) {
+                const chunk = await reader.read();
+                if (subscriber.closed) return;
+                subscriber.next({ ...metadata, data: chunk.value });
+                if (chunk.done) {
+                  subscriber.complete();
+                  return;
+                }
+              }
+            } finally {
+              reader.releaseLock();
+            }
+          })().catch((error) => {
+            if (!subscriber.closed) subscriber.error(error);
+          });
+          return () => {
+            controller.abort();
+            void reader?.cancel().catch(() => {});
+            options.abortSignal?.removeEventListener("abort", abort);
+          };
+        },
       ),
   };
 }

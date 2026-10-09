@@ -69,7 +69,7 @@ Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/das
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
-**Full Grafana ecosystem parity remains unfinished.** Chunked QueryData, UI extension points, some app core services, legacy Angular plugins,
+**Full Grafana ecosystem parity remains unfinished.** UI extension points, some app core services, legacy Angular plugins,
 annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
@@ -108,7 +108,7 @@ metricspanel datasources save --file examples/datasources/prometheus.json
 metricspanel datasources health --id remote-prometheus
 ```
 
-Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, CheckHealth, CallResource, SubscribeStream, RunStream and PublishStream, including official DataFrame JSON/Arrow conversion.
+Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, QueryChunkedData, CheckHealth, CallResource, SubscribeStream, RunStream and PublishStream, including official DataFrame JSON/Arrow conversion.
 Packages need `<executable>_<GOOS>_<GOARCH>[.exe]` for the host platform. Plugins using dynamic system libraries need those libraries installed.
 At most eight backend requests run concurrently. Plugin processes do not inherit workspace tokens/database passwords and exit on server shutdown, disable or uninstall.
 The datasource proxy supports HTTP(S), Basic Auth and secure custom headers. Plugin queries use `/api/ds/query`.
@@ -119,7 +119,7 @@ Plugin assets use a short-lived cookie restricted to asset paths; that cookie ca
 `--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
 Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
 
-Chunked QueryData, UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
+UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
 The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
 
 ## Grafana Live and agent subscriptions
@@ -147,6 +147,25 @@ The plugin defines publication payloads and permissions. Subscribers on the same
 Browser cookies last 15 minutes, authorize only the WebSocket path, and renew before reconnecting. The CLI uses a Bearer upgrade header.
 Limits are 256 active channels, 128 channels per connection, 1 MiB per packet and 10,000 buffered frontend rows.
 Live transport is transient; plugin publications are not automatically ingested. Collector/ingest SQLite and ClickHouse storage remains durable.
+
+## Chunked queries and agent NDJSON
+
+POST `/apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query` accepts the official SDK request DTO.
+Global `from`/`to` support date math; queries may supply individual `timeRange` values. The default response is ordinary JSON.
+`Accept: text/jsonl` calls SDK QueryChunkedData, converts Arrow frames to DataFrame JSON and immediately flushes each record.
+The existing `/api/ds/query` also accepts this header with its original request format. Both routes enforce Bearer authentication and Origin checks.
+
+```sh
+metricspanel datasources query --id metricspanel --file examples/datasources/query.json
+metricspanel datasources query --id MY_DATASOURCE --file query.json --stream
+```
+
+Stream records contain `refId`, `frameId`, `frame` or `error`/`errorSource`. The first record for each `(refId, frameId)` includes schema;
+later records append data. The CLI runs until EOF without a default frame-count cutoff. Partial errors preserve stdout data and finish with JSON stderr and exit 1.
+Ctrl+C cancels the backend request. Older plugins fall back to QueryData only when the streaming RPC is unimplemented before any record.
+The browser exposes the public BackendSrv.chunked raw-byte Observable; plugins own parsing and appending. Finite queries are not restarted by dashboard refreshes while active.
+Limits are 32 queries, 1024 frames, 8 MiB per chunk, 32 MiB per request, 60 seconds on the server and four concurrent datasources.
+The CLI's `--duration` defaults to one minute; zero disables its deadline while server limits still apply.
 
 ## Vector pattern analysis
 

@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Stream datasource queries",
+    detail:
+      "Receive DataFrame chunks as they arrive. Partial failures keep data and return exit code 1.",
+    command:
+      "metricspanel datasources query --id metricspanel --file examples/datasources/query.json\nmetricspanel datasources query --id MY_DATASOURCE --file query.json --stream",
+  },
+  {
     title: "Configure Grafana applications",
     detail:
       "Read masked settings, keep their version, and save application configuration.",
@@ -104,6 +111,9 @@ export function AgentCLI() {
           {tr(
             "Live watch emits NDJSON: one initial frame or publication per line.",
           )}
+        </p>
+        <p>
+          {tr("Datasource query --stream emits NDJSON until the query ends.")}
         </p>
         <p>
           {tr("Build the CLI from source with")}
