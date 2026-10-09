@@ -1,0 +1,440 @@
+import { t as tr } from "../i18n";
+import { useState } from "react";
+import {
+  ArrowRight,
+  Check,
+  Copy,
+  Plus,
+  RefreshCw,
+  Terminal,
+} from "lucide-react";
+import {
+  api,
+  formatValue,
+  jsonBody,
+  parseLabels,
+  ranges,
+  aggregations,
+  timeAgo,
+  duration,
+  type Dashboard,
+  type Metric,
+  type Panel,
+  type Stats,
+  type Target,
+} from "../api";
+import { Chart } from "../components/Chart";
+import { Dialog } from "../components/Dialog";
+export function DashboardView({
+  dashboard,
+  stats,
+  targets,
+  metrics,
+  tick,
+  range,
+  onRange,
+  refresh,
+  reload,
+  notify,
+  cli,
+}: {
+  dashboard: Dashboard;
+  stats: Stats | null;
+  targets: Target[];
+  metrics: Metric[];
+  tick: number;
+  range: string;
+  onRange: (v: string) => void;
+  refresh: () => void;
+  reload: () => Promise<void>;
+  notify: (s: string, error?: boolean) => void;
+  cli: () => void;
+}) {
+  const [editor, setEditor] = useState<Panel | "new" | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [removing, setRemoving] = useState<Panel | null>(null);
+  async function save(panels: Panel[]) {
+    await api(`/dashboards/${encodeURIComponent(dashboard.id)}`, {
+      method: "PUT",
+      body: jsonBody({ ...dashboard, panels }),
+    });
+    await reload();
+  }
+  const chart = (p: Panel, i: number) => (
+    <Chart
+      key={p.id}
+      panel={p}
+      range={range}
+      tick={tick}
+      mint={i === 2}
+      onEdit={() => setEditor(p)}
+      onRemove={() => setRemoving(p)}
+    />
+  );
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>{tr(dashboard.name)}</h1>
+          <p>
+            {tr(
+              dashboard.id === "system"
+                ? "Live metrics from your local collector."
+                : "Your saved metrics, in one view.",
+            )}
+          </p>
+        </div>
+        <div className="toolbar">
+          <select
+            aria-label={tr("Time range")}
+            value={range}
+            onChange={(e) => onRange(e.target.value)}
+          >
+            {ranges.map((r) => (
+              <option key={r.value} value={r.value}>
+                {tr(r.label)}
+              </option>
+            ))}
+          </select>
+          <button
+            className="icon-button outlined"
+            onClick={refresh}
+            aria-label={tr("Refresh metrics")}
+          >
+            <RefreshCw size={19} />
+          </button>
+          <button className="primary" onClick={() => setEditor("new")}>
+            <Plus size={18} />
+            {tr("Add panel")}
+          </button>
+        </div>
+      </div>
+      <div className="stats-band">
+        <div>
+          <span>{tr("Ingest rate")}</span>
+          <strong>
+            {stats ? formatValue(stats.ingest_rate) : "—"}{" "}
+            <small>{tr("samples/s")}</small>
+          </strong>
+        </div>
+        <div>
+          <span>{tr("Active series")}</span>
+          <strong>
+            {stats?.series.toLocaleString() || "—"}{" "}
+            <small>{tr("series")}</small>
+          </strong>
+        </div>
+        <div>
+          <span>{tr("Storage used")}</span>
+          <strong>
+            {stats ? formatValue(stats.storage_bytes, "bytes") : "—"}{" "}
+            <small>
+              {stats?.retention_days || 30}
+              {tr("d retention")}
+            </small>
+          </strong>
+        </div>
+        <div>
+          <span>{tr("Collectors online")}</span>
+          <strong>
+            {stats
+              ? `${stats.collectors_online} / ${stats.collectors_total}`
+              : "—"}{" "}
+            <small>{tr("online")}</small>
+          </strong>
+        </div>
+      </div>
+      <div className="chart-grid">
+        {dashboard.panels.slice(0, 2).map(chart)}
+      </div>
+      <div className="secondary-grid">
+        <div>
+          {dashboard.panels[2] ? (
+            chart(dashboard.panels[2], 2)
+          ) : (
+            <div className="empty-workspace">
+              <h2>{tr("Add your first metric panel")}</h2>
+              <p>{tr("Select a metric to start plotting live data.")}</p>
+              <button onClick={() => setEditor("new")} className="primary">
+                <Plus size={18} />
+                {tr("Add panel")}
+              </button>
+            </div>
+          )}
+        </div>
+        <section className="status-panel">
+          <div className="panel-heading">
+            <h2>{tr("Collection status")}</h2>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr("Name")}</th>
+                  <th>{tr("Status")}</th>
+                  <th>{tr("Last seen")}</th>
+                  <th>{tr("Uptime")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="mono">{tr("metricspanel")}</td>
+                  <td>
+                    <span className="status healthy">
+                      <i />
+                      {tr("healthy")}
+                    </span>
+                  </td>
+                  <td className="mono">{timeAgo(stats?.last_sample || 0)}</td>
+                  <td className="mono">
+                    {duration(Date.now() - (stats?.started_at || Date.now()))}
+                  </td>
+                </tr>
+                {targets.map((t) => (
+                  <tr key={t.id}>
+                    <td title={t.url}>{t.name}</td>
+                    <td>
+                      <span
+                        className={`status ${!t.enabled ? "muted" : t.last_error ? "unhealthy" : t.last_scrape ? "healthy" : "muted"}`}
+                      >
+                        <i />
+                        {tr(
+                          !t.enabled
+                            ? "paused"
+                            : t.last_error
+                              ? "error"
+                              : t.last_scrape
+                                ? "healthy"
+                                : "pending",
+                        )}
+                      </span>
+                    </td>
+                    <td className="mono">{timeAgo(t.last_scrape)}</td>
+                    <td className="mono">
+                      {t.samples}
+                      {tr("samples")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      {dashboard.panels.length > 3 && (
+        <div className="chart-grid extra-charts">
+          {dashboard.panels.slice(3).map((p, i) => chart(p, i + 3))}
+        </div>
+      )}
+      <div className="agent-strip">
+        <Terminal size={25} />
+        <strong>{tr("Agent ready")}</strong>
+        <code>
+          {tr(
+            "metricspanel query --metric metricspanel_memory_bytes --range 30m",
+          )}
+        </code>
+        <button
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(
+                "metricspanel query --metric metricspanel_memory_bytes --range 30m",
+              );
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1800);
+            } catch {
+              notify(
+                tr("Clipboard access failed; select the command to copy it."),
+                true,
+              );
+            }
+          }}
+        >
+          {copied ? <Check size={17} /> : <Copy size={17} />}
+          {tr(copied ? "Copied" : "Copy")}
+        </button>
+        <button className="text-button" onClick={cli}>
+          {tr("View CLI docs")}
+          <ArrowRight size={18} />
+        </button>
+      </div>
+      {editor && (
+        <PanelEditor
+          panel={editor === "new" ? undefined : editor}
+          metrics={metrics}
+          onClose={() => setEditor(null)}
+          onSave={async (p) => {
+            await save(
+              editor === "new"
+                ? [...dashboard.panels, p]
+                : dashboard.panels.map((item) => (item.id === p.id ? p : item)),
+            );
+            setEditor(null);
+            notify(tr("Panel saved"));
+          }}
+        />
+      )}
+      {removing && (
+        <Dialog title={tr("Remove panel")} onClose={() => setRemoving(null)}>
+          <p>
+            {tr("Remove \u201C")}
+            {removing.title}
+            {tr("\u201D from this dashboard?")}
+          </p>
+          <div className="form-actions">
+            <button onClick={() => setRemoving(null)}>{tr("Cancel")}</button>
+            <button
+              className="danger"
+              onClick={async () => {
+                try {
+                  await save(
+                    dashboard.panels.filter((p) => p.id !== removing.id),
+                  );
+                  setRemoving(null);
+                  notify(tr("Panel removed"));
+                } catch (e) {
+                  notify(String(e), true);
+                }
+              }}
+            >
+              {tr("Remove panel")}
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
+  );
+}
+function PanelEditor({
+  panel,
+  metrics,
+  onClose,
+  onSave,
+}: {
+  panel?: Panel;
+  metrics: Metric[];
+  onClose: () => void;
+  onSave: (p: Panel) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(panel?.title || "");
+  const [metric, setMetric] = useState(panel?.metric || metrics[0]?.name || "");
+  const [expr, setExpr] = useState(panel?.expr || "");
+  const [aggregation, setAggregation] = useState(panel?.aggregation || "last");
+  const [unit, setUnit] = useState(panel?.unit || "");
+  const [labels, setLabels] = useState(JSON.stringify(panel?.labels || {}));
+  const [error, setError] = useState(""),
+    [saving, setSaving] = useState(false);
+  return (
+    <Dialog title={tr(panel ? "Edit panel" : "Add panel")} onClose={onClose}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setSaving(true);
+          setError("");
+          try {
+            await onSave({
+              ...panel,
+              id: panel?.id || crypto.randomUUID(),
+              title,
+              metric,
+              expr,
+              expressions: expr ? [expr] : undefined,
+              aggregation,
+              unit,
+              labels: parseLabels(labels),
+            });
+          } catch (e) {
+            setError(String(e));
+            setSaving(false);
+          }
+        }}
+      >
+        <label>
+          {tr("Panel title")}
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={tr("e.g. API request rate")}
+            required
+            maxLength={100}
+          />
+        </label>
+        <label>
+          {tr("Metric")}
+          <input
+            list="metric-options"
+            value={metric}
+            onChange={(e) => setMetric(e.target.value)}
+            required
+            placeholder={tr("Select or enter a metric")}
+          />
+          <datalist id="metric-options">
+            {metrics.map((m) => (
+              <option key={m.name} value={m.name} />
+            ))}
+          </datalist>
+        </label>
+        <label>
+          {tr("PromQL expression")}
+          <textarea
+            className="mono"
+            value={expr}
+            onChange={(e) => setExpr(e.target.value)}
+            placeholder="sum(rate(app_requests_total[5m]))"
+            rows={2}
+          />
+        </label>
+        <div className="form-row">
+          <label>
+            {tr("Aggregation")}
+            <select
+              value={aggregation}
+              onChange={(e) => setAggregation(e.target.value)}
+            >
+              {aggregations.map((a) => (
+                <option key={a} value={a}>
+                  {tr(a)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {tr("Unit")}
+            <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              <option value="">{tr("Auto / number")}</option>
+              {["bytes", "seconds", "percent", "count", "ops"].map((u) => (
+                <option key={u} value={u}>
+                  {tr(u)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          {tr("Label filters")}
+          <small>{tr("JSON equality filters")}</small>
+          <textarea
+            className="mono"
+            value={labels}
+            onChange={(e) => setLabels(e.target.value)}
+            rows={2}
+          />
+        </label>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="form-actions">
+          <button type="button" onClick={onClose}>
+            {tr("Cancel")}
+          </button>
+          <button className="primary" disabled={saving}>
+            {tr(saving ? "Saving…" : "Save panel")}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}

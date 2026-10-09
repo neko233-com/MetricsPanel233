@@ -1,0 +1,33 @@
+name: metricspanel233
+services:
+  metricspanel:
+    build: .
+    image: metricspanel233:local
+    ports: ["127.0.0.1:7333:7333"]
+    environment:
+      METRICSPANEL_TOKEN: ${METRICSPANEL_TOKEN:?Set METRICSPANEL_TOKEN with at least 16 characters}
+      METRICSPANEL_STORAGE: clickhouse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: metricspanel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD}
+    volumes: ["control:/data"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8-alpine
+    environment:
+      CLICKHOUSE_USER: metricspanel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes: ["metrics:/var/lib/clickhouse"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+volumes:
+  control:
+  metrics:

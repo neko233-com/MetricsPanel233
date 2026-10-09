@@ -1,0 +1,12 @@
+.git
+node_modules
+web/node_modules
+web/dist
+data
+bin
+.cache
+*.db
+*.exe
+*.log
+web/test-results
+web/playwright-report

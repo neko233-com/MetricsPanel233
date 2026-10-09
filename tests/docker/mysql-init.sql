@@ -1,0 +1,4 @@
+CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY 'integration-exporter-password' WITH MAX_USER_CONNECTIONS 3;
+GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
+CREATE TABLE IF NOT EXISTS business.orders (id BIGINT PRIMARY KEY, amount DECIMAL(10,2));
+INSERT IGNORE INTO business.orders VALUES (1, 23.30), (2, 233.00);

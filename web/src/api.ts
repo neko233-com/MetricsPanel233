@@ -1,0 +1,241 @@
+import { getLocale, t } from "./i18n";
+export type Labels = Record<string, string>;
+export type Metric = { name: string; series_count: number };
+export type Point = { timestamp: number; value: number };
+export type QueryResult = {
+  metric: string;
+  aggregation: string;
+  start: number;
+  end: number;
+  step: number;
+  series: { labels: Labels; points: Point[] }[];
+};
+export type Panel = {
+  id: string;
+  title: string;
+  metric: string;
+  aggregation: string;
+  unit: string;
+  labels?: Labels;
+  expr?: string;
+  expressions?: string[];
+  visualization?: string;
+};
+export type Variable = {
+  name: string;
+  type: string;
+  query: string;
+  current: string;
+  options: string[];
+  multi: boolean;
+  include_all: boolean;
+};
+export type Dashboard = {
+  id: string;
+  name: string;
+  panels: Panel[];
+  updated_at: number;
+  variables?: Variable[];
+  grafana?: unknown;
+};
+export type Target = {
+  id: number;
+  name: string;
+  url: string;
+  interval_seconds: number;
+  labels: Labels;
+  enabled: boolean;
+  last_scrape: number;
+  last_error: string;
+  samples: number;
+  duration_ms: number;
+};
+export type Stats = {
+  series: number;
+  samples: number;
+  ingest_rate: number;
+  storage_bytes: number;
+  retention_days: number;
+  collectors_online: number;
+  collectors_total: number;
+  started_at: number;
+  last_sample: number;
+};
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function api<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = sessionStorage.getItem("metricspanel-token") || "";
+  const response = await fetch(
+    path.startsWith("/prometheus/") ? path : `/api/v1${path}`,
+    {
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    },
+  );
+  const result = await response.json();
+  if (!response.ok)
+    throw new ApiError(
+      (typeof result.error === "string"
+        ? result.error
+        : result.error?.message) || `HTTP ${response.status}`,
+      response.status,
+    );
+  return result as T;
+}
+export const jsonBody = (data: unknown) => JSON.stringify(data);
+export const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+export function formatValue(value: number, unit = ""): string {
+  if (unit === "bytes") {
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    const index = Math.max(
+      0,
+      Math.min(4, Math.floor(Math.log(Math.max(value, 1)) / Math.log(1024))),
+    );
+    return `${(value / 1024 ** index).toLocaleString("en", { maximumFractionDigits: 1 })} ${units[index]}`;
+  }
+  if (unit === "seconds") return `${value.toFixed(1)} s`;
+  if (unit === "percent") return `${value.toFixed(1)}%`;
+  const text = value.toLocaleString("en", {
+    maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1,
+    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
+  });
+  return unit === "ops" ? `${text} /s` : text;
+}
+export const timeAgo = (timestamp: number) =>
+  !timestamp
+    ? t("Pending")
+    : getLocale() === "zh"
+      ? `${Math.max(0, Math.round((Date.now() - timestamp) / 1000))}秒前`
+      : `${Math.max(0, Math.round((Date.now() - timestamp) / 1000))}s ago`;
+export const duration = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s > 3600
+    ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+    : s > 60
+      ? `${Math.floor(s / 60)}m ${s % 60}s`
+      : `${s}s`;
+};
+export const ranges = [
+  { label: "Last 15 minutes", value: "15m" },
+  { label: "Last 30 minutes", value: "30m" },
+  { label: "Last hour", value: "1h" },
+  { label: "Last 6 hours", value: "6h" },
+  { label: "Last 24 hours", value: "24h" },
+  { label: "Last 7 days", value: "168h" },
+];
+export const aggregations = ["last", "avg", "sum", "min", "max", "rate"];
+export function parseLabels(text: string): Labels {
+  const labels = JSON.parse(text) as unknown;
+  if (
+    labels === null ||
+    typeof labels !== "object" ||
+    Array.isArray(labels) ||
+    Object.values(labels).some((v) => typeof v !== "string")
+  )
+    throw new Error("Labels must be a JSON object with string values");
+  return labels as Labels;
+}
+export function download(name: string, data: unknown) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function rangeMilliseconds(range: string): number {
+  const match = /^(\d+)(m|h|s)$/.exec(range);
+  return match
+    ? Number(match[1]) * ({ m: 60000, h: 3600000, s: 1000 }[match[2]] || 60000)
+    : 1800000;
+}
+export function interpolate(
+  expr: string,
+  variables: Record<string, string>,
+  range: string,
+): string {
+  const seconds = Math.ceil(rangeMilliseconds(range) / 1000);
+  const interval = Math.max(5, Math.ceil(seconds / 120)),
+    rateInterval = Math.max(60, interval * 4);
+  const values = {
+    ...variables,
+    __interval: `${interval}s`,
+    __interval_ms: String(interval * 1000),
+    __rate_interval: `${rateInterval}s`,
+    __range: `${seconds}s`,
+    __range_s: String(seconds),
+    __range_ms: String(seconds * 1000),
+  };
+  return expr.replace(
+    /\$\{([a-zA-Z_][\w]*)(?::(regex|pipe|raw|csv))?\}|\$([a-zA-Z_][\w]*)/g,
+    (match, braced: string, _format: string, plain: string) =>
+      (values as Record<string, string>)[braced || plain] ?? match,
+  );
+}
+export async function queryPanel(
+  panel: Panel,
+  range: string,
+  signal: AbortSignal,
+): Promise<QueryResult> {
+  const expressions = panel.expressions?.length
+    ? panel.expressions
+    : panel.expr
+      ? [panel.expr]
+      : [];
+  if (!expressions.length)
+    return api<QueryResult>(
+      `/query?${new URLSearchParams({ metric: panel.metric, range, aggregation: panel.aggregation, labels: JSON.stringify(panel.labels || {}) })}`,
+      { signal },
+    );
+  const end = Date.now(),
+    start = end - rangeMilliseconds(range),
+    step = Math.max(1, Math.ceil((end - start) / 120000));
+  const results = await Promise.all(
+    expressions.map((expr) =>
+      api<{
+        data: { result: { metric: Labels; values: [number, string][] }[] };
+      }>(
+        `/prometheus/api/v1/query_range?${new URLSearchParams({ query: expr, start: String(start / 1000), end: String(end / 1000), step: String(step) })}`,
+        { signal },
+      ),
+    ),
+  );
+  const series = results
+    .flatMap((r, i) =>
+      r.data.result.map((s) => ({
+        labels: {
+          ...s.metric,
+          ...(expressions.length > 1 ? { query: String(i + 1) } : {}),
+        },
+        points: s.values
+          .filter((p) => Number.isFinite(Number(p[1])))
+          .map((p) => ({ timestamp: p[0] * 1000, value: Number(p[1]) })),
+      })),
+    )
+    .filter((s) => s.points.length > 0);
+  return {
+    metric: expressions[0],
+    aggregation: "PromQL",
+    start,
+    end,
+    step: step * 1000,
+    series,
+  };
+}
