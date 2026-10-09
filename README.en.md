@@ -217,5 +217,7 @@ After building the frontend and the CLI binary, run `cd web && npx playwright in
 Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, resource templates,
 official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and mobile layout.
 GitHub Actions runs these checks plus two Docker integration runs.
+CI pulls test images by pinned digest from [Google Cloud's public cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images) to reduce Docker Hub rate-limit failures.
+`compose.test.yml` accepts `METRICSPANEL_TEST_CLICKHOUSE_IMAGE`, `METRICSPANEL_TEST_MYSQL_IMAGE` and `METRICSPANEL_TEST_EXPORTER_IMAGE` source overrides; production Compose has its own configuration.
 
 Apache-2.0. See the [Chinese README](README.md) for API details, environment variables, architecture and limitations.

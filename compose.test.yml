@@ -33,7 +33,7 @@ services:
       clickhouse:
         condition: service_healthy
   clickhouse:
-    image: clickhouse/clickhouse-server:26.8-alpine
+    image: ${METRICSPANEL_TEST_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.8-alpine}
     ports: ["127.0.0.1::8123"]
     environment:
       CLICKHOUSE_USER: metricspanel
@@ -46,7 +46,7 @@ services:
       timeout: 3s
       retries: 60
   mysql:
-    image: mysql:8.4.10
+    image: ${METRICSPANEL_TEST_MYSQL_IMAGE:-mysql:8.4.10}
     environment:
       MYSQL_ROOT_PASSWORD: integration-root-password
       MYSQL_DATABASE: business
@@ -60,7 +60,7 @@ services:
       retries: 60
       start_period: 10s
   mysql-exporter:
-    image: prom/mysqld-exporter:v0.20.0
+    image: ${METRICSPANEL_TEST_EXPORTER_IMAGE:-prom/mysqld-exporter:v0.20.0}
     command: ["--config.my-cnf=/etc/exporter.cnf"]
     volumes: ["./tests/docker/exporter.cnf:/etc/exporter.cnf:ro"]
     depends_on:

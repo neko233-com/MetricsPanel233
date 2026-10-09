@@ -304,6 +304,8 @@ npm run test:e2e
 
 每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、波形保存 / 检索、文本清理和移动布局，结束时删除临时数据。
 GitHub Actions 自动运行 race / API / 浏览器测试与两轮 Docker 集成测试。
+CI 从 [Google Cloud 官方缓存](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images)拉取按摘要固定的测试镜像，减少 Docker Hub 限流影响。
+`compose.test.yml` 的 `METRICSPANEL_TEST_CLICKHOUSE_IMAGE`、`METRICSPANEL_TEST_MYSQL_IMAGE` 和 `METRICSPANEL_TEST_EXPORTER_IMAGE` 可覆盖测试镜像来源；生产 Compose 使用独立配置。
 
 开发：后端 `go run ./cmd/metricspanel serve`；网页 `cd web && npm run dev`。
 
