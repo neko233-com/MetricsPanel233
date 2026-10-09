@@ -44,7 +44,7 @@ jobs:
           mirror_config=$(mktemp)
           trap 'rm -f "$mirror_config" "$mirror_config.updated"' EXIT
           if [ -f /etc/docker/daemon.json ]; then
-            sudo cat /etc/docker/daemon.json > "$mirror_config"
+            sudo cat /etc/docker/daemon.json | tee "$mirror_config" > /dev/null
           else
             printf '{}\n' > "$mirror_config"
           fi
