@@ -16,6 +16,45 @@ type RawSeries struct {
 	Points []model.Point
 }
 
+// SelectSeries returns only label sets. Discovery must not load every metric
+// sample: the number of labels is independent of the retained sample volume.
+func (s *Store) SelectSeries(ctx context.Context, start, end int64, matchers []Matcher) ([]RawSeries, error) {
+	if s.Backend != nil {
+		return s.Backend.SelectSeries(ctx, start, end, matchers)
+	}
+	query := `SELECT name,labels FROM series WHERE EXISTS (SELECT 1 FROM samples WHERE samples.series_id=series.id AND timestamp>=? AND timestamp<=?)`
+	args := []any{start, end}
+	for _, m := range matchers {
+		if m.Name == "__name__" && m.Type == "=" {
+			query += ` AND name=?`
+			args = append(args, m.Value)
+		}
+	}
+	rows, err := s.DB.QueryContext(ctx, query+` ORDER BY name,labels`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RawSeries{}
+	for rows.Next() {
+		var name, raw string
+		if err = rows.Scan(&name, &raw); err != nil {
+			return nil, err
+		}
+		var labels map[string]string
+		if err = json.Unmarshal([]byte(raw), &labels); err != nil {
+			return nil, err
+		}
+		if Matches(name, labels, matchers) {
+			if len(out) >= 10000 {
+				return nil, errors.New("discovery exceeds 10000 series; narrow selectors")
+			}
+			out = append(out, RawSeries{Name: name, Labels: labels})
+		}
+	}
+	return out, rows.Err()
+}
+
 func Matches(name string, labels map[string]string, matchers []Matcher) bool {
 	for _, m := range matchers {
 		value := labels[m.Name]

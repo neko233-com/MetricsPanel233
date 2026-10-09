@@ -212,7 +212,7 @@ func run(args []string) error {
 			if err = json.Unmarshal(data, &raw); err != nil {
 				return err
 			}
-			if raw["title"] != nil || raw["dashboard"] != nil {
+			if raw["title"] != nil || raw["dashboard"] != nil || raw["spec"] != nil {
 				return request("POST", "/api/v1/import/grafana", json.RawMessage(data))
 			}
 			var d model.Dashboard

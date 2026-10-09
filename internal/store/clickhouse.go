@@ -157,7 +157,7 @@ func (c *ClickHouse) Metrics(ctx context.Context) ([]Metric, error) {
 	return decodeRows[Metric](data)
 }
 func (c *ClickHouse) Stats(ctx context.Context) (Stats, error) {
-	query := `SELECT toUInt32(uniqExact(tuple(name,labels_json))) AS series,toUInt32(count()) AS samples,countIf(timestamp>={recent:Int64})/60.0 AS ingest_rate,toInt64(max(timestamp)) AS last_sample FROM ` + c.Database + `.samples FINAL FORMAT JSONEachRow`
+	query := `SELECT toInt64(uniqExact(tuple(name,labels_json))) AS series,toInt64(count()) AS samples,countIf(timestamp>={recent:Int64})/60.0 AS ingest_rate,toInt64(max(timestamp)) AS last_sample FROM ` + c.Database + `.samples FINAL FORMAT JSONEachRow`
 	data, err := c.execute(ctx, query, map[string]string{"recent": strconv.FormatInt(time.Now().Add(-time.Minute).UnixMilli(), 10)}, nil, false)
 	if err != nil {
 		return Stats{}, err
@@ -241,6 +241,32 @@ func (c *ClickHouse) LoadSeries(ctx context.Context, start, end int64, matchers 
 			out = append(out, RawSeries{Name: r.Name, Labels: labels, Points: []model.Point{}})
 		}
 		out[len(out)-1].Points = append(out[len(out)-1].Points, model.Point{Timestamp: r.Timestamp, Value: r.Value})
+	}
+	return out, nil
+}
+func (c *ClickHouse) SelectSeries(ctx context.Context, start, end int64, matchers []Matcher) ([]RawSeries, error) {
+	where, params := c.conditions(start, end, matchers)
+	data, err := c.execute(ctx, `SELECT DISTINCT name,labels_json FROM `+c.Database+`.samples WHERE `+where+` ORDER BY name,labels_json LIMIT 10001 FORMAT JSONEachRow`, params, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := decodeRows[struct {
+		Name   string `json:"name"`
+		Labels string `json:"labels_json"`
+	}](data)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 10000 {
+		return nil, errors.New("discovery exceeds 10000 series; narrow selectors")
+	}
+	out := make([]RawSeries, 0, len(rows))
+	for _, row := range rows {
+		var labels map[string]string
+		if err = json.Unmarshal([]byte(row.Labels), &labels); err != nil {
+			return nil, err
+		}
+		out = append(out, RawSeries{Name: row.Name, Labels: labels})
 	}
 	return out, nil
 }

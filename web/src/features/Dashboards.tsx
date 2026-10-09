@@ -59,9 +59,10 @@ export function Dashboards({
             const data = JSON.parse(await file.text()) as Dashboard & {
               title?: string;
               dashboard?: unknown;
+              spec?: unknown;
             };
             let imported: Dashboard;
-            if (data.title || data.dashboard) {
+            if (data.title || data.dashboard || data.spec) {
               const result = await api<{
                 dashboard: Dashboard;
                 warnings: string[];

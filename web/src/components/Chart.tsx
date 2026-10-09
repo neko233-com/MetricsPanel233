@@ -1,5 +1,12 @@
 import { t as tr } from "../i18n";
-import { useEffect, useLayoutEffect, useRef, useId, useMemo, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useId,
+  useMemo,
+  useState,
+} from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import {
   queryPanel,
@@ -30,6 +37,9 @@ export function Chart({
   mint = false,
   onEdit,
   onRemove,
+  result,
+  resultError,
+  formatter = formatValue,
 }: {
   panel: Panel;
   range: string;
@@ -37,6 +47,9 @@ export function Chart({
   mint?: boolean;
   onEdit?: () => void;
   onRemove?: () => void;
+  result?: QueryResult;
+  resultError?: string;
+  formatter?: (value: number, unit?: string) => string;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
@@ -45,13 +58,24 @@ export function Chart({
   const svgRef = useRef<SVGSVGElement>(null);
   const [svgWidth, setSVGWidth] = useState(580);
   useLayoutEffect(() => {
-    const svg = svgRef.current; if (!svg) return;
-    const resize = () => setSVGWidth(Math.max(280, Math.round(svg.getBoundingClientRect().width)));
-    resize(); const observer = new ResizeObserver(resize); observer.observe(svg);
+    const svg = svgRef.current;
+    if (!svg) return;
+    const resize = () =>
+      setSVGWidth(Math.max(280, Math.round(svg.getBoundingClientRect().width)));
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(svg);
     return () => observer.disconnect();
   }, [panel.visualization]);
-  const plotWidth = svgWidth - 102, right = svgWidth - 20, ticks = svgWidth < 420 ? 4 : 7;
+  const plotWidth = svgWidth - 102,
+    right = svgWidth - 20,
+    ticks = svgWidth < 420 ? 4 : 7;
   useEffect(() => {
+    if (result) {
+      setData(result);
+      setError(resultError || "");
+      return;
+    }
     const controller = new AbortController();
     queryPanel(panel, range, controller.signal)
       .then((result) => {
@@ -70,6 +94,8 @@ export function Chart({
     JSON.stringify(panel.labels),
     range,
     tick,
+    result,
+    resultError,
   ]);
   const chart = useMemo(() => {
     const points = data?.series.flatMap((s) => s.points) || [];
@@ -110,7 +136,7 @@ export function Chart({
           )}
         </div>
         <div className="stat-value">
-          {latest === undefined ? "—" : formatValue(latest, panel.unit)}
+          {latest === undefined ? "—" : formatter(latest, panel.unit)}
         </div>
         {error && <p className="form-error">{error}</p>}
         <div className="chart-legend">
@@ -141,7 +167,7 @@ export function Chart({
                       .map(([k, v]) => `${k}=${v}`)
                       .join(", ")}
                   </td>
-                  <td>{formatValue(s.points.at(-1)!.value, panel.unit)}</td>
+                  <td>{formatter(s.points.at(-1)!.value, panel.unit)}</td>
                 </tr>
               ))}
             </tbody>
@@ -157,7 +183,7 @@ export function Chart({
         <div className="panel-actions">
           {latest !== undefined && (
             <span className="latest-value">
-              {formatValue(latest, panel.unit)}
+              {formatter(latest, panel.unit)}
             </span>
           )}
           {onEdit && (
@@ -194,7 +220,8 @@ export function Chart({
             const x = ((e.clientX - rect.left) / rect.width) * svgWidth;
             setHover(
               x >= 82 && x <= right
-                ? chart.start + ((x - 82) / plotWidth) * (chart.end - chart.start)
+                ? chart.start +
+                    ((x - 82) / plotWidth) * (chart.end - chart.start)
                 : null,
             );
           }}
@@ -211,7 +238,7 @@ export function Chart({
               <g key={i}>
                 <line x1="82" x2={right} y1={y} y2={y} className="grid-line" />
                 <text x="71" y={y + 4} textAnchor="end">
-                  {formatValue(
+                  {formatter(
                     chart.max - ((chart.max - chart.min) * i) / 4,
                     panel.unit,
                   )}
@@ -231,7 +258,9 @@ export function Chart({
                   className="grid-line vertical"
                 />
                 <text x={x} y="209" textAnchor="middle">
-                  {timeLabel(chart.start + ((chart.end - chart.start) * i) / (ticks - 1))}
+                  {timeLabel(
+                    chart.start + ((chart.end - chart.start) * i) / (ticks - 1),
+                  )}
                 </text>
               </g>
             );
@@ -301,7 +330,7 @@ export function Chart({
               );
               return (
                 <strong key={i}>
-                  {formatValue(point.value, panel.unit)}{" "}
+                  {formatter(point.value, panel.unit)}{" "}
                   <small>{Object.values(s.labels).join(" · ")}</small>
                 </strong>
               );

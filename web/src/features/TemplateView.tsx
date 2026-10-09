@@ -1,15 +1,68 @@
-import { t as tr } from "../i18n";
-import { useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Download, RefreshCw } from "lucide-react";
 import {
-  api,
   download,
-  interpolate,
   message,
   ranges,
   type Dashboard,
+  type Panel,
+  type InterpolationValues,
 } from "../api";
-import { Chart } from "../components/Chart";
+import { t } from "../i18n";
+import { queryValues, variableOptions } from "../grafana/variables";
+import { layoutPanels } from "../grafana/layout";
+import type { VariableValues } from "../grafana/engine";
+const GrafanaPanel = lazy(() => import("../grafana/GrafanaPanel"));
+
+function PanelCell({
+  panel,
+  values,
+  range,
+  tick,
+  style,
+}: {
+  panel: Panel;
+  values: InterpolationValues;
+  range: string;
+  tick: number;
+  style: CSSProperties;
+}) {
+  const ref = useRef<HTMLDivElement>(null),
+    [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { rootMargin: "200px" },
+    );
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className="grafana-cell" style={style}>
+      {visible ? (
+        <GrafanaPanel panel={panel} values={values} range={range} tick={tick} />
+      ) : panel.visualization === "row" ? (
+        <div className="grafana-row">
+          <h2>{panel.title}</h2>
+        </div>
+      ) : (
+        <section className="chart-panel">
+          <div className="panel-heading">
+            <h2>{panel.title}</h2>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
 
 export function TemplateView({
   dashboard,
@@ -25,91 +78,101 @@ export function TemplateView({
   refresh: () => void;
 }) {
   const variables = dashboard.variables || [];
-  const [values, setValues] = useState<Record<string, string>>(() =>
+  const [values, setValues] = useState<VariableValues>(() =>
     Object.fromEntries(
-      variables.map((v) => [
-        v.name,
-        v.current || v.options[0] || (v.include_all ? ".*" : ""),
-      ]),
+      variables.map((v) => {
+        const params = new URLSearchParams(location.search).getAll(
+          `var-${v.name}`,
+        );
+        if (params.length) return [v.name, v.multi ? params : params[0]];
+        const current =
+          v.current || v.options[0] || (v.include_all ? "$__all" : "");
+        return [v.name, v.multi ? current.split("|") : current];
+      }),
     ),
   );
   const [options, setOptions] = useState<Record<string, string[]>>({}),
     [error, setError] = useState("");
-  const variableKey = JSON.stringify(values);
+  const key = JSON.stringify(values),
+    effective = useMemo(
+      () => queryValues(values, variables),
+      [key, dashboard.id],
+    );
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    for (const [name, value] of Object.entries(values)) {
+      params.delete(`var-${name}`);
+      for (const choice of Array.isArray(value) ? value : [value])
+        params.append(`var-${name}`, choice);
+    }
+    history.replaceState(
+      {},
+      "",
+      `${location.pathname}?${params}${location.hash}`,
+    );
+  }, [key]);
   useEffect(() => {
     const controller = new AbortController();
-    async function loadOptions() {
-      const entries = await Promise.all(
-        variables.map(async (variable) => {
-          if (variable.type !== "query")
-            return [variable.name, variable.options] as const;
-          const query = interpolate(variable.query, values, range);
-          const match =
-            /^label_values\(\s*(?:(.*),\s*)?([a-zA-Z_][\w]*)\s*\)$/.exec(query);
-          if (!match)
-            throw new Error(
-              `Variable ${variable.name}: supported query syntax is label_values(selector, label) or label_values(label)`,
-            );
-          const params = new URLSearchParams();
-          if (match[1]) params.append("match[]", match[1].trim());
-          const result = await api<{ data: string[] }>(
-            `/prometheus/api/v1/label/${encodeURIComponent(match[2])}/values?${params}`,
-            { signal: controller.signal },
-          );
-          return [variable.name, result.data] as const;
-        }),
-      );
-      setOptions(Object.fromEntries(entries));
-      setError("");
-      setValues((old) => {
-        const next = { ...old };
-        let changed = false;
-        for (const [name, choices] of entries)
-          if (!next[name] && choices.length) {
-            next[name] = choices[0];
-            changed = true;
-          }
-        return changed ? next : old;
+    void Promise.all(
+      variables.map(
+        async (v) =>
+          [
+            v.name,
+            await variableOptions(v, effective, range, controller.signal),
+          ] as const,
+      ),
+    )
+      .then((entries) => {
+        setOptions(Object.fromEntries(entries));
+        setError("");
+        setValues((old) => {
+          const next = { ...old };
+          let changed = false;
+          for (const [name, choices] of entries)
+            if (
+              (!next[name] ||
+                (Array.isArray(next[name]) && !next[name].length)) &&
+              choices.length
+            ) {
+              next[name] = variables.find((v) => v.name === name)?.multi
+                ? [choices[0]]
+                : choices[0];
+              changed = true;
+            }
+          return changed ? next : old;
+        });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(message(e));
       });
-    }
-    void loadOptions().catch((e) => {
-      if (!controller.signal.aborted) setError(message(e));
-    });
     return () => controller.abort();
-  }, [dashboard.id, variableKey, range]);
+  }, [dashboard.id, key, range]);
   const panels = useMemo(
-    () =>
-      dashboard.panels.map((p) => ({
-        ...p,
-        expr: interpolate(p.expr || "", values, range),
-        expressions: p.expressions?.map((expr) =>
-          interpolate(expr, values, range),
-        ),
-      })),
-    [dashboard.panels, variableKey, range],
+    () => layoutPanels(dashboard.panels, values, options),
+    [dashboard.panels, key, options],
   );
   return (
     <>
       <div className="page-heading">
         <div>
           <h1>{dashboard.name}</h1>
-          <p>{tr("Grafana template")} · PromQL</p>
+          <p>{t("Grafana template")} · PromQL</p>
         </div>
         <div className="toolbar">
           <select
-            aria-label={tr("Time range")}
+            aria-label={t("Time range")}
             value={range}
             onChange={(e) => onRange(e.target.value)}
           >
             {ranges.map((r) => (
               <option key={r.value} value={r.value}>
-                {tr(r.label)}
+                {t(r.label)}
               </option>
             ))}
           </select>
           <button
             className="icon-button outlined"
-            aria-label={tr("Refresh metrics")}
+            aria-label={t("Refresh metrics")}
             onClick={refresh}
           >
             <RefreshCw size={18} />
@@ -120,21 +183,27 @@ export function TemplateView({
             }
           >
             <Download size={17} />
-            {tr("Export JSON")}
+            {t("Export JSON")}
           </button>
         </div>
       </div>
-      {variables.length > 0 && (
+      {!!variables.length && (
         <div className="template-variables">
           {variables
-            .filter((v) => v.type !== "constant")
+            .filter(
+              (v) =>
+                v.type !== "constant" &&
+                v.type !== "datasource" &&
+                v.config?.hide !== 2 &&
+                v.config?.hide !== "hideVariable",
+            )
             .map((v) => (
               <label key={v.name}>
-                {v.name}
+                {v.config?.label || v.name}
                 {v.type === "textbox" ? (
                   <input
                     aria-label={v.name}
-                    value={values[v.name] || ""}
+                    value={String(values[v.name] || "")}
                     onChange={(e) =>
                       setValues((old) => ({ ...old, [v.name]: e.target.value }))
                     }
@@ -145,24 +214,29 @@ export function TemplateView({
                     multiple={v.multi}
                     value={
                       v.multi
-                        ? (values[v.name] || "").split("|")
-                        : values[v.name] || ""
+                        ? Array.isArray(values[v.name])
+                          ? values[v.name]
+                          : [String(values[v.name] || "")]
+                        : String(values[v.name] || "")
                     }
                     onChange={(e) =>
                       setValues((old) => ({
                         ...old,
                         [v.name]: v.multi
-                          ? Array.from(e.target.selectedOptions)
-                              .map((o) => o.value)
-                              .join("|")
+                          ? Array.from(e.target.selectedOptions).map(
+                              (o) => o.value,
+                            )
                           : e.target.value,
                       }))
                     }
                   >
-                    {v.include_all && <option value=".*">All</option>}
+                    {v.include_all && (
+                      <option value="$__all">{t("All")}</option>
+                    )}
                     {(options[v.name] || v.options).map((value) => (
                       <option key={value} value={value}>
-                        {value}
+                        {v.config?.options?.find((o) => o.value === value)
+                          ?.text || value}
                       </option>
                     ))}
                   </select>
@@ -176,10 +250,22 @@ export function TemplateView({
           {error}
         </p>
       )}
-      <div className="chart-grid template-grid">
-        {panels.map((p) => (
-          <Chart key={p.id} panel={p} range={range} tick={tick} />
-        ))}
+      <div className="grafana-grid">
+        <Suspense fallback={<p>{t("Loading metrics…")}</p>}>
+          {panels.map(({ panel, values: scoped, x, y, w, h }) => (
+            <PanelCell
+              key={panel.id}
+              style={{
+                gridColumn: `${x + 1} / span ${w}`,
+                gridRow: `${y + 1} / span ${h}`,
+              }}
+              panel={panel}
+              values={queryValues(scoped, variables)}
+              range={range}
+              tick={tick}
+            />
+          ))}
+        </Suspense>
       </div>
     </>
   );

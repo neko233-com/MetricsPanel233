@@ -20,6 +20,7 @@ export type Panel = {
   expr?: string;
   expressions?: string[];
   visualization?: string;
+  config?: import("./grafana/engine").GrafanaConfig;
 };
 export type Variable = {
   name: string;
@@ -29,6 +30,14 @@ export type Variable = {
   options: string[];
   multi: boolean;
   include_all: boolean;
+  config?: {
+    label?: string;
+    hide?: number | string;
+    regex?: string;
+    sort?: number | string;
+    allValue?: string;
+    options?: { text: string; value: string }[];
+  };
 };
 export type Dashboard = {
   id: string;
@@ -38,6 +47,23 @@ export type Dashboard = {
   variables?: Variable[];
   grafana?: unknown;
 };
+export function dashboardUID(dashboard: Dashboard): string {
+  const original = dashboard.grafana as
+    | {
+        uid?: string;
+        metadata?: { name?: string };
+        spec?: { uid?: string };
+        dashboard?: { uid?: string };
+      }
+    | undefined;
+  return (
+    original?.uid ||
+    original?.dashboard?.uid ||
+    original?.spec?.uid ||
+    original?.metadata?.name ||
+    dashboard.id
+  );
+}
 export type Target = {
   id: number;
   name: string;
@@ -168,7 +194,7 @@ export function rangeMilliseconds(range: string): number {
 }
 export function interpolate(
   expr: string,
-  variables: Record<string, string>,
+  variables: InterpolationValues,
   range: string,
 ): string {
   const seconds = Math.ceil(rangeMilliseconds(range) / 1000);
@@ -182,13 +208,64 @@ export function interpolate(
     __range: `${seconds}s`,
     __range_s: String(seconds),
     __range_ms: String(seconds * 1000),
+    __from: String(Date.now() - rangeMilliseconds(range)),
+    __to: String(Date.now()),
   };
   return expr.replace(
-    /\$\{([a-zA-Z_][\w]*)(?::(regex|pipe|raw|csv))?\}|\$([a-zA-Z_][\w]*)/g,
-    (match, braced: string, _format: string, plain: string) =>
-      (values as Record<string, string>)[braced || plain] ?? match,
+    /\$\{([a-zA-Z_][\w]*)(?::([\w]+))?\}|\$([a-zA-Z_][\w]*)|\[\[([a-zA-Z_][\w]*)(?::([\w]+))?\]\]/g,
+    (
+      match,
+      braced: string,
+      format: string,
+      plain: string,
+      legacy: string,
+      legacyFormat: string,
+      offset: number,
+    ) => {
+      const value = (values as InterpolationValues)[braced || plain || legacy];
+      if (value === undefined) return match;
+      let quoted = false,
+        escapedChar = false;
+      for (const char of expr.slice(0, offset)) {
+        if (escapedChar) {
+          escapedChar = false;
+          continue;
+        }
+        if (char === "\\") {
+          escapedChar = true;
+          continue;
+        }
+        if (char === '"') quoted = !quoted;
+      }
+      if (typeof value === "object" && !Array.isArray(value))
+        return quoted ? value.raw.replace(/["\\]/g, "\\$&") : value.raw;
+      const parts = Array.isArray(value) ? value : [value];
+      const mode = format || legacyFormat;
+      if (mode === "json") return JSON.stringify(value);
+      if (mode === "csv") return parts.join(",");
+      if (mode === "raw" || mode === "pipe") return parts.join("|");
+      if (mode === "doublequote")
+        return parts.map((p) => JSON.stringify(p)).join(",");
+      if (mode === "singlequote")
+        return parts.map((p) => `'${p.replace(/['\\]/g, "\\$&")}'`).join(",");
+      if (mode === "percentencode") return encodeURIComponent(parts.join(","));
+      const escaped = parts.map((p) =>
+        p === ".*" ? p : p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      );
+      if (mode === "regex" || Array.isArray(value)) {
+        const regex =
+          escaped.length > 1 ? `(${escaped.join("|")})` : escaped[0];
+        return quoted ? regex.replace(/["\\]/g, "\\$&") : regex;
+      }
+      // Single Prometheus values only require quote/backslash escaping.
+      return String(value).replace(/["\\]/g, "\\$&");
+    },
   );
 }
+export type InterpolationValues = Record<
+  string,
+  string | string[] | { raw: string }
+>;
 export async function queryPanel(
   panel: Panel,
   range: string,

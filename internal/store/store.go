@@ -28,6 +28,7 @@ type MetricBackend interface {
 	Query(context.Context, model.Query) (model.QueryResult, error)
 	Prune(context.Context, int64) error
 	LoadSeries(context.Context, int64, int64, []Matcher) ([]RawSeries, error)
+	SelectSeries(context.Context, int64, int64, []Matcher) ([]RawSeries, error)
 }
 
 func (s *Store) Kind() string {

@@ -100,6 +100,14 @@ func TestValidationAndRawSelectors(t *testing.T) {
 	raw, err = s.LoadSeries(ctx, now-1000, now+1000, []store.Matcher{{Name: "service", Type: "=", Value: ""}})
 	require.NoError(t, err)
 	require.Len(t, raw, 1)
+	metadata, err := s.SelectSeries(ctx, now-1000, now+1000, []store.Matcher{{Name: "__name__", Type: "=", Value: "orders"}, {Name: "service", Type: "=~", Value: "a.*"}})
+	require.NoError(t, err)
+	require.Len(t, metadata, 1)
+	assert.Equal(t, "api", metadata[0].Labels["service"])
+	assert.Nil(t, metadata[0].Points)
+	metadata, err = s.SelectSeries(ctx, now+1, now+1000, nil)
+	require.NoError(t, err)
+	assert.Empty(t, metadata)
 	for _, q := range []model.Query{{Metric: "orders", Start: 0, End: 32 * 24 * 3600000, Step: 1000, Aggregation: "last"}, {Metric: "orders", Start: 1, End: 1000, Step: 0, Aggregation: "last"}, {Metric: "orders", Start: 1, End: 1000, Step: 1000, Aggregation: "oops"}} {
 		_, err = s.Query(ctx, q)
 		require.Error(t, err)
@@ -113,7 +121,7 @@ func TestResourcesPersistAcrossRestart(t *testing.T) {
 	target, err := s.SaveTarget(ctx, model.Target{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true})
 	require.NoError(t, err)
 	require.NotZero(t, target.ID)
-	d := model.Dashboard{ID: "business", Name: "Business", Panels: []model.Panel{{ID: "orders", Title: "Orders", Expr: "sum(orders)", Aggregation: "last"}}, Variables: []model.Variable{{Name: "job", Type: "query", Query: "label_values(job)", Current: "mysql"}}, Grafana: []byte(`{"title":"Original"}`)}
+	d := model.Dashboard{ID: "business", Name: "Business", Panels: []model.Panel{{ID: "orders", Title: "Orders", Expr: "sum(orders)", Aggregation: "last", Config: []byte(`{"type":"table","gridPos":{"x":0,"y":0,"w":24,"h":8},"transformations":[{"id":"organize","options":{}}]}`)}}, Variables: []model.Variable{{Name: "job", Type: "query", Query: "label_values(job)", Current: "mysql", Config: []byte(`{"allValue":"mysql.*","sort":1}`)}}, Grafana: []byte(`{"title":"Original"}`)}
 	_, err = s.SaveDashboard(ctx, d)
 	require.NoError(t, err)
 	require.NoError(t, s.DB.Close())
@@ -128,6 +136,7 @@ func TestResourcesPersistAcrossRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, dashboards, 2)
 	assert.Equal(t, d.Variables, dashboards[1].Variables)
+	assert.Equal(t, d.Panels, dashboards[1].Panels)
 	assert.JSONEq(t, string(d.Grafana), string(dashboards[1].Grafana))
 	require.NoError(t, s.DeleteTarget(ctx, target.ID))
 	require.Error(t, s.DeleteTarget(ctx, target.ID))

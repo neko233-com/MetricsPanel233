@@ -1,0 +1,90 @@
+{
+  "title": "Go runtime",
+  "schemaVersion": 41,
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Service",
+        "type": "query",
+        "query": "label_values(metricspanel_goroutines,job)",
+        "current": { "value": "metricspanel" },
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Runtime overview",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 0, "w": 16, "h": 9 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "metricspanel_goroutines{job=~\"${job:regex}\"}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value #A": "Goroutines", "job": "Service" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0 },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Go goroutines",
+      "type": "gauge",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 9 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(metricspanel_goroutines{job=~\"${job:regex}\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 80 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Memory by service",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 9, "w": 24, "h": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "metricspanel_memory_bytes{job=~\"${job:regex}\"}",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    }
+  ]
+}

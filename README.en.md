@@ -54,14 +54,26 @@ This is a single-instance implementation, with no claimed distributed or product
 Grafana's Prometheus datasource can use `http://localhost:7333/prometheus` with the workspace Bearer Authorization header.
 Instant/range query, labels, label values, series, metadata, targets and buildinfo endpoints are implemented using the upstream PromQL engine.
 
-Import classic Grafana dashboard JSON through the UI or `metricspanel dashboards save --file grafana.json`.
-Supported panels: graph / timeseries, stat / singlestat, table; gauge / bargauge render as stat. Prometheus targets, rows, label_values variables,
-custom / constant / textbox / interval variables, multi-select, All and common interval/range macros are supported.
-Original Grafana JSON is preserved and exportable with `dashboards export --id ID --format grafana`.
+Import Classic, V1 and V2 dashboard resources through the UI or `metricspanel dashboards save --file grafana.json`.
+Panel targets, refIds, instant/range queries, legends, gridPos, fieldConfig and transformation contracts are retained.
+Limits are 500 panels and 32 queries per panel. Panels query only near the visible viewport; the official renderer dependency loads only for templates.
+Import tests include a pinned community Node Exporter Full dashboard.
+Supported renderers include graph / timeseries, stat / singlestat, table, gauge, bargauge, sanitized HTML / Markdown text and rows.
+The official `@grafana/data` package executes standard transformations, reducers, units, threshold colors and value mappings.
+Variables support label_values, label_names, metrics, query_result, regex/sort, custom/constant/textbox/interval, multi-select, All,
+repeated panels, common interval/range macros, variable formats and var-NAME URL parameters.
+Original Grafana resources are preserved and exportable with `dashboards export --id ID --format grafana`.
+The [Go runtime template](examples/dashboards/go-runtime.json) shows real metrics with an instant table transform, gauge and timeseries.
 
-**Full Grafana ecosystem parity is not implemented.** Custom plugins, non-Prometheus datasources, Grafana backend APIs, alerts, annotations,
-transformations, repeated panels, complex variable queries and exact Grafana layout semantics remain outside the current compatibility scope.
-The importer reports unsupported features. Full compatibility remains a future objective, not a claim for this release.
+Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/dashboards/uid/{uid} and GET /api/search.
+Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
+These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
+
+**Full Grafana ecosystem parity is not implemented.** Custom plugins, non-Prometheus/expression datasources, alerts, annotations,
+folders/organizations/permissions, library panels and the full backend API remain unfinished.
+V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
+Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
+Full compatibility remains an objective, not a claim for this release.
 
 ## Automated verification
 
@@ -75,11 +87,14 @@ go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
 Or on Windows: `pwsh -File scripts/test-docker.ps1 -Repeat 2`.
 The testify integration suite verifies real Go push/scrape, real MySQL exporter collection, both storage backends, duplicate writes,
 application and ClickHouse restarts, Grafana queries/templates and resource cleanup.
+Four concurrent writers additionally ingest 100,000 SQLite samples and 1,000,000 ClickHouse samples; the suite reports batch p50/p95 and 24h aggregation time.
+These bounded workloads do not establish million-series or sustained production performance.
 It uses a fixed isolated Compose project, random mapped ports and an automatically released concurrency lock.
 Each run deletes its own containers, volumes, network and application image tags. Shared base images and BuildKit cache remain reusable.
 
 After building the frontend and the CLI binary, run `cd web && npx playwright install chromium && npm run test:e2e`.
-Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, templates and mobile layout.
+Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, resource templates,
+official transforms, percentage units, repeated panels, special-character variables, text sanitization and mobile layout.
 GitHub Actions runs these checks plus two Docker integration runs.
 
 Apache-2.0. See the [Chinese README](README.md) for API details, environment variables, architecture and limitations.

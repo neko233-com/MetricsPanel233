@@ -368,6 +368,36 @@ pre {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+.grafana-grid {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  grid-auto-rows: 22px;
+  gap: 8px;
+  align-items: stretch;
+}
+.grafana-cell { min-width: 0; min-height: 0; }
+.grafana-cell > .chart-panel { height: 100%; display: flex; flex-direction: column; }
+.grafana-cell .chart-wrap { flex: 1; min-height: 80px; height: auto; }
+.grafana-cell .panel-heading { flex-shrink: 0; }
+.grafana-row { height: 100%; display: flex; align-items: center; }
+.grafana-row h2 { font-size: 14px; margin: 0; }
+.grafana-panel .form-error, .grafana-panel > p { margin: 12px 16px; }
+.grafana-values { display: flex; flex: 1; gap: 20px; align-items: center; justify-content: space-evenly; padding: 12px 16px; overflow: auto; }
+.grafana-values.vertical { flex-direction: column; align-items: stretch; }
+.grafana-value { display: flex; flex-direction: column; gap: 8px; align-items: center; min-width: 0; }
+.grafana-value strong { font-size: clamp(24px, 3vw, 42px); font-weight: 500; }
+.grafana-value svg { width: 160px; max-height: 100px; }
+.grafana-value progress { width: 100%; min-width: 100px; height: 16px; }
+.grafana-table { flex: 1; overflow: auto; }
+.grafana-text { padding: 0 16px 16px; overflow: auto; line-height: 1.65; }
+.grafana-text a { color: var(--accent); }
+.grafana-panel pre { white-space: pre-wrap; padding: 0 16px; overflow: auto; }
+@media (max-width: 760px) {
+  .grafana-grid { display: flex; flex-direction: column; gap: 14px; }
+  .grafana-cell { min-height: 280px; }
+  .grafana-cell:has(.grafana-row) { min-height: 24px; }
+  .grafana-cell > .chart-panel { min-height: 280px; }
+}
 .chart-panel,
 .status-panel {
   border: 1px solid var(--border);

@@ -188,7 +188,7 @@ func (a *API) discovery(w http.ResponseWriter, r *http.Request, kind string) {
 	values := map[string]bool{}
 	seriesMap := map[string]map[string]string{}
 	for _, group := range groups {
-		raw, err := a.Store.LoadSeries(r.Context(), start.UnixMilli(), end.UnixMilli(), convertMatchers(group))
+		raw, err := a.Store.SelectSeries(r.Context(), start.UnixMilli(), end.UnixMilli(), convertMatchers(group))
 		if err != nil {
 			failure(w, err)
 			return

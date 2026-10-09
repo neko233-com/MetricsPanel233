@@ -63,7 +63,7 @@ func (q *querier) Select(ctx context.Context, sorted bool, hints *storage.Select
 	return &seriesSet{series: series, index: -1}
 }
 func (q *querier) LabelValues(ctx context.Context, name string, _ *storage.LabelHints, ms ...*labels.Matcher) ([]string, annotations.Annotations, error) {
-	raw, err := q.store.LoadSeries(ctx, q.start, q.end, convertMatchers(ms))
+	raw, err := q.store.SelectSeries(ctx, q.start, q.end, convertMatchers(ms))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,7 +83,7 @@ func (q *querier) LabelValues(ctx context.Context, name string, _ *storage.Label
 	return out, nil, nil
 }
 func (q *querier) LabelNames(ctx context.Context, _ *storage.LabelHints, ms ...*labels.Matcher) ([]string, annotations.Annotations, error) {
-	raw, err := q.store.LoadSeries(ctx, q.start, q.end, convertMatchers(ms))
+	raw, err := q.store.SelectSeries(ctx, q.start, q.end, convertMatchers(ms))
 	if err != nil {
 		return nil, nil, err
 	}

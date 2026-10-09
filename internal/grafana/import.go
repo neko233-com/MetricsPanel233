@@ -1,6 +1,5 @@
-// Package grafana imports Prometheus-backed Grafana classic dashboard JSON.
-// Original JSON is preserved for lossless export; incompatible features are
-// reported explicitly instead of silently presenting an inaccurate panel.
+// Package grafana imports dashboard schemas without discarding panel contracts.
+// The original document is retained, including resource metadata, for export.
 package grafana
 
 import (
@@ -18,6 +17,7 @@ type ImportResult struct {
 }
 
 func Import(data []byte) (ImportResult, error) {
+	original := append(json.RawMessage(nil), data...)
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
 		return ImportResult{}, err
@@ -25,27 +25,12 @@ func Import(data []byte) (ImportResult, error) {
 	if wrapped, ok := root["dashboard"]; ok {
 		data = wrapped
 	}
-	type target struct {
-		Expr       string          `json:"expr"`
-		Hide       bool            `json:"hide"`
-		Datasource json.RawMessage `json:"datasource"`
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return ImportResult{}, err
 	}
-	type rawPanel struct {
-		ID              int               `json:"id"`
-		Title           string            `json:"title"`
-		Type            string            `json:"type"`
-		Targets         []target          `json:"targets"`
-		Panels          []json.RawMessage `json:"panels"`
-		Transformations []json.RawMessage `json:"transformations"`
-		Repeat          string            `json:"repeat"`
-		FieldConfig     struct {
-			Defaults struct {
-				Unit string `json:"unit"`
-			} `json:"defaults"`
-		} `json:"fieldConfig"`
-		YAxes []struct {
-			Format string `json:"format"`
-		} `json:"yaxes"`
+	if spec, ok := doc["spec"]; ok {
+		data = spec
 	}
 	var source struct {
 		Title  string            `json:"title"`
@@ -54,20 +39,11 @@ func Import(data []byte) (ImportResult, error) {
 			Panels []json.RawMessage `json:"panels"`
 		} `json:"rows"`
 		Templating struct {
-			List []struct {
-				Name    string          `json:"name"`
-				Type    string          `json:"type"`
-				Query   json.RawMessage `json:"query"`
-				Current struct {
-					Value json.RawMessage `json:"value"`
-				} `json:"current"`
-				Options []struct {
-					Value string `json:"value"`
-				} `json:"options"`
-				Multi      bool `json:"multi"`
-				IncludeAll bool `json:"includeAll"`
-			} `json:"list"`
+			List []json.RawMessage `json:"list"`
 		} `json:"templating"`
+		Elements  map[string]json.RawMessage `json:"elements"`
+		Variables []json.RawMessage          `json:"variables"`
+		Layout    json.RawMessage            `json:"layout"`
 	}
 	if err := json.Unmarshal(data, &source); err != nil {
 		return ImportResult{}, err
@@ -75,28 +51,62 @@ func Import(data []byte) (ImportResult, error) {
 	if source.Title == "" {
 		return ImportResult{}, fmt.Errorf("Grafana dashboard title required")
 	}
-	result := ImportResult{Dashboard: model.Dashboard{ID: uuid.NewString(), Name: source.Title, Panels: []model.Panel{}, Grafana: json.RawMessage(data)}, Warnings: []string{}}
+	result := ImportResult{Dashboard: model.Dashboard{ID: uuid.NewString(), Name: source.Title, Panels: []model.Panel{}, Grafana: original}, Warnings: []string{}}
+	if len(source.Elements) > 0 {
+		panels, warnings, err := normalizeV2(source.Elements, source.Layout)
+		if err != nil {
+			return result, err
+		}
+		source.Panels = panels
+		result.Warnings = append(result.Warnings, warnings...)
+		for _, variable := range source.Variables {
+			var v struct {
+				Kind string         `json:"kind"`
+				Spec map[string]any `json:"spec"`
+			}
+			if err := json.Unmarshal(variable, &v); err != nil {
+				return result, err
+			}
+			types := map[string]string{"QueryVariable": "query", "CustomVariable": "custom", "ConstantVariable": "constant", "TextVariable": "textbox", "DatasourceVariable": "datasource", "IntervalVariable": "interval", "AdhocVariable": "adhoc"}
+			if v.Spec == nil {
+				return result, fmt.Errorf("variable %q needs a spec", v.Kind)
+			}
+			v.Spec["type"] = types[v.Kind]
+			if query, ok := v.Spec["query"].(map[string]any); ok {
+				v.Spec["query"] = query["spec"]
+			}
+			b, _ := json.Marshal(v.Spec)
+			source.Templating.List = append(source.Templating.List, b)
+		}
+	}
 	var addPanels func([]json.RawMessage) error
 	addPanels = func(raws []json.RawMessage) error {
 		for _, raw := range raws {
-			var p rawPanel
+			var p struct {
+				Title   string `json:"title"`
+				Type    string `json:"type"`
+				Targets []struct {
+					Expr string `json:"expr"`
+					Hide bool   `json:"hide"`
+				} `json:"targets"`
+				Panels      []json.RawMessage `json:"panels"`
+				FieldConfig struct {
+					Defaults struct {
+						Unit string `json:"unit"`
+					} `json:"defaults"`
+				} `json:"fieldConfig"`
+			}
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return err
 			}
-			if p.Type == "row" {
-				if err := addPanels(p.Panels); err != nil {
-					return err
+			if p.Title == "" {
+				p.Title = p.Type
+				if p.Title == "" {
+					p.Title = "Panel"
 				}
-				continue
 			}
-			switch p.Type {
-			case "timeseries", "graph", "stat", "singlestat", "gauge", "bargauge", "table":
-			default:
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Panel %q uses unsupported type %q and was skipped", p.Title, p.Type))
-				continue
-			}
-			if len(p.Transformations) > 0 || p.Repeat != "" {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Panel %q uses transformations or repeat; these are not applied", p.Title))
+			if p.Type == "" {
+				return fmt.Errorf("panel %q needs a type", p.Title)
 			}
 			expressions := []string{}
 			for _, t := range p.Targets {
@@ -104,22 +114,10 @@ func Import(data []byte) (ImportResult, error) {
 					expressions = append(expressions, t.Expr)
 				}
 			}
-			if len(expressions) == 0 {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Panel %q has no PromQL targets and was skipped", p.Title))
-				continue
-			}
-			if len(expressions) > 8 {
-				return fmt.Errorf("panel %q has more than 8 targets", p.Title)
+			if len(expressions) > 32 {
+				return fmt.Errorf("panel %q has more than 32 targets", p.Title)
 			}
 			unit := p.FieldConfig.Defaults.Unit
-			if unit == "" && len(p.YAxes) > 0 {
-				unit = p.YAxes[0].Format
-			}
-			if unit == "percentunit" {
-				for i, expr := range expressions {
-					expressions[i] = "(" + expr + ") * 100"
-				}
-			}
 			switch unit {
 			case "bytes", "decbytes":
 				unit = "bytes"
@@ -133,16 +131,25 @@ func Import(data []byte) (ImportResult, error) {
 				unit = ""
 			}
 			visual := p.Type
-			if visual == "gauge" || visual == "bargauge" {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Panel %q: %s is displayed as a numeric stat", p.Title, p.Type))
-			}
-			if visual == "graph" {
+			switch visual {
+			case "graph":
 				visual = "timeseries"
-			}
-			if visual == "singlestat" || visual == "gauge" || visual == "bargauge" {
+			case "singlestat":
 				visual = "stat"
 			}
-			result.Dashboard.Panels = append(result.Dashboard.Panels, model.Panel{ID: uuid.NewString(), Title: p.Title, Aggregation: "last", Unit: unit, Expr: expressions[0], Expressions: expressions, Visualization: visual})
+			switch visual {
+			case "timeseries", "stat", "gauge", "bargauge", "table", "text", "row":
+			default:
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Panel %q: plugin %q requires a compatible renderer; configuration is preserved", p.Title, p.Type))
+			}
+			panel := model.Panel{ID: uuid.NewString(), Title: p.Title, Aggregation: "last", Unit: unit, Expressions: expressions, Visualization: visual, Config: raw}
+			if len(expressions) > 0 {
+				panel.Expr = expressions[0]
+			}
+			result.Dashboard.Panels = append(result.Dashboard.Panels, panel)
+			if err := addPanels(p.Panels); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -154,53 +161,65 @@ func Import(data []byte) (ImportResult, error) {
 			return result, err
 		}
 	}
-	for _, v := range source.Templating.List {
-		if v.Type == "datasource" {
-			continue
+	for _, raw := range source.Templating.List {
+		var v struct {
+			Name    string          `json:"name"`
+			Type    string          `json:"type"`
+			Query   json.RawMessage `json:"query"`
+			Current struct {
+				Value json.RawMessage `json:"value"`
+			} `json:"current"`
+			Options []struct {
+				Value json.RawMessage `json:"value"`
+			} `json:"options"`
+			Multi      bool `json:"multi"`
+			IncludeAll bool `json:"includeAll"`
 		}
-		switch v.Type {
-		case "query", "custom", "constant", "textbox", "interval":
-		default:
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Variable %q has unsupported type %q", v.Name, v.Type))
-			continue
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return result, err
 		}
-		var query string
-		if err := json.Unmarshal(v.Query, &query); err != nil {
+		query := stringValue(v.Query)
+		if query == "" {
 			var obj struct {
 				Query string `json:"query"`
 			}
 			_ = json.Unmarshal(v.Query, &obj)
 			query = obj.Query
 		}
-		var current string
-		if err := json.Unmarshal(v.Current.Value, &current); err != nil {
-			var values []string
-			if json.Unmarshal(v.Current.Value, &values) == nil {
-				current = strings.Join(values, "|")
-			}
-		}
+		current := stringValue(v.Current.Value)
 		options := []string{}
 		for _, o := range v.Options {
-			if o.Value != "$__all" {
-				options = append(options, o.Value)
+			if value := stringValue(o.Value); value != "" && value != "$__all" {
+				options = append(options, value)
 			}
 		}
-		if v.Type == "custom" || v.Type == "interval" {
-			options = strings.Split(query, ",")
+		if (v.Type == "custom" || v.Type == "interval") && len(options) == 0 {
+			for _, x := range strings.Split(query, ",") {
+				options = append(options, strings.TrimSpace(x))
+			}
 		}
 		if v.Type == "constant" {
 			current = query
 		}
-		if v.IncludeAll && current == "$__all" {
-			current = ".*"
-		}
-		result.Dashboard.Variables = append(result.Dashboard.Variables, model.Variable{Name: v.Name, Type: v.Type, Query: query, Current: current, Options: options, Multi: v.Multi, IncludeAll: v.IncludeAll})
+		result.Dashboard.Variables = append(result.Dashboard.Variables, model.Variable{Name: v.Name, Type: v.Type, Query: query, Current: current, Options: options, Multi: v.Multi, IncludeAll: v.IncludeAll, Config: raw})
 	}
 	if len(result.Dashboard.Panels) == 0 {
-		return result, fmt.Errorf("template has no supported Prometheus panels")
+		return result, fmt.Errorf("template has no panels")
 	}
 	if err := result.Dashboard.Validate(); err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+func stringValue(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var values []string
+	if json.Unmarshal(raw, &values) == nil {
+		return strings.Join(values, "|")
+	}
+	return ""
 }

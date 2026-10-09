@@ -1,6 +1,6 @@
 import { t as tr } from "./i18n";
 import { getLocale, setLocale, type Locale } from "./i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ChartNoAxesColumn,
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  dashboardUID,
   ApiError,
   message,
   type Dashboard,
@@ -44,6 +45,7 @@ const navigation = [
   { id: "cli", name: "Agent CLI", icon: Terminal },
 ] as const;
 export default function App() {
+  const routeLoaded = useRef(false);
   const [locale, updateLocale] = useState<Locale>(getLocale());
   const languageButton = (
     <button
@@ -116,9 +118,17 @@ export default function App() {
     const timer = setTimeout(() => setNotice(null), notice.error ? 8000 : 3500);
     return () => clearTimeout(timer);
   }, [notice]);
+  useEffect(() => {
+    if (routeLoaded.current || !dashboards.length) return;
+    routeLoaded.current = true;
+    const uid = /^\/d\/([^/]+)/.exec(location.pathname)?.[1];
+    const dashboard = uid ? dashboards.find((d) => dashboardUID(d) === decodeURIComponent(uid)) : undefined;
+    if (dashboard) { setDashboardID(dashboard.id); setView("dashboard"); }
+  }, [dashboards]);
   function navigate(next: View) {
     setView(next);
     setSidebarOpen(false);
+    if (next !== "dashboard") history.replaceState({}, "", `/#${next}`);
   }
   const current = dashboards.find(
     (d) => d.id === (view === "overview" ? "system" : dashboardID),
@@ -295,6 +305,7 @@ export default function App() {
               notify={notify}
               open={(d) => {
                 setDashboardID(d.id);
+                history.replaceState({}, "", `/d/${encodeURIComponent(dashboardUID(d))}/${encodeURIComponent(d.name)}`);
                 navigate("dashboard");
               }}
             />

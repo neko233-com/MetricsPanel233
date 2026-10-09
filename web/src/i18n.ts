@@ -11,6 +11,9 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Renderer required": "此面板需要兼容的渲染器",
+  "Unsupported reducer": "不支持的聚合计算",
+  "Showing first 500 rows": "仅显示前 500 行",
   Edit: "编辑",
   Remove: "移除",
   Scrape: "采集",

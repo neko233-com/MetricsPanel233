@@ -82,16 +82,19 @@ type Panel struct {
 	Expr          string            `json:"expr,omitempty"`
 	Expressions   []string          `json:"expressions,omitempty"`
 	Visualization string            `json:"visualization,omitempty"`
+	// Config retains the Grafana panel contract rather than a lossy conversion.
+	Config json.RawMessage `json:"config,omitempty"`
 }
 
 type Variable struct {
-	Name       string   `json:"name"`
-	Type       string   `json:"type"`
-	Query      string   `json:"query"`
-	Current    string   `json:"current"`
-	Options    []string `json:"options"`
-	Multi      bool     `json:"multi"`
-	IncludeAll bool     `json:"include_all"`
+	Name       string          `json:"name"`
+	Type       string          `json:"type"`
+	Query      string          `json:"query"`
+	Current    string          `json:"current"`
+	Options    []string        `json:"options"`
+	Multi      bool            `json:"multi"`
+	IncludeAll bool            `json:"include_all"`
+	Config     json.RawMessage `json:"config,omitempty"`
 }
 
 type Dashboard struct {
@@ -115,8 +118,8 @@ func (d Dashboard) Validate() error {
 	if len(d.Name) == 0 || len(d.Name) > 100 {
 		return errors.New("dashboard name must contain 1–100 bytes")
 	}
-	if len(d.Panels) > 100 {
-		return errors.New("at most 100 panels per dashboard")
+	if len(d.Panels) > 500 {
+		return errors.New("at most 500 panels per dashboard")
 	}
 	ids := map[string]bool{}
 	for _, p := range d.Panels {
@@ -124,8 +127,11 @@ func (d Dashboard) Validate() error {
 			return errors.New("panel IDs must be nonempty and unique")
 		}
 		ids[p.ID] = true
-		if len(p.Title) == 0 || len(p.Title) > 100 || (p.Expr == "" && len(p.Expressions) == 0 && !metricName.MatchString(p.Metric)) || !ValidAggregation(p.Aggregation) {
+		if len(p.Title) == 0 || len(p.Title) > 256 || (len(p.Config) == 0 && p.Expr == "" && len(p.Expressions) == 0 && !metricName.MatchString(p.Metric)) || !ValidAggregation(p.Aggregation) {
 			return errors.New("each panel needs a title, valid metric and aggregation")
+		}
+		if len(p.Config) > 512*1024 || (len(p.Config) > 0 && !json.Valid(p.Config)) {
+			return errors.New("panel config must be valid JSON under 512 KiB")
 		}
 		if p.Unit != "" && p.Unit != "bytes" && p.Unit != "seconds" && p.Unit != "percent" && p.Unit != "count" && p.Unit != "ops" {
 			return errors.New("unsupported panel unit")
@@ -133,8 +139,8 @@ func (d Dashboard) Validate() error {
 		if err := ValidateLabels(p.Labels); err != nil {
 			return err
 		}
-		if len(p.Expr) > 10000 || len(p.Expressions) > 8 {
-			return errors.New("expression limit: 10000 bytes, 8 queries per panel")
+		if len(p.Expr) > 10000 || len(p.Expressions) > 32 {
+			return errors.New("expression limit: 10000 bytes, 32 queries per panel")
 		}
 		for _, expr := range p.Expressions {
 			if len(expr) > 10000 {
@@ -144,6 +150,11 @@ func (d Dashboard) Validate() error {
 	}
 	if len(d.Variables) > 32 {
 		return errors.New("at most 32 variables")
+	}
+	for _, v := range d.Variables {
+		if !labelName.MatchString(v.Name) || len(v.Config) > 128*1024 || (len(v.Config) > 0 && !json.Valid(v.Config)) {
+			return errors.New("variable needs a valid name and JSON config under 128 KiB")
+		}
 	}
 	return nil
 }

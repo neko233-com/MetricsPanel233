@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -101,6 +102,58 @@ func (e environment) value(address, metric string) (float64, bool) {
 	return points[len(points)-1].Value, true
 }
 
+func (e environment) loadAndAnalyze(address string, batches int) {
+	e.t.Helper()
+	type result struct {
+		elapsed time.Duration
+		err     error
+	}
+	jobs := make(chan int, batches)
+	results := make(chan result, batches)
+	for i := 0; i < batches; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	now := time.Now().UnixMilli()
+	started := time.Now()
+	for worker := 0; worker < 4; worker++ {
+		go func() {
+			for index := range jobs {
+				samples := make([]model.Sample, 10000)
+				for i := range samples {
+					samples[i] = model.Sample{Name: "concurrent_analysis", Labels: map[string]string{"shard": strconv.Itoa(i % 20)}, Timestamp: now - int64(index*500+i/20)*1000, Value: float64(index*10000 + i)}
+				}
+				sent := time.Now()
+				status, data, err := e.request(address, "POST", "/api/v1/ingest", map[string]any{"samples": samples})
+				if err == nil && status != 200 {
+					err = fmt.Errorf("ingest HTTP %d: %s", status, data)
+				}
+				results <- result{time.Since(sent), err}
+			}
+		}()
+	}
+	latencies := []time.Duration{}
+	failures := []error{}
+	for i := 0; i < batches; i++ {
+		r := <-results
+		latencies = append(latencies, r.elapsed)
+		if r.err != nil {
+			failures = append(failures, r.err)
+		}
+	}
+	require.Empty(e.t, failures)
+	elapsed := time.Since(started)
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	e.t.Logf("concurrent durable ingestion: %d samples, 4 writers, %s, %.0f samples/s, batch p50=%s p95=%s", batches*10000, elapsed, float64(batches*10000)/elapsed.Seconds(), latencies[len(latencies)/2], latencies[(len(latencies)-1)*95/100])
+	queryStarted := time.Now()
+	data := e.must(address, "GET", "/api/v1/query?metric=concurrent_analysis&aggregation=sum&range=24h", nil)
+	var query model.QueryResult
+	require.NoError(e.t, json.Unmarshal(data, &query))
+	require.NotEmpty(e.t, query.Series)
+	require.NotEmpty(e.t, query.Series[0].Points)
+	e.t.Logf("24h vectorized aggregation over %d acknowledged samples: %s", batches*10000, time.Since(queryStarted))
+}
+
 func TestDockerEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Docker integration requires full mode")
@@ -175,6 +228,11 @@ func TestDockerEndToEnd(t *testing.T) {
 			queryStarted := time.Now()
 			e.must(address, "GET", "/api/v1/query?metric=bulk_analysis&aggregation=sum&range=15m", nil)
 			t.Logf("vectorized sum query: %s", time.Since(queryStarted))
+			batches := 10
+			if backend.service == "clickhouse-app" {
+				batches = 100
+			}
+			e.loadAndAnalyze(address, batches)
 			params := url.Values{"query": {"sum(rate(business_http_requests_total[1m]))"}, "start": {strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)}, "end": {strconv.FormatInt(time.Now().Unix(), 10)}, "step": {"5"}}
 			data := e.must(address, "GET", "/prometheus/api/v1/query_range?"+params.Encode(), nil)
 			assert.Contains(t, string(data), `"resultType":"matrix"`)
@@ -185,6 +243,8 @@ func TestDockerEndToEnd(t *testing.T) {
 			original := map[string]any{"title": "Docker MySQL", "panels": []any{map[string]any{"title": "Connections", "type": "timeseries", "targets": []any{map[string]string{"expr": "mysql_global_status_threads_connected"}}}}}
 			data = e.must(address, "POST", "/api/v1/import/grafana", original)
 			assert.Contains(t, string(data), "Docker MySQL")
+			data = e.must(address, "POST", "/api/dashboards/db", map[string]any{"dashboard": map[string]any{"uid": "docker-mysql", "title": "MySQL API", "panels": []any{map[string]any{"id": 1, "title": "Health", "type": "table", "gridPos": map[string]int{"x": 0, "y": 0, "w": 24, "h": 8}, "targets": []any{map[string]any{"refId": "A", "expr": "mysql_up", "instant": true, "format": "table"}}, "transformations": []any{map[string]any{"id": "organize", "options": map[string]any{"excludeByName": map[string]bool{"Time": true}}}}}}}})
+			assert.Contains(t, string(data), `"status":"success"`)
 			_, err = e.compose("restart", backend.service)
 			require.NoError(t, err)
 			address = e.address(backend.service)
@@ -193,6 +253,15 @@ func TestDockerEndToEnd(t *testing.T) {
 			assert.Contains(t, string(data), "mysql-exporter")
 			data = e.must(address, "GET", "/api/v1/dashboards", nil)
 			assert.Contains(t, string(data), "Docker MySQL")
+			data = e.must(address, "GET", "/api/dashboards/uid/docker-mysql", nil)
+			assert.Contains(t, string(data), `"organize"`)
+			assert.Contains(t, string(data), `"gridPos"`)
+			data = e.must(address, "GET", "/api/v1/stats", nil)
+			var stats struct {
+				Samples int64 `json:"samples"`
+			}
+			require.NoError(t, json.Unmarshal(data, &stats))
+			assert.GreaterOrEqual(t, stats.Samples, int64(batches*10000))
 			if backend.service == "clickhouse-app" {
 				_, err = e.compose("restart", "clickhouse")
 				require.NoError(t, err)

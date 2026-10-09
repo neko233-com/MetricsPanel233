@@ -106,16 +106,30 @@ http://127.0.0.1:7333/prometheus
 配置 Bearer Authorization 请求头后可在 Grafana 中查询；支持 instant / range query、labels、label values、series、metadata、targets 和 buildinfo。
 PromQL 聚合、正则 selector、rate、histogram_quantile、子查询和常用函数由官方引擎执行。
 
-网页“仪表盘 → 导入 JSON”或 CLI 可以导入 classic Grafana JSON：
+网页“仪表盘 → 导入 JSON”或 CLI 可以导入 Grafana Classic、V1 / V2 资源 JSON：
 
-- Prometheus targets，最多每面板 8 条查询；timeseries / graph、stat / singlestat、table。
-- 折叠 row 和旧式 rows；query / custom / constant / textbox / interval 变量。
-- `label_values(selector,label)`、多选 / All，以及 `$__interval`、`$__rate_interval`、`$__range` 等宏。
-- 保留原始 Grafana JSON，可原样导出，再由 Grafana 本体使用。
+- 保留原始 JSON、targets、refId、instant / range、legendFormat、24 列 gridPos、fieldConfig 和 transformations；最多 500 面板，每面板 32 查询。
+- timeseries / graph、stat / singlestat、table、gauge、bargauge、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
+- 使用 **Grafana 官方 `@grafana/data`** 的标准转换算子、reducer、单位、阈值颜色和 value mapping；未知转换会明确报错。
+- query / custom / constant / textbox / interval 变量；`label_values`、`label_names`、`metrics`、`query_result`、regex / sort、多选 / All、重复面板。
+- `$__interval`、`$__rate_interval`、`$__range` 等宏，以及 regex / raw / pipe / csv / json 等变量格式；支持 `var-NAME` URL 参数。
+- 原始资源可原样导出，再由 Grafana 本体使用；未知插件配置保留并提示需要渲染器。
+- 导入测试包含固定版本的社区 Node Exporter Full 模板。面板按可见区域加载，官方渲染依赖只在模板页加载。
 
-**当前不是所有 Grafana 插件的替代运行时。** 自定义 panel/data-source 插件、Grafana 后端 API、Loki / Tempo、
-告警、annotations、transformations、重复面板、复杂变量表达式和布局语义尚未完整实现。
-gauge / bargauge 暂以 stat 呈现。导入器报告支持范围之外的特性，避免静默丢失。
+[Go runtime 示例](examples/dashboards/go-runtime.json) 展示真实运行指标、instant 表格转换、仪表和曲线：
+
+```sh
+metricspanel dashboards save --file examples/dashboards/go-runtime.json
+```
+
+为 dashboard-as-code 工具提供 `POST /api/dashboards/db`、`GET / DELETE /api/dashboards/uid/{uid}`、`GET /api/search`，
+支持版本冲突检查 / overwrite。提供数据源发现、health 和 `/api/datasources/proxy/uid/metricspanel/...` 查询代理。
+这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
+
+**当前不是所有 Grafana 插件的替代运行时。** 自定义 panel/data-source 插件、Loki / Tempo、Grafana expression 数据源、
+告警、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
+field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
 
 ## 性能、持久化与边界
@@ -125,11 +139,14 @@ gauge / bargauge 暂以 stat 呈现。导入器报告支持范围之外的特性
 - 参数化标签过滤，时间 / 指标排序键，ZSTD / Gorilla 压缩；基础聚合在 ClickHouse 执行。
 - SQLite WAL + 事务；进程重启保持已确认样本和配置；Docker 数据卷保持容器重建后的数据。
 - PromQL 目前把命中的样本加载到受控内存再执行，上限 100 万样本 / 10,000 序列，尚无查询下推。
+- labels / label values / series 发现只查询序列元数据，不传输原始指标样本；最多 10,000 个匹配序列。
 - 原生查询最长 31 天、200 序列、2,000 分桶，SQLite 原生查询最多读取 250,000 样本。
 - 每次抓取 / 推送最多 4 MiB、10,000 样本；最多 8 个并发抓取。
 - 当前为单实例设计，未验证集群、百万级序列或长期大规模生产负载，不能承诺特定吞吐。
 
 性能测试会报告当前机器的批量确认时间和查询耗时，以实测为准。
+Docker 测试追加 4 个并发写入端：SQLite 10 万样本、ClickHouse 100 万样本，记录批量 p50 / p95 和 24 小时聚合时间。
+这验证有界工作负载，不代表百万活跃序列或长时间生产负载。
 `metricspanel stats` 的 series 指仍在保留期内的序列；写入速率是过去 60 秒平均值。
 
 ## 验证
@@ -157,7 +174,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、模板变量和移动布局，结束时删除临时数据。
+每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、特殊字符变量、文本清理和移动布局，结束时删除临时数据。
 GitHub Actions 自动运行 race / API / 浏览器测试与两轮 Docker 集成测试。
 
 开发：后端 `go run ./cmd/metricspanel serve`；网页 `cd web && npm run dev`。

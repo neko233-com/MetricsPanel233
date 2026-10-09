@@ -49,6 +49,42 @@ func TestAuthOriginAndInputLimits(t *testing.T) {
 		assert.Equal(t, 400, call(handler, "POST", "/api/v1/ingest", body, "test-token-233233", "").Code)
 	}
 }
+
+func TestGrafanaDashboardAPIVersionsDiscoveryAndProxy(t *testing.T) {
+	_, h := setup(t, "token-test-233233")
+	token := "token-test-233233"
+	assert.Equal(t, 401, call(h, "GET", "/api/search", "", "", "").Code)
+	body := `{"dashboard":{"uid":"mysql-overview","title":"MySQL","panels":[{"id":1,"title":"Up","type":"stat","targets":[{"expr":"mysql_up","instant":true}]}]},"overwrite":false}`
+	w := call(h, "POST", "/api/dashboards/db", body, token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"version":1`)
+	assert.Equal(t, 412, call(h, "POST", "/api/dashboards/db", body, token, "").Code)
+	body = `{"dashboard":{"uid":"mysql-overview","version":1,"title":"MySQL updated","panels":[{"id":1,"title":"Up","type":"stat","targets":[{"expr":"mysql_up","instant":true}]}]},"overwrite":false}`
+	w = call(h, "POST", "/api/dashboards/db", body, token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"version":2`)
+	w = call(h, "GET", "/api/dashboards/uid/mysql-overview", "", token, "")
+	require.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "MySQL updated")
+	w = call(h, "GET", "/api/search?query=mysql", "", token, "")
+	require.Equal(t, 200, w.Code)
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.Equal(t, 200, call(h, "GET", "/api/datasources", "", token, "").Code)
+	assert.Equal(t, 200, call(h, "GET", "/api/datasources/uid/metricspanel/health", "", token, "").Code)
+	assert.Equal(t, 404, call(h, "GET", "/api/datasources/uid/unknown", "", token, "").Code)
+	w = call(h, "GET", "/api/datasources/proxy/uid/metricspanel/api/v1/query?query=vector(233)", "", token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"233"`)
+	assert.Equal(t, 200, call(h, "DELETE", "/api/dashboards/uid/mysql-overview", "", token, "").Code)
+	assert.Equal(t, 404, call(h, "GET", "/api/dashboards/uid/mysql-overview", "", token, "").Code)
+	resource := `{"apiVersion":"dashboard.grafana.app/v1beta1","kind":"Dashboard","metadata":{"name":"resource-uid"},"spec":{"title":"Resource API","panels":[{"id":1,"type":"text","title":"Text","options":{"content":"Hello"}}]}}`
+	assert.Equal(t, 200, call(h, "POST", "/api/v1/import/grafana", resource, token, "").Code)
+	w = call(h, "GET", "/api/dashboards/uid/resource-uid", "", token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"uid":"resource-uid"`)
+}
 func TestCRUDAndPushToQuery(t *testing.T) {
 	_, h := setup(t, "")
 	assert.Equal(t, 200, call(h, "POST", "/api/v1/ingest", `{"samples":[{"name":"business_orders","labels":{"service":"go"},"value":233}]}`, "", "").Code)
