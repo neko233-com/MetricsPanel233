@@ -128,7 +128,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
 但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、
-UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -202,8 +202,26 @@ metricspanel datasources health --id remote-prometheus
 `--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
 开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
 
-目前仍未达到完整 Grafana 插件运行时兼容：UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
+目前仍未达到完整 Grafana 插件运行时兼容：其余核心 UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
 支持的能力和剩余项也会出现在 `metricspanel schema` 中。
+
+## Grafana UI 扩展
+
+应用插件可以使用官方 `addLink`、`addComponent`、`addFunction`、`exposeComponent`，消费方支持
+`usePluginLinks`、`usePluginComponents`、`usePluginFunctions`、`usePluginComponent` 及链接 / 组件 Observable。
+提供方按 `plugin.json` 扩展声明自动加载，无需先打开应用页面；每插件限额、动态 `configure` 隐藏和覆盖、
+组件 `.meta`、同步 / 异步函数、所属插件的 `PluginContext` 和主题均已接通。链接上下文只读，保护工作空间数据；
+组件更新配置时保留本地状态，停用、卸载或升级会移除旧注册及其弹窗 / 侧栏，旧函数引用也检查当前安装包。
+
+工作空间目前接入面板菜单、AppChrome、顶栏操作、顶栏按钮、MegaMenu 操作及扩展侧栏六类核心位置。
+面板菜单传入原始面板 ID、dashboard UID、查询 targets、变量、时间范围和当前 DataFrame。
+`onClick` 助手支持 `openModal`、`openSidebar`、`closeSidebar`、`toggleSidebar`；弹窗正文收到 `onDismiss`。
+其他插件自定义扩展点可以直接使用上述消费 API。其余 Grafana 核心位置和内置 exposed components 仍需逐项接入。
+
+每五秒同步配置及安装状态；提供方最多四个并行加载、每次限二十秒；每插件每类注册最多 1024 条、
+页面最多请求 1024 个扩展点。`plugins get --id ID` 可让 Agent 发现声明，实际客户端回调需要浏览器运行时。
+自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和手机布局。
+契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
 
 ## Grafana Live 与 Agent 实时订阅
 

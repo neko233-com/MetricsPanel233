@@ -42,6 +42,7 @@ import { TemplateView } from "./features/TemplateView";
 import { Alerts } from "./features/Alerts";
 import { Plugins } from "./features/Plugins";
 const AppPluginView = lazy(() => import("./grafana/AppPluginView"));
+const ExtensionHost = lazy(() => import("./grafana/ExtensionHost"));
 type View =
   | "overview"
   | "dashboards"
@@ -99,6 +100,7 @@ export default function App() {
     [targets, setTargets] = useState<Target[]>([]),
     [metrics, setMetrics] = useState<Metric[]>([]),
     [stats, setStats] = useState<Stats | null>(null);
+  const [hasExtensions, setHasExtensions] = useState(false);
   const [tick, setTick] = useState(0),
     [range, setRange] = useState("30m"),
     [auth, setAuth] = useState(false),
@@ -126,6 +128,12 @@ export default function App() {
             pinned?: boolean;
             enabled?: boolean;
             type: string;
+            extensions?: {
+              addedLinks?: unknown[];
+              addedComponents?: unknown[];
+              addedFunctions?: unknown[];
+              exposedComponents?: unknown[];
+            };
           }[]
         >("/api/plugins"),
       ]);
@@ -133,6 +141,16 @@ export default function App() {
       setTargets(ts);
       setMetrics(ms);
       setStats(st);
+      setHasExtensions(
+        ps.some(
+          (plugin) =>
+            plugin.type === "app" &&
+            plugin.enabled &&
+            Object.values(plugin.extensions || {}).some(
+              (entries) => entries?.length,
+            ),
+        ),
+      );
       setApps(
         ps.filter(
           (plugin) => plugin.type === "app" && plugin.enabled && plugin.pinned,
@@ -296,6 +314,11 @@ export default function App() {
         </div>
       </aside>
       <div className="workspace-main">
+        {hasExtensions && (
+          <Suspense fallback={null}>
+            <ExtensionHost />
+          </Suspense>
+        )}
         <header className="topbar">
           <div>
             <button

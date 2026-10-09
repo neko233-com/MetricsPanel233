@@ -1953,3 +1953,96 @@ dialog::backdrop {
     display: none;
   }
 }
+.extension-chrome-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.extension-chrome-actions a,
+.extension-chrome-actions button {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+.extension-app-chrome {
+  padding: 8px 24px;
+}
+.grafana-cell {
+  position: relative;
+}
+.panel-extension-actions {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  z-index: 4;
+}
+.panel-extension-actions > button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.extension-menu {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #20242c;
+  box-shadow: 0 12px 30px #0008;
+}
+.extension-menu a,
+.extension-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.extension-menu a:hover,
+.extension-menu button:hover {
+  background: #ffffff0b;
+}
+.extension-menu small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.extension-sidebar {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+  width: min(420px, 100vw);
+  padding: 20px;
+  background: #20242c;
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 30px #0005;
+  overflow: auto;
+}
+.extension-failure {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #3a2226;
+  border: 1px solid #a64550;
+  border-radius: 8px;
+  max-width: calc(100vw - 48px);
+}

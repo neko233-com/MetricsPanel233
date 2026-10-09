@@ -65,6 +65,7 @@ export type GrafanaTarget = {
   datasource?: string | { type?: string; uid?: string };
 };
 export type GrafanaConfig = {
+  id?: number;
   type: string;
   description?: string;
   targets?: GrafanaTarget[];

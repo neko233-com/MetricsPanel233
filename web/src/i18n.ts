@@ -11,6 +11,10 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Plugin actions": "插件操作",
+  "Panel actions": "面板操作",
+  "Extension failed": "扩展执行失败",
+  "Close sidebar": "关闭侧栏",
   "Stream datasource queries": "分块查询数据源",
   "Receive DataFrame chunks as they arrive. Partial failures keep data and return exit code 1.":
     "数据到达即输出 DataFrame 分块。部分查询失败时保留数据并返回退出码 1。",

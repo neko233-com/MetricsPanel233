@@ -1,0 +1,1 @@
+{"id":"metricspanel-ext-consumer-app","name":"SDK Extension Consumer","type":"app","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=13","extensions":{"exposedComponents":["metricspanel-ext-provider-app/badge/v1"]}},"extensions":{"extensionPoints":[{"id":"metricspanel-ext-consumer-app/actions/v1","title":"SDK actions"}]}}

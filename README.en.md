@@ -69,7 +69,7 @@ Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/das
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
-**Full Grafana ecosystem parity remains unfinished.** UI extension points, some app core services, legacy Angular plugins,
+**Full Grafana ecosystem parity remains unfinished.** Additional core UI extension points, some app core services, legacy Angular plugins,
 annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
@@ -119,8 +119,25 @@ Plugin assets use a short-lived cookie restricted to asset paths; that cookie ca
 `--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
 Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
 
-UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
+Additional core UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
 The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
+
+## Grafana UI extensions
+
+App plugins register links, components, functions and exposed components through the official AppPlugin APIs.
+Consumers use `usePluginLinks`, `usePluginComponents`, `usePluginFunctions`, `usePluginComponent` and the link/component Observable APIs.
+Declared `plugin.json` extensions autoload their providers without opening the provider page. Per-plugin limits, configure-based hiding and overrides,
+component `.meta`, synchronous/asynchronous functions, provider PluginContext and theme are supported. Link contexts are read-only.
+Configuration changes preserve component state. Disable, uninstall and package changes remove old registrations and overlays; retained functions check the current package.
+
+Native locations currently include dashboard panel menus, AppChrome, top-bar actions/buttons, MegaMenu actions and the extension sidebar.
+Panel context includes the original panel ID, dashboard UID, targets, variables, time range and query DataFrames.
+Link helpers implement `openModal`, `openSidebar`, `closeSidebar` and `toggleSidebar`; modal bodies receive `onDismiss`.
+Plugins can also consume their custom extension points. Other core locations and built-in exposed components remain outstanding.
+State reconciles every five seconds. Limits are four concurrent provider loads, twenty seconds per load, 1024 registrations per kind/provider and 1024 requested points.
+Agents can inspect declarations with `plugins get --id ID`; client callbacks require the browser runtime.
+Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and mobile layout.
+See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
 
 ## Grafana Live and agent subscriptions
 

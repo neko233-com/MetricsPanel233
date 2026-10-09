@@ -1,14 +1,16 @@
 import { t as tr } from "../i18n";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type CSSProperties } from "react";
 import { X } from "lucide-react";
 export function Dialog({
   title,
   children,
   onClose,
+  style,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  style?: CSSProperties;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -24,6 +26,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
+      style={style}
       onCancel={onClose}
       onClick={(e) => {
         if (e.target === ref.current) {

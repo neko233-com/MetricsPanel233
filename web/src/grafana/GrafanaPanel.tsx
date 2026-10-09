@@ -14,6 +14,7 @@ import { message, type Panel, type InterpolationValues } from "../api";
 import { t } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
+import type { FrameUpdate } from "./engine";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
@@ -36,11 +37,13 @@ export default function GrafanaPanel({
   values,
   range,
   tick,
+  onUpdate,
 }: {
   panel: Panel;
   values: InterpolationValues;
   range: string;
   tick: number;
+  onUpdate?: (update: FrameUpdate) => void;
 }) {
   const [frames, setFrames] = useState<DataFrame[]>([]),
     [error, setError] = useState(""),
@@ -58,6 +61,7 @@ export default function GrafanaPanel({
     setLoading(true);
     const listener = watchFrames(panel, values, range, refresh).subscribe({
       next: (update) => {
+        onUpdate?.(update);
         setFrames(update.frames);
         setError(update.error);
         setLoading(update.loading);

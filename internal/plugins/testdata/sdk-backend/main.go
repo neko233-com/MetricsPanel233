@@ -202,6 +202,13 @@ func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest,
 	return sender.Send(&backend.CallResourceResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
 }
 func main() {
+	if len(os.Args) == 3 && strings.HasPrefix(os.Args[1], "--package-extension-") {
+		if err := packageExtensions(os.Args[2], os.Args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app" || os.Args[1] == "--package-legacy") {
 		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app", os.Args[1] == "--package-legacy"); err != nil {
 			fmt.Fprintln(os.Stderr, err)

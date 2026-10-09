@@ -11,6 +11,12 @@ import moment from "moment";
 import i18next from "i18next";
 import { registerOptionEditors } from "./option-editors";
 import { createLiveService } from "./live-runtime";
+import {
+  installExtensionServices,
+  registerAppExtensions,
+  observableExtensionLinks,
+  observableExtensionComponents,
+} from "./extensions";
 import { api, interpolate, type InterpolationValues } from "../api";
 import { getLocale } from "../i18n";
 import type {
@@ -333,7 +339,12 @@ async function init(): Promise<Runtime> {
       "react/jsx-runtime": JSXRuntime,
       "@grafana/data": Data,
       "@grafana/ui": ui,
-      "@grafana/runtime": { ...runtime, PluginPage: NativePluginPage },
+      "@grafana/runtime": {
+        ...runtime,
+        PluginPage: NativePluginPage,
+        getObservablePluginLinks: observableExtensionLinks,
+        getObservablePluginComponents: observableExtensionComponents,
+      },
       "react-router": ReactRouter,
       "react-router-dom": ReactRouter,
       "react-router-dom-v5-compat": ReactRouter,
@@ -413,6 +424,7 @@ async function init(): Promise<Runtime> {
     };
     runtime.setDataSourceSrv(service);
     await reloadSources();
+    installExtensionServices(runtime, loadPlugin);
     return runtime;
   })().catch((error) => {
     initialized = undefined;
@@ -493,6 +505,7 @@ export async function loadPlugin(id: string): Promise<Record<string, unknown>> {
     }
     await module.metricspanelAppInitialization;
     app.meta = meta;
+    registerAppExtensions(installed, app);
   }
   module.metricspanelInstalled = installed;
   return module;

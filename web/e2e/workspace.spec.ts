@@ -34,7 +34,7 @@ const test = base.extend<{}, { endpoint: string }>({
           "--db",
           path.join(temp, "control.db"),
           "--allow-unsigned-plugin",
-          "metricspanel-sdk-datasource,metricspanel-sdk-app",
+          "metricspanel-sdk-datasource,metricspanel-sdk-app,metricspanel-ext-provider-app,metricspanel-ext-provider-two-app,metricspanel-ext-consumer-app",
         ],
         {
           cwd: root,
@@ -221,6 +221,269 @@ test("AppPlugin root, configuration pages, encrypted backend context and pinned 
       !path.basename(resolved).startsWith("metricspanel233-app-e2e-")
     )
       throw new Error("Unsafe app test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("SDK UI extensions autoload providers, isolate context, observe updates and revoke stale registrations", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-extensions-e2e-"),
+  );
+  const binary = path.join(
+    temp,
+    process.platform === "win32" ? "fixture.exe" : "fixture",
+  );
+  const run = promisify(execFile),
+    errors: string[] = [];
+  const provider = "metricspanel-ext-provider-app",
+    other = "metricspanel-ext-provider-two-app",
+    consumer = "metricspanel-ext-consumer-app";
+  page.on("pageerror", (error) => errors.push(error.message));
+  const install = async (mode: string) => {
+    const archive = path.join(temp, mode + ".zip");
+    await run(binary, ["--package-extension-" + mode, archive], {
+      windowsHide: true,
+    });
+    const response = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", binary, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await install("provider");
+    await install("provider-two");
+    await install("consumer");
+    for (const [id, label] of [
+      [provider, "Operations"],
+      [other, "Other operations"],
+    ]) {
+      const response = await page.request.put(
+        endpoint + "/api/v1/plugins/" + id + "/app-settings",
+        { data: { version: 0, jsonData: { label } } },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+    // The provider's own root is never opened: the consumer and core points load it.
+    await page.goto(endpoint + "/a/" + consumer + "/");
+    await expect(
+      page.getByText("Link count: 2", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Unrestricted link count: 4", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Observable link count: 2", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Observable component count: 2", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Component count: 2", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Function count: 2", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Open 233 / readonly true", exact: true }),
+    ).toHaveCount(2);
+    await expect(
+      page.getByText("Shared context value: 233", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Invalid external link", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Invalid async configure", exact: true }),
+    ).toHaveCount(0);
+    const badge = page.getByRole("group", {
+      name: provider + " exposed",
+      exact: true,
+    });
+    await expect(badge).toContainText(provider + " / Operations / v1");
+    await badge
+      .getByRole("button", { name: "Badge clicks: 0", exact: true })
+      .click();
+    // The five-second provider refresh must preserve component state.
+    const settings = await (
+      await page.request.get(
+        endpoint + "/api/v1/plugins/" + provider + "/app-settings",
+      )
+    ).json();
+    const updated = await page.request.put(
+      endpoint + "/api/v1/plugins/" + provider + "/app-settings",
+      {
+        data: {
+          version: settings.version,
+          jsonData: { label: "Updated operations" },
+        },
+      },
+    );
+    expect(updated.ok(), await updated.text()).toBeTruthy();
+    await expect(badge).toContainText("Updated operations", { timeout: 15000 });
+    await expect(
+      badge.getByRole("button", { name: "Badge clicks: 1", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Hide SDK links", exact: true })
+      .click();
+    await expect(
+      page.getByRole("link", { name: "Open 233 / readonly true", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Second visible link", exact: true }),
+    ).toHaveCount(2);
+    await page
+      .getByRole("button", { name: "Show SDK links", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Run extension function", exact: true })
+      .click();
+    await expect(
+      page.getByText("Function result: 234", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Run async function", exact: true })
+      .click();
+    await expect(
+      page.getByText("Function result: 1233", { exact: true }),
+    ).toBeVisible();
+    await page.request.put(endpoint + "/api/v1/plugins/" + provider, {
+      data: { enabled: false },
+    });
+    await expect(page.getByText("Link count: 1", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(badge).toHaveCount(0);
+    await expect(
+      page.getByText("Observable link count: 1", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Observable component count: 1", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Run retained function", exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        "Function result: Extension provider is disabled or replaced",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.request.put(endpoint + "/api/v1/plugins/" + provider, {
+      data: { enabled: true },
+    });
+    await expect(badge).toContainText("Updated operations", { timeout: 15000 });
+    await install("provider-v2");
+    await expect(badge).toContainText("Updated operations / v2", {
+      timeout: 15000,
+    });
+    await expect(
+      badge.getByRole("button", { name: "Badge clicks: 0", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Component count: 2", { exact: true }),
+    ).toBeVisible();
+    const seeded = await page.request.post(endpoint + "/api/v1/ingest", {
+      data: { samples: [{ name: "extension_fixture_value", value: 233 }] },
+    });
+    expect(seeded.ok(), await seeded.text()).toBeTruthy();
+    const dashboard = {
+      uid: "extension-dashboard",
+      title: "Extension dashboard",
+      tags: ["sdk-extensions"],
+      panels: [
+        {
+          id: 23,
+          title: "Extension panel",
+          type: "stat",
+          gridPos: { x: 0, y: 0, w: 24, h: 8 },
+          targets: [
+            { refId: "A", expr: "extension_fixture_value", instant: true },
+          ],
+        },
+      ],
+    };
+    const saved = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: { dashboard, overwrite: true },
+    });
+    expect(saved.ok(), await saved.text()).toBeTruthy();
+    await page.goto(endpoint + "/d/extension-dashboard/extensions");
+    await expect(page.locator(".grafana-value strong")).toHaveText("233");
+    await page
+      .getByRole("button", {
+        name: "Panel actions Extension panel",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("menuitem", {
+        name: /Inspect SDK panel/,
+      })
+      .first()
+      .click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toContainText(
+      "Panel context: 23 / Extension panel / extension-dashboard / stat",
+    );
+    await expect(modal).toContainText("Query refs: A");
+    await expect(modal).toContainText("Dashboard tags: sdk-extensions");
+    await expect(modal).toContainText("Data frames: 1");
+    await page.screenshot({
+      path: testInfo.outputPath("sdk-extension-modal.png"),
+    });
+    await modal
+      .getByRole("button", { name: "Dismiss SDK modal", exact: true })
+      .click();
+    await expect(modal).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "SDK sidebar", exact: true })
+      .first()
+      .click();
+    const sidebar = page.getByRole("complementary", {
+      name: "SDK details",
+      exact: true,
+    });
+    await expect(sidebar).toContainText("Provider sidebar");
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("sdk-extension-sidebar-mobile.png"),
+    });
+    await page
+      .getByRole("button", { name: "Close sidebar", exact: true })
+      .click();
+    await expect(sidebar).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto(endpoint + "/#overview");
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/extension-dashboard",
+    );
+    for (const id of [consumer, provider, other])
+      await page.request.delete(endpoint + "/api/v1/plugins/" + id);
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-extensions-e2e-")
+    )
+      throw new Error("Unsafe extension test cleanup target");
     await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
   }
 });

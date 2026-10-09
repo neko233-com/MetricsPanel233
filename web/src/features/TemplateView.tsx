@@ -15,11 +15,20 @@ import {
   type Dashboard,
   type Panel,
   type InterpolationValues,
+  dashboardUID,
 } from "../api";
 import { t } from "../i18n";
 import { queryValues, variableOptions } from "../grafana/variables";
 import { layoutPanels } from "../grafana/layout";
 import type { VariableValues } from "../grafana/engine";
+import type { FrameUpdate } from "../grafana/engine";
+import type { PluginExtensionPanelContext } from "@grafana/data";
+import { LoadingState } from "@grafana/data";
+const PanelExtensionActions = lazy(() =>
+  import("../grafana/PanelExtensionActions").then((module) => ({
+    default: module.PanelExtensionActions,
+  })),
+);
 const GrafanaPanel = lazy(() => import("../grafana/GrafanaPanel"));
 
 function PanelCell({
@@ -28,15 +37,18 @@ function PanelCell({
   range,
   tick,
   style,
+  dashboard,
 }: {
   panel: Panel;
   values: InterpolationValues;
   range: string;
   tick: number;
   style: CSSProperties;
+  dashboard: PluginExtensionPanelContext["dashboard"];
 }) {
   const ref = useRef<HTMLDivElement>(null),
     [visible, setVisible] = useState(false);
+  const [update, setUpdate] = useState<FrameUpdate | null>(null);
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => setVisible(entry.isIntersecting),
@@ -48,7 +60,31 @@ function PanelCell({
   return (
     <div ref={ref} className="grafana-cell" style={style}>
       {visible ? (
-        <GrafanaPanel panel={panel} values={values} range={range} tick={tick} />
+        <>
+          <GrafanaPanel
+            panel={panel}
+            values={values}
+            range={range}
+            tick={tick}
+            onUpdate={setUpdate}
+          />
+          <PanelExtensionActions
+            panel={panel}
+            values={values}
+            range={range}
+            dashboard={dashboard}
+            frames={update?.frames || []}
+            state={
+              update?.error
+                ? LoadingState.Error
+                : update?.loading
+                  ? LoadingState.Loading
+                  : update?.streaming
+                    ? LoadingState.Streaming
+                    : LoadingState.Done
+            }
+          />
+        </>
       ) : panel.visualization === "row" ? (
         <div className="grafana-row">
           <h2>{panel.title}</h2>
@@ -151,6 +187,24 @@ export function TemplateView({
     () => layoutPanels(dashboard.panels, values, options),
     [dashboard.panels, key, options],
   );
+  const extensionDashboard = useMemo(() => {
+    const original = dashboard.grafana as
+      | {
+          tags?: unknown;
+          dashboard?: { tags?: unknown };
+          spec?: { tags?: unknown };
+        }
+      | undefined;
+    const tags =
+      original?.dashboard?.tags ?? original?.spec?.tags ?? original?.tags;
+    return {
+      uid: dashboardUID(dashboard),
+      title: dashboard.name,
+      tags: Array.isArray(tags)
+        ? tags.filter((tag): tag is string => typeof tag === "string")
+        : [],
+    };
+  }, [dashboard]);
   return (
     <>
       <div className="page-heading">
@@ -263,6 +317,7 @@ export function TemplateView({
               values={queryValues(scoped, variables)}
               range={range}
               tick={tick}
+              dashboard={extensionDashboard}
             />
           ))}
         </Suspense>
