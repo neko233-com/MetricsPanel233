@@ -38,4 +38,18 @@ jobs:
         with:
           go-version: 1.27.0
           cache: true
+      - name: Use public Docker Hub cache
+        shell: bash
+        run: |
+          mirror_config=$(mktemp)
+          trap 'rm -f "$mirror_config" "$mirror_config.updated"' EXIT
+          if [ -f /etc/docker/daemon.json ]; then
+            sudo cat /etc/docker/daemon.json > "$mirror_config"
+          else
+            printf '{}\n' > "$mirror_config"
+          fi
+          jq '."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' "$mirror_config" > "$mirror_config.updated"
+          sudo install -m 0644 "$mirror_config.updated" /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{json .RegistryConfig.Mirrors}}'
       - run: go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
