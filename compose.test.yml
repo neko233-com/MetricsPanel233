@@ -33,6 +33,7 @@ services:
         condition: service_healthy
   clickhouse:
     image: clickhouse/clickhouse-server:26.8-alpine
+    ports: ["127.0.0.1::8123"]
     environment:
       CLICKHOUSE_USER: metricspanel
       CLICKHOUSE_PASSWORD: integration-only-password

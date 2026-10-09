@@ -6,7 +6,7 @@
 一个服务提供指标采集、持久化存储、查询和面板。界面可切换中文 / English。
 
 适合 MySQL exporter、Go / Java / Python 业务后端及其他 Prometheus 文本指标。
-SQLite 模式无需额外服务；ClickHouse 模式采用压缩列式存储、向量化聚合、按天分区和 TTL。
+SQLite 模式无需额外服务；ClickHouse 模式采用压缩列式时序存储、向量化聚合、按天分区、TTL 和持久化 HNSW 波形向量索引。
 
 ## 快速开始
 
@@ -132,9 +132,35 @@ V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序�
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
 
+## 向量波形分析
+
+在“指标查询”中执行指标查询，点击“保存当前窗口”，再选择参考窗口并“查找相似窗口”。
+窗口被转换为 **64 维 Float32 向量**，与原始指标分开持久化；比较图把两个窗口对齐到参考窗口时间轴。
+`shape` 消除均值和尺度差异，寻找相似波形；`raw` 保留实际量级。默认只比较同一指标；只匹配相同归一化和分析方式。
+计数器可以选择 `rate`，以每秒速率比较，包含重置处理。
+
+```sh
+metricspanel patterns capture --metric metricspanel_memory_bytes --range 30m --normalization shape
+metricspanel patterns list --limit 1000
+metricspanel patterns search --id PATTERN_ID --metric metricspanel_memory_bytes --limit 10
+metricspanel patterns search --id PATTERN_ID --exact
+metricspanel patterns get --id PATTERN_ID
+metricspanel patterns delete --id PATTERN_ID
+```
+
+`--start` / `--end` 使用 Unix 毫秒；固定起止时间和输入数据可复现相同内容 ID，重复保存不会增加逻辑记录。
+窗口至少 64 秒，最多 31 天；至少 48 / 64 个分桶有观测数据。最多连续 8 个空桶可线性插补，只用于向量分析，原始指标不变。
+这是波形向量，未调用 LLM embedding。距离使用 L2，越小越相似，**不是概率或自动异常判定**。
+
+ClickHouse 26.8 使用 `Array(Float32)` 和持久化 HNSW，`--exact` 关闭近似索引，扫描候选向量；
+默认近似检索会重算候选距离，筛选较严格时数据库可能回退到精确扫描，或返回更少结果。
+SQLite 采用精确 top-K 扫描，限制每次最多 50,000 个匹配向量。向量库独立保留，直到主动删除，不随原始指标 TTL 清理。
+ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一个 WAL 数据库中。两种模式均验证了重启持久化。
+向量捕获目前使用原生指标 / 标签查询，尚未直接将任意 PromQL 派生结果转成向量。
+
 ## 性能、持久化与边界
 
-- ClickHouse 是**列式数据库，向量化执行分析查询**，不是 embedding 语义向量库。
+- ClickHouse 同时提供**列式时序分析**和 **HNSW 指标窗口向量检索**，用于数值波形分析。
 - 批量写入（1–10,000 样本），确认异步批量插入落盘后返回；MergeTree 开启 fsync。
 - 参数化标签过滤，时间 / 指标排序键，ZSTD / Gorilla 压缩；基础聚合在 ClickHouse 执行。
 - SQLite WAL + 事务；进程重启保持已确认样本和配置；Docker 数据卷保持容器重建后的数据。
@@ -146,6 +172,7 @@ field override 的单位、阈值、value mapping 等支持；自定义绘图选
 
 性能测试会报告当前机器的批量确认时间和查询耗时，以实测为准。
 Docker 测试追加 4 个并发写入端：SQLite 10 万样本、ClickHouse 100 万样本，记录批量 p50 / p95 和 24 小时聚合时间。
+另外保存 10,000 个 64 维窗口向量，通过 `EXPLAIN` 确认 HNSW 被使用，与精确查询比较 recall@10，并在重启 ClickHouse 后再次检查索引查询计划。
 这验证有界工作负载，不代表百万活跃序列或长时间生产负载。
 `metricspanel stats` 的 series 指仍在保留期内的序列；写入速率是过去 60 秒平均值。
 
@@ -174,7 +201,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、特殊字符变量、文本清理和移动布局，结束时删除临时数据。
+每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、波形保存 / 检索、文本清理和移动布局，结束时删除临时数据。
 GitHub Actions 自动运行 race / API / 浏览器测试与两轮 Docker 集成测试。
 
 开发：后端 `go run ./cmd/metricspanel serve`；网页 `cd web && npm run dev`。

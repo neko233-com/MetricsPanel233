@@ -60,6 +60,7 @@ Usage: metricspanel <command> [flags]
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
   targets      list | add | set | delete | scrape
   dashboards   list | save | export | delete
+  patterns     capture | list | get | search | delete (persistent vector analysis)
   schema       Print machine-readable command and API discovery
   version      Print version
 
@@ -86,7 +87,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" {
+	if command == "targets" || command == "dashboards" || command == "patterns" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -110,6 +111,12 @@ func run(args []string) error {
 	targetURL := f.String("url", "", "exporter /metrics URL")
 	interval := f.Duration("interval", 15*time.Second, "scrape interval (5s–24h)")
 	enabled := f.Bool("enabled", true, "enable automatic collection")
+	start := f.Int64("start", 0, "pattern window start: Unix milliseconds (optional)")
+	end := f.Int64("end", 0, "pattern window end: Unix milliseconds (optional)")
+	normalization := f.String("normalization", "shape", "pattern comparison: shape (remove level/scale) or raw")
+	limit := f.Int("limit", 10, "pattern search result limit (1–100); list limit (1–1000)")
+	exact := f.Bool("exact", false, "exact vector scan instead of approximate HNSW search")
+	includeSelf := f.Bool("include-self", false, "include the reference pattern in search results")
 	if err := f.Parse(rest); err != nil {
 		return err
 	}
@@ -129,6 +136,32 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "patterns":
+		switch action {
+		case "list":
+			return request("GET", "/api/v1/patterns?limit="+strconv.Itoa(*limit), nil)
+		case "get", "delete":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			method := "GET"
+			if action == "delete" {
+				method = "DELETE"
+			}
+			return request(method, "/api/v1/patterns/"+url.PathEscape(*id), nil)
+		case "capture":
+			if *metric == "" {
+				return errors.New("--metric is required")
+			}
+			return request("POST", "/api/v1/patterns/capture", map[string]any{"metric": *metric, "labels": filter, "range": *queryRange, "start": *start, "end": *end, "aggregation": *aggregation, "normalization": *normalization})
+		case "search":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			return request("POST", "/api/v1/patterns/search", map[string]any{"id": *id, "metric": *metric, "labels": filter, "limit": *limit, "exact": *exact, "include_self": *includeSelf})
+		default:
+			return errors.New("patterns requires list, get, capture, search or delete")
+		}
 	case "health", "stats", "metrics":
 		return request("GET", "/api/v1/"+command, nil)
 	case "query":
@@ -397,7 +430,7 @@ func serve(args []string) error {
 }
 
 func schema() any {
-	return map[string]any{
+	result := map[string]any{
 		"name": "metricspanel", "version": version, "output": "JSON stdout; JSON errors stderr; exit 0 success / 1 failure",
 		"environment":    map[string]string{"METRICSPANEL_URL": "http://127.0.0.1:7333", "METRICSPANEL_TOKEN": "Bearer token (optional on loopback)"},
 		"commands":       []string{"serve [--listen --db --retention-days]", "health", "stats", "metrics", "query --metric NAME [--range 30m --step 15s --aggregation last --labels '{}']", "ingest --file FILE|-", "targets list", "targets add --name NAME --url URL [--interval 15s --labels '{}']", "targets set --id ID --name NAME --url URL [--enabled=false]", "targets scrape --id ID", "targets delete --id ID", "dashboards list", "dashboards save --file FILE|- [--id ID]", "dashboards export --id ID", "dashboards delete --id ID", "schema", "version"},
@@ -407,4 +440,11 @@ func schema() any {
 		"aggregations":   []string{"last", "avg", "sum", "min", "max", "rate"},
 		"query_limits":   map[string]int{"max_range_days": 31, "max_series": 200, "max_samples": 250000, "max_buckets": 2000},
 	}
+	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
+	routes := result["api"].(map[string][]string)
+	routes["GET"] = append(routes["GET"], "/api/v1/patterns", "/api/v1/patterns/{id}")
+	routes["POST"] = append(routes["POST"], "/api/v1/patterns/capture", "/api/v1/patterns/search")
+	routes["DELETE"] = append(routes["DELETE"], "/api/v1/patterns/{id}")
+	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
+	return result
 }

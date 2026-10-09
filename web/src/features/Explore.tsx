@@ -9,6 +9,7 @@ import {
   type Panel,
 } from "../api";
 import { Chart } from "../components/Chart";
+import { PatternAnalysis } from "./PatternAnalysis";
 export function Explore({
   metrics,
   tick,
@@ -135,6 +136,11 @@ export function Explore({
       <div className="explore-chart">
         <Chart panel={query.panel} range={query.range} tick={tick} />
       </div>
+      <PatternAnalysis
+        metric={query.panel.expr ? "" : query.panel.metric}
+        range={query.range}
+        labels={JSON.stringify(query.panel.labels || {})}
+      />
       <section className="metric-browser">
         <div className="section-heading">
           <h2>

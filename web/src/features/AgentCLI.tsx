@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Compare metric patterns",
+    detail:
+      "Save a time window and search persistent vectors. Explicit start/end make repeat capture reproducible.",
+    command:
+      "metricspanel patterns capture --metric metricspanel_memory_bytes --range 30m --normalization shape\nmetricspanel patterns list\nmetricspanel patterns search --id PATTERN_ID --limit 10\nmetricspanel patterns search --id PATTERN_ID --exact",
+  },
+  {
     title: "Discover the API",
     detail:
       "Machine-readable commands, endpoints, limits and payload examples.",
@@ -67,7 +74,9 @@ export function AgentCLI() {
         </p>
         <p>
           {tr("Build the CLI from source with")}
-          <code>{tr("go build -tags webui -o bin/metricspanel ./cmd/metricspanel")}</code>
+          <code>
+            {tr("go build -tags webui -o bin/metricspanel ./cmd/metricspanel")}
+          </code>
           {tr("after building the web UI. Add")}
           <code>{tr("bin")}</code>
           {tr("to your PATH.")}

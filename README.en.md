@@ -40,7 +40,7 @@ The [Go example](examples/go-service/main.go) demonstrates both exporter and pus
 ## Storage and performance
 
 ClickHouse uses vectorized columnar execution, partitioned ReplacingMergeTree, compression, TTL and acknowledged durable batch inserts.
-It is an analytical columnar database, not an embedding similarity database. SQLite WAL stores metric data in lightweight mode and control data in both modes.
+It also persists 64-dimensional metric-window embeddings with an HNSW similarity index. SQLite WAL stores metric data and exact-search vectors in lightweight mode, and control data in both modes.
 Both modes survive application restarts; ClickHouse data survives database restarts. Persist both stores and back them up.
 Changing retention on an existing ClickHouse table requires an explicit `ALTER TABLE ... MODIFY TTL`.
 
@@ -75,6 +75,29 @@ V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; cond
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
 Full compatibility remains an objective, not a claim for this release.
 
+## Vector pattern analysis
+
+Run a metric query in Explore, save its current window, select a saved reference and find similar windows.
+`shape` removes mean/scale; `raw` preserves measurement levels. Counter windows can use reset-aware `rate`.
+Windows become 64-dimensional Float32 vectors; comparison charts align vectors to the reference window's timeline.
+This is numerical waveform analysis, without an LLM embedding model. L2 distance is smaller for closer matches; it is not a probability or an automatic anomaly verdict.
+
+```sh
+metricspanel patterns capture --metric metricspanel_memory_bytes --range 30m --normalization shape
+metricspanel patterns list --limit 1000
+metricspanel patterns search --id PATTERN_ID --metric metricspanel_memory_bytes --limit 10
+metricspanel patterns search --id PATTERN_ID --exact
+metricspanel patterns get --id PATTERN_ID
+metricspanel patterns delete --id PATTERN_ID
+```
+
+Explicit `--start` / `--end` are Unix milliseconds. Identical windows/data produce the same content ID, so repeated saves do not add logical duplicates.
+Windows must span 64 seconds–31 days, contain observations in at least 48/64 buckets, and have no gap larger than eight buckets.
+Small gaps are interpolated only for the embedding; raw metrics remain unchanged. Native metric/label capture is supported; arbitrary PromQL-derived capture is not yet available.
+ClickHouse 26.8 uses persistent HNSW with candidate rescoring. Selective filters can trigger exact scans or yield fewer approximate results.
+`--exact` disables approximate indexing. SQLite uses exact top-K, capped at 50,000 filtered vectors per search.
+Saved vectors remain until explicitly deleted, independently of metric TTL. Both vector stores and the ClickHouse index survive tested restarts.
+
 ## Automated verification
 
 ```sh
@@ -89,12 +112,13 @@ The testify integration suite verifies real Go push/scrape, real MySQL exporter 
 application and ClickHouse restarts, Grafana queries/templates and resource cleanup.
 Four concurrent writers additionally ingest 100,000 SQLite samples and 1,000,000 ClickHouse samples; the suite reports batch p50/p95 and 24h aggregation time.
 These bounded workloads do not establish million-series or sustained production performance.
+The suite also stores 10,000 x 64-dimensional vectors, verifies HNSW use through EXPLAIN, measures recall@10 against exact search, and rechecks the index plan after database restart.
 It uses a fixed isolated Compose project, random mapped ports and an automatically released concurrency lock.
 Each run deletes its own containers, volumes, network and application image tags. Shared base images and BuildKit cache remain reusable.
 
 After building the frontend and the CLI binary, run `cd web && npx playwright install chromium && npm run test:e2e`.
 Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, resource templates,
-official transforms, percentage units, repeated panels, special-character variables, text sanitization and mobile layout.
+official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and mobile layout.
 GitHub Actions runs these checks plus two Docker integration runs.
 
 Apache-2.0. See the [Chinese README](README.md) for API details, environment variables, architecture and limitations.

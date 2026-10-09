@@ -52,6 +52,9 @@ SETTINGS index_granularity=8192, fsync_after_insert=1, fsync_part_directory=1`, 
 	if _, err = c.execute(ctx, ddl, nil, nil, false); err != nil {
 		return nil, err
 	}
+	if err = c.createPatterns(ctx); err != nil {
+		return nil, fmt.Errorf("create persistent HNSW pattern index: %w", err)
+	}
 	return c, nil
 }
 func regexpIdentifier(value string) bool {
@@ -170,7 +173,7 @@ func (c *ClickHouse) Stats(ctx context.Context) (Stats, error) {
 	if len(values) > 0 {
 		v = values[0]
 	}
-	data, err = c.execute(ctx, `SELECT toInt64(sum(bytes_on_disk)) AS storage_bytes FROM system.parts WHERE active AND database={db:String} AND table='samples' FORMAT JSONEachRow`, map[string]string{"db": c.Database}, nil, false)
+	data, err = c.execute(ctx, `SELECT toInt64(sum(bytes_on_disk)) AS storage_bytes FROM system.parts WHERE active AND database={db:String} AND table IN ('samples','patterns') FORMAT JSONEachRow`, map[string]string{"db": c.Database}, nil, false)
 	if err != nil {
 		return v, err
 	}

@@ -4,9 +4,11 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/analysis"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
+	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -154,6 +158,138 @@ func (e environment) loadAndAnalyze(address string, batches int) {
 	e.t.Logf("24h vectorized aggregation over %d acknowledged samples: %s", batches*10000, time.Since(queryStarted))
 }
 
+func (e environment) capturePatternFixture(address string) string {
+	e.t.Helper()
+	start := time.Now().Add(-10 * time.Minute).UnixMilli()
+	end := start + 320000
+	samples := []model.Sample{}
+	for i := 0; i < 64; i++ {
+		for _, example := range []struct {
+			job           string
+			scale, offset float64
+		}{{"go", 1, 0}, {"mysql", 20, 233}} {
+			samples = append(samples, model.Sample{Name: "pattern_fixture", Labels: map[string]string{"job": example.job}, Timestamp: start + int64(i)*5000, Value: float64(i)*example.scale + example.offset})
+		}
+	}
+	e.must(address, "POST", "/api/v1/ingest", map[string]any{"samples": samples})
+	request := map[string]any{"metric": "pattern_fixture", "start": start, "end": end, "normalization": "shape"}
+	var result struct {
+		Patterns []model.Pattern `json:"patterns"`
+	}
+	data := e.must(address, "POST", "/api/v1/patterns/capture", request)
+	require.NoError(e.t, json.Unmarshal(data, &result))
+	require.Len(e.t, result.Patterns, 2)
+	for i := 0; i < 3; i++ {
+		e.must(address, "POST", "/api/v1/patterns/capture", request)
+	}
+	data = e.must(address, "GET", "/api/v1/patterns", nil)
+	require.NoError(e.t, json.Unmarshal(data, &result))
+	require.Len(e.t, result.Patterns, 2, "repeated capture created duplicate vectors")
+	id := result.Patterns[0].ID
+	e.verifyPatternNeighbor(address, id)
+	return id
+}
+func (e environment) verifyPatternNeighbor(address, id string) {
+	e.t.Helper()
+	data := e.must(address, "GET", "/api/v1/patterns/"+id, nil)
+	var pattern model.Pattern
+	require.NoError(e.t, json.Unmarshal(data, &pattern))
+	require.Len(e.t, pattern.Values, 64)
+	data = e.must(address, "POST", "/api/v1/patterns/search", map[string]any{"id": id, "metric": "pattern_fixture", "limit": 1})
+	var result struct {
+		Hits []model.PatternHit `json:"hits"`
+	}
+	require.NoError(e.t, json.Unmarshal(data, &result))
+	require.Len(e.t, result.Hits, 1)
+	assert.InDelta(e.t, 0, result.Hits[0].Distance, 1e-4)
+}
+func (e environment) verifyHNSW() string {
+	e.t.Helper()
+	out, err := e.compose("port", "clickhouse", "8123")
+	require.NoError(e.t, err)
+	ctx := context.Background()
+	backend, err := store.OpenClickHouse(ctx, "http://"+strings.Split(out, "\n")[0], "metricspanel", "metricspanel", "integration-only-password", 30)
+	require.NoError(e.t, err)
+	s, err := store.Open(filepath.Join(e.t.TempDir(), "vector-control.db"))
+	require.NoError(e.t, err)
+	defer s.DB.Close()
+	s.Backend = backend
+	random := rand.New(rand.NewSource(233))
+	start := time.Now().Add(-10 * time.Minute).UnixMilli()
+	patterns := make([]model.Pattern, 10000)
+	for i := range patterns {
+		series := model.Series{Labels: map[string]string{"case": strconv.Itoa(i)}}
+		for j := 0; j < 64; j++ {
+			series.Points = append(series.Points, model.Point{Timestamp: start + int64(j)*5000, Value: random.Float64() * 100})
+		}
+		p, err := analysis.Embed("vector_benchmark", series, start, start+320000, "last", "raw")
+		require.NoError(e.t, err)
+		patterns[i] = p
+	}
+	started := time.Now()
+	for i := 0; i < len(patterns); i += 200 {
+		require.NoError(e.t, s.SavePatterns(ctx, patterns[i:i+200]))
+	}
+	e.t.Logf("durable vector library: 10000 x 64 dimensions in %s", time.Since(started))
+	out, err = e.compose("exec", "-T", "clickhouse", "clickhouse-client", "--user", "metricspanel", "--password", "integration-only-password", "--query", "OPTIMIZE TABLE metricspanel.patterns FINAL")
+	require.NoError(e.t, err, out)
+	query := model.PatternSearch{Reference: patterns[233], Metric: "vector_benchmark", Limit: 10, IncludeSelf: true}
+	plan, err := backend.PatternIndexPlan(ctx, query)
+	require.NoError(e.t, err)
+	assert.Contains(e.t, plan, "patterns_hnsw", "query planner did not use the HNSW index")
+	exact := query
+	exact.Exact = true
+	truth, err := s.SearchPatterns(ctx, exact)
+	require.NoError(e.t, err)
+	require.Len(e.t, truth, 10)
+	started = time.Now()
+	hits, err := s.SearchPatterns(ctx, query)
+	require.NoError(e.t, err)
+	require.Len(e.t, hits, 10)
+	assert.Equal(e.t, patterns[233].ID, hits[0].Pattern.ID)
+	assert.InDelta(e.t, 0, hits[0].Distance, 1e-4)
+	expected := map[string]bool{}
+	for _, hit := range truth {
+		expected[hit.Pattern.ID] = true
+	}
+	recall := 0
+	for _, hit := range hits {
+		if expected[hit.Pattern.ID] {
+			recall++
+		}
+	}
+	assert.GreaterOrEqual(e.t, recall, 8)
+	e.t.Logf("HNSW selected by EXPLAIN: search over 10000 vectors in %s, recall@10=%d/10", time.Since(started), recall)
+	deletable := patterns[9999]
+	deletable.Metric = "vector_delete_fixture"
+	deletable.Labels = map[string]string{"test": "delete"}
+	deletable.SetID()
+	require.NoError(e.t, s.SavePatterns(ctx, []model.Pattern{deletable}))
+	require.NoError(e.t, s.DeletePattern(ctx, deletable.ID))
+	_, err = s.Pattern(ctx, deletable.ID)
+	require.Error(e.t, err, "ClickHouse vector deletion did not persist")
+	return query.Reference.ID
+}
+
+func (e environment) verifyHNSWAfterRestart(referenceID string) {
+	e.t.Helper()
+	out, err := e.compose("port", "clickhouse", "8123")
+	require.NoError(e.t, err)
+	ctx := context.Background()
+	backend, err := store.OpenClickHouse(ctx, "http://"+strings.Split(out, "\n")[0], "metricspanel", "metricspanel", "integration-only-password", 30)
+	require.NoError(e.t, err)
+	pattern, err := backend.Pattern(ctx, referenceID)
+	require.NoError(e.t, err)
+	query := model.PatternSearch{Reference: pattern, Metric: "vector_benchmark", Limit: 10, IncludeSelf: true}
+	plan, err := backend.PatternIndexPlan(ctx, query)
+	require.NoError(e.t, err)
+	assert.Contains(e.t, plan, "patterns_hnsw", "restart lost the HNSW index")
+	hits, err := backend.SearchPatterns(ctx, query)
+	require.NoError(e.t, err)
+	require.Len(e.t, hits, 10)
+	assert.Equal(e.t, referenceID, hits[0].Pattern.ID)
+}
+
 func TestDockerEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Docker integration requires full mode")
@@ -233,6 +369,11 @@ func TestDockerEndToEnd(t *testing.T) {
 				batches = 100
 			}
 			e.loadAndAnalyze(address, batches)
+			patternID := e.capturePatternFixture(address)
+			benchmarkID := ""
+			if backend.service == "clickhouse-app" {
+				benchmarkID = e.verifyHNSW()
+			}
 			params := url.Values{"query": {"sum(rate(business_http_requests_total[1m]))"}, "start": {strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)}, "end": {strconv.FormatInt(time.Now().Unix(), 10)}, "step": {"5"}}
 			data := e.must(address, "GET", "/prometheus/api/v1/query_range?"+params.Encode(), nil)
 			assert.Contains(t, string(data), `"resultType":"matrix"`)
@@ -262,10 +403,13 @@ func TestDockerEndToEnd(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(data, &stats))
 			assert.GreaterOrEqual(t, stats.Samples, int64(batches*10000))
+			e.verifyPatternNeighbor(address, patternID)
 			if backend.service == "clickhouse-app" {
 				_, err = e.compose("restart", "clickhouse")
 				require.NoError(t, err)
 				require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 60*time.Second, 500*time.Millisecond, "ClickHouse restart lost acknowledged sample")
+				e.verifyPatternNeighbor(address, patternID)
+				e.verifyHNSWAfterRestart(benchmarkID)
 			}
 		})
 	}

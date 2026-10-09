@@ -368,6 +368,18 @@ pre {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+.pattern-analysis { margin-top: 22px; padding: 18px 20px; }
+.pattern-analysis .section-heading { padding: 0; }
+.pattern-analysis h2 { display: flex; align-items: center; gap: 8px; }
+.pattern-controls, .pattern-search { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; margin: 16px 0; }
+.pattern-controls label { min-width: 160px; }
+.pattern-search > label:first-child { flex: 1; min-width: 200px; max-width: 100%; }
+.pattern-search select { width: 100%; text-overflow: ellipsis; }
+.pattern-search .check-label { min-height: 42px; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; white-space: nowrap; }
+.pattern-search .check-label input { width: 16px; min-width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
+.pattern-help { color: var(--muted); font-size: 12px; line-height: 1.7; margin: 10px 0; }
+.pattern-preview { margin-top: 18px; }
+@media(max-width: 760px) { .pattern-analysis { padding: 16px; } .pattern-controls label { min-width: 0; flex: 1; } .pattern-search > label:first-child { flex-basis: 100%; } }
 .grafana-grid {
   display: grid;
   grid-template-columns: repeat(24, minmax(0, 1fr));

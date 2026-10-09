@@ -29,6 +29,11 @@ type MetricBackend interface {
 	Prune(context.Context, int64) error
 	LoadSeries(context.Context, int64, int64, []Matcher) ([]RawSeries, error)
 	SelectSeries(context.Context, int64, int64, []Matcher) ([]RawSeries, error)
+	SavePatterns(context.Context, []model.Pattern) error
+	Patterns(context.Context, int) ([]model.Pattern, error)
+	Pattern(context.Context, string) (model.Pattern, error)
+	DeletePattern(context.Context, string) error
+	SearchPatterns(context.Context, model.PatternSearch) ([]model.PatternHit, error)
 }
 
 func (s *Store) Kind() string {
@@ -62,7 +67,9 @@ CREATE TABLE IF NOT EXISTS series(id INTEGER PRIMARY KEY, name TEXT NOT NULL, la
 CREATE TABLE IF NOT EXISTS samples(series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE, timestamp INTEGER NOT NULL, value REAL NOT NULL, PRIMARY KEY(series_id,timestamp)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
 CREATE TABLE IF NOT EXISTS targets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, interval_seconds INTEGER NOT NULL, labels TEXT NOT NULL, enabled INTEGER NOT NULL, last_scrape INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', samples INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');`)
+CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS patterns(id TEXT PRIMARY KEY,metric TEXT NOT NULL,labels TEXT NOT NULL,normalization TEXT NOT NULL,aggregation TEXT NOT NULL,created_at INTEGER NOT NULL,payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS patterns_metric ON patterns(normalization,aggregation,metric,created_at);`)
 	if err != nil {
 		db.Close()
 		return nil, err

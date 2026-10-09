@@ -75,6 +75,80 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Persistent pattern capture, nearest windows, language switch and mobile layout", async ({
+  page,
+  endpoint,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const now = Date.now();
+  const samples = [];
+  for (let i = 0; i < 64; i++)
+    for (const job of ["go", "mysql"])
+      samples.push({
+        name: "vector_e2e",
+        labels: { job },
+        timestamp: now - 14 * 60000 + i * 13000,
+        value: job === "go" ? i : i * 20 + 233,
+      });
+  expect(
+    (
+      await page.request.post(`${endpoint}/api/v1/ingest`, {
+        data: { samples },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.goto(endpoint);
+  await page.getByRole("button", { name: "Explore", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Metric", exact: true })
+    .selectOption("vector_e2e");
+  await page
+    .getByRole("combobox", { name: "Time range", exact: true })
+    .selectOption("15m");
+  await page.getByRole("button", { name: "Run query", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Save current window", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Saved windows: 2");
+  await expect(
+    page.getByLabel("Saved reference", { exact: true }).locator("option"),
+  ).toHaveCount(3);
+  await page
+    .getByRole("button", { name: "Find similar windows", exact: true })
+    .click();
+  await expect(
+    page.getByRole("cell", { name: "0.0000", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Window comparison", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".form-error")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Switch language", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "波形分析", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "距离", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "波形分析", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("参考窗口", { exact: true }).locator("option"),
+  ).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    ),
+  ).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test("Grafana resource layout, SDK transforms, instant tables, units, repeat and sanitization", async ({
   page,
   endpoint,
@@ -195,13 +269,11 @@ test("Grafana resource layout, SDK transforms, instant tables, units, repeat and
       ],
     },
   };
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles({
-      name: "sdk-resource.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(source)),
-    });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "sdk-resource.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(source)),
+  });
   await expect(
     page.getByRole("heading", { name: "SDK compatibility", exact: true }),
   ).toBeVisible();

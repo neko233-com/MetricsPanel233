@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	prom := promcompat.New(s.Store)
 	s.grafanaRoutes(api, prom.Handler())
+	s.patternRoutes(api)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", prom.Handler())))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {

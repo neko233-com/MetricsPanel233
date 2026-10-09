@@ -11,6 +11,22 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Save as":"保存方式",
+  "Capture source":"窗口来源","Run a metric query to capture a window.":"运行指标查询后，可保存对应窗口。",
+  "Compare metric patterns":"比较指标波形",
+  "Save a time window and search persistent vectors. Explicit start/end make repeat capture reproducible.":"保存时间窗口并检索持久化向量。指定起止时间可复现重复采样。",
+  "Pattern analysis":"波形分析",
+  "Save metric windows and find similar behavior.":"保存指标时间窗口，查找相似的运行状态。",
+  Compare:"比较",Measure:"分析对象",Shape:"波形","Raw values":"原始数值",Level:"指标数值","Counter rate":"计数器速率",
+  "Pattern normalization":"波形比较方式","Pattern measure":"波形分析对象","Save current window":"保存当前窗口",
+  "Saved windows":"已保存窗口",Skipped:"已跳过",
+  "Shape removes average and scale. Raw values preserve measurement levels.":"波形比较消除均值和尺度差异，数值比较保留实际量级。",
+  "Windows need 75% coverage; only small gaps are interpolated for analysis.":"窗口需要至少 75% 的数据覆盖，仅为分析插补小缺口。",
+  "Saved reference":"参考窗口","Select a saved window":"选择已保存的窗口","Only this metric":"仅比较同一指标","Exact comparison":"精确比较",
+  "Find similar windows":"查找相似窗口","No saved windows yet. Collect enough samples, then save a window.":"还没有保存窗口。采集足够数据后，可保存窗口进行比较。",
+  "Approximate results":"近似检索结果","Exact results":"精确检索结果","Lower distance means a closer match. This is not a probability.":"距离越小，波形越相似。距离不是概率。",
+  "No other saved windows match these filters.":"没有其他已保存窗口符合当前筛选。",Window:"时间窗口",Distance:"距离",Coverage:"数据覆盖",
+  "Analysis vectors aligned to the reference window.":"分析向量已对齐到参考窗口的时间轴。","Window comparison":"窗口比较",Reference:"参考",Match:"匹配",
   "Renderer required": "此面板需要兼容的渲染器",
   "Unsupported reducer": "不支持的聚合计算",
   "Showing first 500 rows": "仅显示前 500 行",

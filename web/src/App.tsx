@@ -60,7 +60,10 @@ export default function App() {
       {locale === "en" ? "中文" : "English"}
     </button>
   );
-  const [view, setView] = useState<View>("overview"),
+  const [view, setView] = useState<View>(() => {
+    const hash=location.hash.slice(1);
+    return navigation.some((n)=>n.id===hash) ? hash as View : "overview";
+  }),
     [dashboardID, setDashboardID] = useState("system"),
     [sidebarOpen, setSidebarOpen] = useState(false);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]),

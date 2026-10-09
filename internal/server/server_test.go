@@ -18,6 +18,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPatternCaptureSearchAndInputContracts(t *testing.T) {
+	s, h := setup(t, "pattern-test-233233")
+	token := "pattern-test-233233"
+	start := time.Now().Add(-10 * time.Minute).UnixMilli()
+	end := start + 320000
+	samples := []model.Sample{}
+	for i := 0; i < 64; i++ {
+		for _, v := range []struct {
+			job   string
+			value float64
+		}{{"go", float64(i)}, {"mysql", float64(i)*20 + 233}} {
+			samples = append(samples, model.Sample{Name: "vector_load", Labels: map[string]string{"job": v.job}, Timestamp: start + int64(i)*5000, Value: v.value})
+		}
+	}
+	require.NoError(t, s.Ingest(context.Background(), samples))
+	body := `{"metric":"vector_load","start":` + strconv.FormatInt(start, 10) + `,"end":` + strconv.FormatInt(end, 10) + `}`
+	assert.Equal(t, 401, call(h, "POST", "/api/v1/patterns/capture", body, "", "").Code)
+	w := call(h, "POST", "/api/v1/patterns/capture", body, token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var result struct {
+		Patterns []model.Pattern `json:"patterns"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Patterns, 2)
+	assert.Equal(t, 200, call(h, "POST", "/api/v1/patterns/capture", body, token, "").Code)
+	w = call(h, "GET", "/api/v1/patterns?limit=100", "", token, "")
+	require.Equal(t, 200, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Patterns, 2)
+	reference := result.Patterns[0].ID
+	w = call(h, "POST", "/api/v1/patterns/search", `{"id":"`+reference+`","limit":1}`, token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"engine":"sqlite-exact"`)
+	var search struct {
+		Hits []model.PatternHit `json:"hits"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &search))
+	require.Len(t, search.Hits, 1)
+	assert.InDelta(t, 0, search.Hits[0].Distance, 1e-5)
+	for _, invalid := range []string{`{"metric":"vector_load","range":"1s"}`, `{"metric":"vector_load","normalization":"unknown"}`, `{"metric":"vector_load","aggregation":"sum"}`, `{"metric":"missing"}`, `{"metric":"vector_load","labels":{"bad-label":"x"}}`} {
+		assert.Equal(t, 400, call(h, "POST", "/api/v1/patterns/capture", invalid, token, "").Code)
+	}
+	assert.Equal(t, 400, call(h, "GET", "/api/v1/patterns?limit=1001", "", token, "").Code)
+	assert.Equal(t, 404, call(h, "GET", "/api/v1/patterns/missing", "", token, "").Code)
+	assert.Equal(t, 200, call(h, "DELETE", "/api/v1/patterns/"+reference, "", token, "").Code)
+	assert.Equal(t, 404, call(h, "DELETE", "/api/v1/patterns/"+reference, "", token, "").Code)
+}
+
 func setup(t *testing.T, token string) (*store.Store, http.Handler) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "data.db"))
