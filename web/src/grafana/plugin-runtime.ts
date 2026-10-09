@@ -1,5 +1,6 @@
 import * as React from "react";
 import * as ReactDOM from "react-dom";
+import * as ReactRouter from "react-router";
 import * as JSXRuntime from "react/jsx-runtime";
 import * as Data from "@grafana/data";
 import * as EmotionCSS from "@emotion/css";
@@ -180,6 +181,41 @@ function pluginMeta(p: InstalledPlugin): Data.PluginMeta {
     info: { ...p.metadata.info, version: p.version },
   };
 }
+function NativePluginPage(props: import("@grafana/runtime").PluginPageProps) {
+  const title = props.pageNav?.text;
+  return React.createElement(
+    "section",
+    { className: "native-plugin-page" },
+    title &&
+      React.createElement(
+        "div",
+        { className: "page-heading" },
+        React.createElement(
+          "div",
+          null,
+          props.renderTitle
+            ? props.renderTitle(title)
+            : React.createElement("h2", null, title),
+          props.subTitle && React.createElement("p", null, props.subTitle),
+        ),
+        props.actions,
+      ),
+    props.info &&
+      React.createElement(
+        "dl",
+        null,
+        props.info.map((item) =>
+          React.createElement(
+            "div",
+            { key: item.label },
+            React.createElement("dt", null, item.label),
+            React.createElement("dd", null, item.value),
+          ),
+        ),
+      ),
+    props.children,
+  );
+}
 async function init(): Promise<Runtime> {
   if (initialized) return initialized;
   initialized = (async () => {
@@ -248,7 +284,10 @@ async function init(): Promise<Runtime> {
       "react/jsx-runtime": JSXRuntime,
       "@grafana/data": Data,
       "@grafana/ui": ui,
-      "@grafana/runtime": runtime,
+      "@grafana/runtime": { ...runtime, PluginPage: NativePluginPage },
+      "react-router": ReactRouter,
+      "react-router-dom": ReactRouter,
+      "react-router-dom-v5-compat": ReactRouter,
       "@emotion/css": EmotionCSS,
       "@emotion/react": EmotionReact,
       rxjs: RxJS,
@@ -376,11 +415,12 @@ export async function loadPlugin(id: string): Promise<Record<string, unknown>> {
         module = (await module.default) as Record<string, unknown>;
       if (!module?.plugin) throw new Error(`Plugin export missing: ${id}`);
       const plugin = module.plugin as Data.GrafanaPlugin;
-      plugin.meta = pluginMeta(installed);
+      if (installed.type !== "app") plugin.meta = pluginMeta(installed);
       if (installed.type === "panel") {
         panelCache.set(id, plugin as unknown as Data.PanelPlugin);
         runtime.config.panels[id] = plugin.meta as Data.PanelPluginMeta;
       }
+      module.metricspanelInstalled = installed;
       return module;
     })().catch((error) => {
       moduleCache.delete(key);
@@ -388,7 +428,25 @@ export async function loadPlugin(id: string): Promise<Record<string, unknown>> {
     });
     moduleCache.set(key, pending);
   }
-  return pending;
+  const module = await pending;
+  if (installed.type === "app") {
+    const meta = await api<Data.AppPluginMeta>(
+      `/api/plugins/${encodeURIComponent(id)}/settings`,
+    );
+    const app = module.plugin as Data.AppPlugin;
+    if (!module.metricspanelAppInitialization) {
+      module.metricspanelAppInitialization = Promise.resolve()
+        .then(() => app.init?.(meta))
+        .catch((error) => {
+          delete module.metricspanelAppInitialization;
+          throw error;
+        });
+    }
+    await module.metricspanelAppInitialization;
+    app.meta = meta;
+  }
+  module.metricspanelInstalled = installed;
+  return module;
 }
 export async function loadPanelPlugin(id: string): Promise<Data.PanelPlugin> {
   const module = await loadPlugin(id);

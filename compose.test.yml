@@ -9,7 +9,7 @@ x-app: &app
   ports: ["127.0.0.1::7333"]
   environment: &app-env
     METRICSPANEL_TOKEN: metricspanel-integration-test-token
-    METRICSPANEL_ALLOW_UNSIGNED_PLUGINS: metricspanel-sdk-datasource
+    METRICSPANEL_ALLOW_UNSIGNED_PLUGINS: metricspanel-sdk-app
   healthcheck:
     test: ["CMD", "metricspanel", "health"]
     interval: 2s

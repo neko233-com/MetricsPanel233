@@ -128,7 +128,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
 但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、chunked QueryData、
-应用插件页面、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -166,6 +166,20 @@ ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一�
 React 面板通过共享的 Grafana 13.2.3 `data` / `runtime` / `ui` SDK 运行，支持 AMD 与 SystemJS 包。
 已用未修改的官方 Clock 3.2.4 签名安装包验证实际渲染、时钟更新、页面刷新和移动布局。
 
+应用插件支持官方 `AppPlugin` 根页面、React 配置页和 `/a/PLUGIN_ID/` 路由。
+在「插件 → 配置」保存普通 JSON、加密密钥和导航固定状态；已保存的密钥只返回字段标记，留空会保留原值。
+原生配置 API / CLI 要求带上当前 `version`（首次为 0），冲突返回 409；Grafana 兼容的旧配置接口允许省略版本。
+插件升级保留启用状态、子插件偏好、配置和密钥。停用应用会停止整个安装包，单独停用子插件只停止该子插件。
+
+```sh
+metricspanel plugins settings --id APP_ID
+metricspanel plugins configure --id APP_ID --file examples/plugins/app-settings.json
+```
+
+示例中的版本号必须换成当前查询结果的 `version`。`secureJsonData` 可传入新密钥，`secureJsonFields` 的值设为 `false` 可清除对应密钥。
+后端资源、health、Live 和应用内的数据源接收官方 `AppInstanceSettings`，包含解密配置和更新时间。
+自动化测试使用真实 Go SDK 应用与内置数据源进程，验证页面路由、插件自带配置页、重启恢复、凭据隐藏和停用隔离。
+
 ```sh
 metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
 metricspanel plugins install --file grafana-clock-panel-3.2.4.zip
@@ -183,12 +197,12 @@ metricspanel datasources health --id remote-prometheus
 后端插件最多八个并发请求，不继承应用令牌 / 数据库密码。服务关闭、插件停用或卸载时关闭对应子进程。
 数据源代理支持 HTTP(S)、Basic Auth 和 `jsonData.httpHeaderNameN` / `secureJsonData.httpHeaderValueN`（N=1–32）；插件查询走 `/api/ds/query`。
 
-数据源密钥通过 AES-256-GCM 加密保存。**备份时同时保留 SQLite 数据库、同目录 `secrets.key` 和 `plugins/`**；
+数据源和应用插件的密钥通过 AES-256-GCM 加密保存。**备份时同时保留 SQLite 数据库、同目录 `secrets.key` 和 `plugins/`**；
 丢失密钥后必须恢复原密钥，不能用新密钥读取旧配置。插件资源只使用限于资源路径的短时 cookie，不授予数据 API 权限。
 `--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
 开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
 
-目前仍未达到完整 Grafana 插件运行时兼容：chunked QueryData、应用配置页面、完整插件配置编辑器、旧 Angular 插件和部分核心服务待补齐。
+目前仍未达到完整 Grafana 插件运行时兼容：chunked QueryData、UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
 支持的能力和剩余项也会出现在 `metricspanel schema` 中。
 
 ## Grafana Live 与 Agent 实时订阅

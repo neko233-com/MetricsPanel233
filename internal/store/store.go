@@ -64,20 +64,22 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db, Path: path}
 	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
-		var exists int
-		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='datasources'`).Scan(&exists); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if exists > 0 {
-			var count int
-			if err := db.QueryRow(`SELECT count(*) FROM datasources`).Scan(&count); err != nil {
+		for _, table := range []string{"datasources", "app_settings"} {
+			var exists int
+			if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
 				db.Close()
 				return nil, err
 			}
-			if count > 0 {
-				db.Close()
-				return nil, fmt.Errorf("datasources exist but secrets.key is missing; restore the original key from backup")
+			if exists > 0 {
+				var count int
+				if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil {
+					db.Close()
+					return nil, err
+				}
+				if count > 0 {
+					db.Close()
+					return nil, fmt.Errorf("%s exist but secrets.key is missing; restore the original key from backup", table)
+				}
 			}
 		}
 	}
@@ -100,7 +102,8 @@ INSERT OR IGNORE INTO alert_schedule(uid,interval_seconds,paused) SELECT uid,jso
 CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL,timestamp INTEGER NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS alert_events_uid ON alert_events(uid,id);
 CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
+CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(id) ON DELETE CASCADE,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
 	if err != nil {
 		db.Close()
 		return nil, err

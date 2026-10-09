@@ -342,6 +342,19 @@ func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput)
 		if p.Type != "datasource" || !p.Enabled {
 			return model.DataSource{}, errors.New("datasource plugin is not enabled")
 		}
+		if p.PackageID != p.ID {
+			var parentPayload string
+			if err := tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, p.PackageID).Scan(&parentPayload); err != nil {
+				return model.DataSource{}, err
+			}
+			var parent model.Plugin
+			if err := json.Unmarshal([]byte(parentPayload), &parent); err != nil {
+				return model.DataSource{}, err
+			}
+			if !parent.Enabled {
+				return model.DataSource{}, errors.New("owning app package is disabled")
+			}
+		}
 	}
 	previous, err := scanDataSource(tx.QueryRowContext(ctx, `SELECT id,payload FROM datasources WHERE uid=?`, input.UID))
 	exists := err == nil

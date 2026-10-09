@@ -116,7 +116,7 @@ func (m *Manager) verifyFiles(p model.Plugin) error {
 func (m *Manager) Asset(ctx context.Context, id, name string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	p, err := m.Store.Plugin(ctx, id)
+	p, err := m.Store.PluginEffective(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -163,15 +163,33 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) (mode
 		return p, err
 	}
 	if enabled {
+		if p.PackageID != p.ID {
+			parent, err := m.Store.Plugin(ctx, p.PackageID)
+			if err != nil {
+				return p, err
+			}
+			if !parent.Enabled {
+				return p, errors.New("enable the owning package before enabling this bundled plugin")
+			}
+		}
 		if err = m.verifyFiles(p); err != nil {
 			return p, err
 		}
 	}
 	p.Enabled = enabled
 	if !enabled {
-		m.stopPackage(p.PackageID)
+		if p.ID == p.PackageID {
+			m.stopPackage(p.PackageID)
+		} else if process := m.processes[p.ID]; process != nil {
+			process.client.Kill()
+			delete(m.processes, p.ID)
+		}
 	}
-	err = m.Store.SavePlugin(ctx, p)
+	if p.Type == "app" {
+		_, err = m.Store.SaveAppSettings(ctx, p.ID, model.AppSettingsInput{Enabled: &enabled})
+	} else {
+		err = m.Store.SavePlugin(ctx, p)
+	}
 	return p, err
 }
 func (m *Manager) stopPackage(id string) {
@@ -230,7 +248,7 @@ func processEnvironment() []string {
 func (m *Manager) getProcess(ctx context.Context, id string) (*process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p, err := m.Store.Plugin(ctx, id)
+	p, err := m.Store.PluginEffective(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +320,20 @@ func (m *Manager) PluginContext(ctx context.Context, ds model.DataSource) (backe
 	if err != nil {
 		return backend.PluginContext{}, err
 	}
-	return backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: ds.Type, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{ID: ds.ID, UID: ds.UID, Type: ds.Type, Name: ds.Name, URL: ds.URL, User: ds.User, Database: ds.Database, BasicAuthEnabled: ds.BasicAuth, BasicAuthUser: ds.BasicAuthUser, JSONData: ds.JSONData, DecryptedSecureJSONData: secrets, Updated: time.UnixMilli(ds.UpdatedAt)}}, nil
+	pc := backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: ds.Type, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{ID: ds.ID, UID: ds.UID, Type: ds.Type, Name: ds.Name, URL: ds.URL, User: ds.User, Database: ds.Database, BasicAuthEnabled: ds.BasicAuth, BasicAuthUser: ds.BasicAuthUser, JSONData: ds.JSONData, DecryptedSecureJSONData: secrets, Updated: time.UnixMilli(ds.UpdatedAt)}}
+	if p.PackageID != p.ID {
+		parent, err := m.Store.Plugin(ctx, p.PackageID)
+		if err != nil {
+			return pc, err
+		}
+		if parent.Type == "app" {
+			pc.AppInstanceSettings, err = m.appInstance(ctx, parent.ID)
+			if err != nil {
+				return pc, err
+			}
+		}
+	}
+	return pc, nil
 }
 func (m *Manager) Query(ctx context.Context, ds model.DataSource, queries []backend.DataQuery) (*backend.QueryDataResponse, error) {
 	select {
@@ -327,17 +358,20 @@ func (m *Manager) Query(ctx context.Context, ds model.DataSource, queries []back
 	return backend.FromProto().QueryDataResponse(result)
 }
 func (m *Manager) Health(ctx context.Context, ds model.DataSource) (*backend.CheckHealthResult, error) {
+	pc, err := m.PluginContext(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
+	return m.HealthContext(ctx, pc)
+}
+func (m *Manager) HealthContext(ctx context.Context, pc backend.PluginContext) (*backend.CheckHealthResult, error) {
 	select {
 	case m.requests <- struct{}{}:
 		defer func() { <-m.requests }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	host, err := m.getProcess(ctx, ds.Type)
-	if err != nil {
-		return nil, err
-	}
-	pc, err := m.PluginContext(ctx, ds)
+	host, err := m.getProcess(ctx, pc.PluginID)
 	if err != nil {
 		return nil, err
 	}
@@ -348,17 +382,20 @@ func (m *Manager) Health(ctx context.Context, ds model.DataSource) (*backend.Che
 	return backend.FromProto().CheckHealthResponse(result), nil
 }
 func (m *Manager) Resource(ctx context.Context, ds model.DataSource, request *backend.CallResourceRequest) ([]*backend.CallResourceResponse, error) {
+	pc, err := m.PluginContext(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
+	return m.ResourceContext(ctx, pc, request)
+}
+func (m *Manager) ResourceContext(ctx context.Context, pc backend.PluginContext, request *backend.CallResourceRequest) ([]*backend.CallResourceResponse, error) {
 	select {
 	case m.requests <- struct{}{}:
 		defer func() { <-m.requests }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	host, err := m.getProcess(ctx, ds.Type)
-	if err != nil {
-		return nil, err
-	}
-	pc, err := m.PluginContext(ctx, ds)
+	host, err := m.getProcess(ctx, pc.PluginID)
 	if err != nil {
 		return nil, err
 	}

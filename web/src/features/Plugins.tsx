@@ -13,6 +13,7 @@ import { api, jsonBody, message } from "../api";
 import { Dialog } from "../components/Dialog";
 import { t } from "../i18n";
 import type { InstalledPlugin } from "../grafana/plugin-runtime";
+import { AppSettingsEditor } from "./AppSettingsEditor";
 
 type Source = {
   id: number;
@@ -35,6 +36,7 @@ export function Plugins({ notify }: { notify: Notify }) {
     [sources, setSources] = useState<Source[]>([]),
     [error, setError] = useState(""),
     [install, setInstall] = useState(false),
+    [app, setApp] = useState<InstalledPlugin | null>(null),
     [editing, setEditing] = useState<Source | "new" | null>(null),
     [removing, setRemoving] = useState<{
       kind: "plugin" | "source";
@@ -149,6 +151,16 @@ export function Plugins({ notify }: { notify: Notify }) {
                   />
                   {t("Enabled")}
                 </label>
+                {p.type === "app" && (
+                  <div className="plugin-app-actions">
+                    <button onClick={() => setApp(p)}>{t("Configure")}</button>
+                    {p.enabled && (
+                      <a href={`/a/${encodeURIComponent(p.id)}/`}>
+                        {t("Open application")}
+                      </a>
+                    )}
+                  </div>
+                )}
                 <button
                   className="icon-button"
                   aria-label={`${t("Uninstall")} ${p.name}`}
@@ -167,6 +179,18 @@ export function Plugins({ notify }: { notify: Notify }) {
           </div>
         )}
       </section>
+      {app && (
+        <AppSettingsEditor
+          id={app.id}
+          name={app.name}
+          close={() => setApp(null)}
+          saved={() => {
+            setApp(null);
+            void reload();
+            notify(t("Application settings saved"));
+          }}
+        />
+      )}
       <section className="list-panel plugin-sources">
         <div className="section-heading">
           <h2>

@@ -69,7 +69,7 @@ Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/das
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
-**Full Grafana ecosystem parity remains unfinished.** Chunked QueryData, app plugin pages, legacy Angular plugins,
+**Full Grafana ecosystem parity remains unfinished.** Chunked QueryData, UI extension points, some app core services, legacy Angular plugins,
 annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
@@ -81,6 +81,22 @@ The Plugins page installs original ZIP packages or exact versions from the offic
 Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.
 React panels share Grafana 13.2.3's public data/runtime/ui packages; AMD and SystemJS bundles are supported.
 The unchanged official signed Clock 3.2.4 package is tested for rendering, live clock updates, reloads and mobile layout.
+
+Application plugins support official `AppPlugin` roots, React configuration pages and routes under `/a/PLUGIN_ID/`.
+Use Plugins → Configure to save ordinary JSON, encrypted secrets and a pinned navigation entry.
+Saved secrets return only field-presence markers; omitted secrets are preserved. Native configuration writes require the current `version`
+(initially 0), with HTTP 409 on conflicts. Grafana's legacy settings endpoint also accepts versionless writes.
+Upgrades preserve enabled flags, child preferences, configuration and secrets. Disabling an app stops its whole package; disabling one child stops only that child.
+
+```sh
+metricspanel plugins settings --id APP_ID
+metricspanel plugins configure --id APP_ID --file examples/plugins/app-settings.json
+```
+
+Replace the example's version with the current value returned by `plugins settings`. Supply new secrets through `secureJsonData`;
+set individual `secureJsonFields` entries to `false` to clear them. Resources, health, Live and bundled datasource requests receive
+official `AppInstanceSettings` with decrypted configuration and the update timestamp. Tests run real Go SDK app and bundled datasource processes,
+covering routes, plugin-owned configuration pages, persisted settings, masked credentials and disable isolation.
 
 ```sh
 metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
@@ -97,13 +113,13 @@ Packages need `<executable>_<GOOS>_<GOARCH>[.exe]` for the host platform. Plugin
 At most eight backend requests run concurrently. Plugin processes do not inherit workspace tokens/database passwords and exit on server shutdown, disable or uninstall.
 The datasource proxy supports HTTP(S), Basic Auth and secure custom headers. Plugin queries use `/api/ds/query`.
 
-Datasource secrets are encrypted with AES-256-GCM. **Back up the control database, adjacent `secrets.key` and `plugins/` together.**
-An existing datasource database without its original key fails to open with a restore instruction.
+Datasource and application secrets are encrypted with AES-256-GCM. **Back up the control database, adjacent `secrets.key` and `plugins/` together.**
+An existing datasource or application configuration database without its original key fails to open with a restore instruction.
 Plugin assets use a short-lived cookie restricted to asset paths; that cookie cannot authorize data APIs.
 `--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
 Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
 
-Chunked QueryData, app configuration/pages, complete plugin configuration editors, legacy Angular and some core services are still pending.
+Chunked QueryData, UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
 The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
 
 ## Grafana Live and agent subscriptions

@@ -11,6 +11,26 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  app: "应用",
+  Application: "应用",
+  Configure: "配置",
+  "Configure application": "配置应用",
+  "Open application": "打开应用",
+  "Application pages": "应用页面",
+  "Grafana application": "Grafana 应用插件",
+  "App root component missing": "应用未提供根页面组件",
+  "Pin application in navigation": "固定应用到导航",
+  "Application JSON settings": "应用 JSON 配置",
+  "Application secret settings": "应用密钥配置",
+  "Omitted secrets are preserved. Saved values are encrypted and never returned here.":
+    "未填写的密钥会保留。已保存的值经过加密，不会在此处返回。",
+  "Save application": "保存应用",
+  "Application settings saved": "应用配置已保存",
+  "Clear secret": "清除密钥",
+  Configured: "已配置",
+  "Configure Grafana applications": "配置 Grafana 应用",
+  "Read masked settings, keep their version, and save application configuration.":
+    "读取隐藏密钥的配置，保留返回的版本号，再保存应用配置。",
   Live: "实时",
   "Watch live data": "订阅实时数据",
   "Receive one JSON event per line. The last subscriber releases the backend stream.":
@@ -41,7 +61,6 @@ const zh: Record<string, string> = {
   Backend: "后端",
   panel: "面板",
   datasource: "数据源",
-  app: "应用",
   "Plugin disabled": "插件已停用",
   "Plugin enabled": "插件已启用",
   Uninstall: "卸载",

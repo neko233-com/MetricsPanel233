@@ -17,6 +17,13 @@ import (
 
 type fixture struct{}
 
+const appModule = `System.register(["react","@grafana/data","@grafana/runtime","react-router-dom"],function(_export){let React,data,runtime,router;return{setters:[m=>React=m,m=>data=m,m=>runtime=m,m=>router=m],execute:function(){
+let initCalls=0;
+function Root(props){const [resource,setResource]=React.useState(null);const location=router.useLocation();React.useEffect(()=>{let active=true;runtime.getBackendSrv().get('/api/plugins/'+props.meta.id+'/resources/example').then(value=>{if(active)setResource(value)});return()=>{active=false}},[props.meta.version]);return React.createElement(runtime.PluginPage,{pageNav:{text:'SDK route'},subTitle:'Original AppPlugin React component',actions:React.createElement(router.Link,{to:props.basename+'/details'},'Open SDK details')},React.createElement('p',null,'Current path: '+location.pathname),React.createElement('p',null,'Init calls: '+initCalls),React.createElement('p',null,'App label: '+(props.meta.jsonData.label||'')),React.createElement('p',null,'Backend configured: '+(resource?.configured?'yes':'no')),React.createElement('p',null,'Backend label: '+(resource?.label||''))) }
+function Config({plugin}){const [label,setLabel]=React.useState(plugin.meta.jsonData.label||'');const [saved,setSaved]=React.useState(false);return React.createElement('form',{onSubmit:async event=>{event.preventDefault();await runtime.getBackendSrv().post('/api/plugins/'+plugin.meta.id+'/settings',{version:plugin.meta.version,jsonData:{label}});setSaved(true)}},React.createElement('label',null,'SDK label',React.createElement('input',{value:label,onChange:event=>setLabel(event.target.value)})),React.createElement('button',{type:'submit'},'Save SDK configuration'),saved&&React.createElement('p',{role:'status'},'SDK settings saved'))}
+const plugin=new data.AppPlugin().setRootPage(Root).addConfigPage({id:'configuration',title:'SDK settings',body:Config});plugin.init=async function(){initCalls++};_export('plugin',plugin)
+}}})`
+
 var liveStarted, liveActive, liveCancelled, staticQueries atomic.Int64
 
 func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
@@ -56,15 +63,24 @@ func (fixture) CheckHealth(ctx context.Context, r *backend.CheckHealthRequest) (
 	return &backend.CheckHealthResult{Status: backend.HealthStatusOk, Message: "Grafana SDK backend is working", JSONDetails: json.RawMessage(`{"protocol":2}`)}, nil
 }
 func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
-	body, _ := json.Marshal(map[string]any{"path": r.Path, "url": r.URL, "method": r.Method, "pid": os.Getpid(), "uid": r.PluginContext.DataSourceInstanceSettings.UID})
+	uid := ""
+	if r.PluginContext.DataSourceInstanceSettings != nil {
+		uid = r.PluginContext.DataSourceInstanceSettings.UID
+	}
+	body, _ := json.Marshal(map[string]any{"path": r.Path, "url": r.URL, "method": r.Method, "pid": os.Getpid(), "uid": uid})
+	if settings := r.PluginContext.AppInstanceSettings; settings != nil {
+		var values map[string]any
+		_ = json.Unmarshal(settings.JSONData, &values)
+		body, _ = json.Marshal(map[string]any{"plugin": r.PluginContext.PluginID, "org": r.PluginContext.OrgID, "configured": settings.DecryptedSecureJSONData["apiKey"] == "app-secret-233", "label": values["label"], "uid": uid})
+	}
 	if r.Path == "stream-stats" {
 		body, _ = json.Marshal(map[string]int64{"started": liveStarted.Load(), "active": liveActive.Load(), "cancelled": liveCancelled.Load(), "static_queries": staticQueries.Load()})
 	}
 	return sender.Send(&backend.CallResourceResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
 }
 func main() {
-	if len(os.Args) == 3 && os.Args[1] == "--package" {
-		if err := packageFixture(os.Args[2]); err != nil {
+	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app") {
+		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -78,7 +94,9 @@ func main() {
 }
 
 func (fixture) SubscribeStream(ctx context.Context, r *backend.SubscribeStreamRequest) (*backend.SubscribeStreamResponse, error) {
-	if settings := r.PluginContext.DataSourceInstanceSettings; settings == nil || settings.DecryptedSecureJSONData["apiKey"] != "test-secret-233" {
+	valid := r.PluginContext.DataSourceInstanceSettings != nil && r.PluginContext.DataSourceInstanceSettings.DecryptedSecureJSONData["apiKey"] == "test-secret-233"
+	valid = valid || r.PluginContext.AppInstanceSettings != nil && r.PluginContext.AppInstanceSettings.DecryptedSecureJSONData["apiKey"] == "app-secret-233"
+	if !valid {
 		return &backend.SubscribeStreamResponse{Status: backend.SubscribeStreamStatusPermissionDenied}, nil
 	}
 	if r.Path == "denied" {
@@ -118,7 +136,7 @@ func (fixture) RunStream(ctx context.Context, r *backend.RunStreamRequest, sende
 	}
 }
 
-func packageFixture(destination string) error {
+func packageVariant(destination string, app bool) error {
 	name := "fixture_" + runtime.GOOS + "_" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -139,6 +157,13 @@ func packageFixture(destination string) error {
 	archive := zip.NewWriter(file)
 	module := `System.register(["@grafana/data","@grafana/runtime"],function(_export){let data,runtime;return{setters:[function(m){data=m},function(m){runtime=m}],execute:function(){class Fixture extends runtime.DataSourceWithBackend{constructor(settings){super(settings);this.uid=settings.uid}query(request){if(request.targets.some(t=>t.directLive)){return runtime.getGrafanaLiveSrv().getDataStream({addr:{scope:"ds",namespace:this.uid,path:"counter"},filter:{fields:["Value"]},buffer:{maxLength:3}})}return super.query(request)}};_export("plugin",new data.DataSourcePlugin(Fixture))}}})`
 	files := map[string][]byte{"plugin.json": []byte(`{"id":"metricspanel-sdk-datasource","name":"SDK Fixture","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`), "module.js": []byte(module), name: binary}
+	if app {
+		files["plugin.json"] = []byte(`{"id":"metricspanel-sdk-app","name":"SDK App Fixture","type":"app","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`)
+		files["child/plugin.json"] = []byte(`{"id":"metricspanel-sdk-datasource","name":"Bundled SDK datasource","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`)
+		files["child/module.js"] = []byte(module)
+		files["child/"+name] = binary
+		files["module.js"] = []byte(appModule)
+	}
 	for name, body := range files {
 		entry, err := archive.Create(name)
 		if err != nil {

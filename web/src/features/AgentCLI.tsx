@@ -3,6 +3,13 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Configure Grafana applications",
+    detail:
+      "Read masked settings, keep their version, and save application configuration.",
+    command:
+      "metricspanel plugins settings --id APP_ID\nmetricspanel plugins configure --id APP_ID --file app-settings.json",
+  },
+  {
     title: "Watch live data",
     detail:
       "Receive one JSON event per line. The last subscriber releases the backend stream.",

@@ -108,6 +108,33 @@ func TestPluginAndDatasourceCLIJSONLifecycle(t *testing.T) {
 	assert.Contains(t, string(result), "/api/ds/query")
 }
 
+func TestAppConfigurationCLIJSONVersionAndSecretMasking(t *testing.T) {
+	t.Setenv("METRICSPANEL_TOKEN", "")
+	s, err := store.Open(filepath.Join(t.TempDir(), "control.db"))
+	require.NoError(t, err)
+	defer s.DB.Close()
+	require.NoError(t, s.SavePlugin(context.Background(), model.Plugin{ID: "agent-app", PackageID: "agent-app", Type: "app", Enabled: true, Metadata: json.RawMessage(`{"id":"agent-app","type":"app"}`)}))
+	srv := server.New(s, "", 30)
+	defer srv.Plugins.Close()
+	defer srv.Live.Close()
+	host := httptest.NewServer(srv.Handler())
+	defer host.Close()
+	file := filepath.Join(t.TempDir(), "app.json")
+	require.NoError(t, os.WriteFile(file, []byte(`{"version":0,"pinned":true,"jsonData":{"label":"Agent app"},"secureJsonData":{"apiKey":"agent-app-secret"}}`), 0600))
+	raw, err := capture(t, "plugins", "configure", "--id", "agent-app", "--file", file, "--server", host.URL)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "agent-app-secret")
+	raw, err = capture(t, "plugins", "settings", "--id", "agent-app", "--server", host.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"apiKey": true`)
+	assert.Contains(t, string(raw), `"version": 1`)
+	_, err = capture(t, "plugins", "configure", "--id", "agent-app", "--file", file, "--server", host.URL)
+	require.ErrorContains(t, err, "version changed")
+	raw, err = capture(t, "schema")
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "plugins configure --id APP_ID")
+}
+
 func capture(t *testing.T, args ...string) (json.RawMessage, error) {
 	t.Helper()
 	old := os.Stdout

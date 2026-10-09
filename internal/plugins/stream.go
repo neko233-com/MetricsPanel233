@@ -26,6 +26,9 @@ func (m *Manager) StreamContext(ctx context.Context, scope, id string) (backend.
 	if err != nil {
 		return backend.PluginContext{}, err
 	}
+	if p.Type == "app" {
+		return m.AppContext(ctx, id)
+	}
 	return backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: p.ID, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL})}, nil
 }
 func validStreamPath(path string) bool {

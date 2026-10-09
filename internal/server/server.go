@@ -110,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	s.patternRoutes(api)
 	s.alertRoutes(api)
 	s.pluginRoutes(api, mux)
+	s.appRoutes(api)
 	s.liveRoutes(api, mux)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {

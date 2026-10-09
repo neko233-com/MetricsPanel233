@@ -76,12 +76,18 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 			return
 		}
 		for i := range items {
+			effective, err := s.Store.PluginEffective(r.Context(), items[i].ID)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
+			items[i] = effective
 			items[i] = publicPlugin(items[i])
 		}
 		writeJSON(w, 200, items)
 	})
 	api.HandleFunc("GET /api/v1/plugins/{id}", func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.Store.Plugin(r.Context(), r.PathValue("id"))
+		p, err := s.Store.PluginEffective(r.Context(), r.PathValue("id"))
 		if err != nil {
 			resourceError(w, err)
 			return
@@ -141,7 +147,7 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 			return
 		}
 		if !input.Enabled {
-			s.Live.Invalidate("plugin", p.ID, false)
+			s.invalidatePlugin(r.Context(), p.ID, false)
 		}
 		writeJSON(w, 200, publicPlugin(p))
 	})
@@ -164,34 +170,21 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 		}
 		out := []any{}
 		for _, p := range items {
-			var metadata map[string]any
-			if err := json.Unmarshal(p.Metadata, &metadata); err != nil {
+			metadata, err := s.pluginMetadata(r.Context(), p.ID)
+			if err != nil {
 				fail(w, 500, err)
 				return
 			}
-			metadata["enabled"] = p.Enabled
-			metadata["signature"] = p.Signature
-			metadata["module"] = "public/plugins/" + p.ID + "/module.js"
-			metadata["baseUrl"] = "public/plugins/" + p.ID
 			out = append(out, metadata)
 		}
 		writeJSON(w, 200, out)
 	})
 	api.HandleFunc("GET /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.Store.Plugin(r.Context(), r.PathValue("id"))
+		metadata, err := s.pluginMetadata(r.Context(), r.PathValue("id"))
 		if err != nil {
 			resourceError(w, err)
 			return
 		}
-		var metadata map[string]any
-		if err := json.Unmarshal(p.Metadata, &metadata); err != nil {
-			fail(w, 500, err)
-			return
-		}
-		metadata["enabled"] = p.Enabled
-		metadata["signature"] = p.Signature
-		metadata["module"] = "public/plugins/" + p.ID + "/module.js"
-		metadata["baseUrl"] = "public/plugins/" + p.ID
 		writeJSON(w, 200, metadata)
 	})
 	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

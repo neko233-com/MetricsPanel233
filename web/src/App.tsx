@@ -1,6 +1,13 @@
 import { t as tr } from "./i18n";
 import { getLocale, setLocale, type Locale } from "./i18n";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   Bell,
@@ -34,6 +41,7 @@ import { AgentCLI } from "./features/AgentCLI";
 import { TemplateView } from "./features/TemplateView";
 import { Alerts } from "./features/Alerts";
 import { Plugins } from "./features/Plugins";
+const AppPluginView = lazy(() => import("./grafana/AppPluginView"));
 type View =
   | "overview"
   | "dashboards"
@@ -43,6 +51,7 @@ type View =
   | "alerts"
   | "plugins"
   | "cli";
+type AppView = View | "app";
 const navigation = [
   { id: "overview", name: "Overview", icon: LayoutDashboard },
   { id: "dashboards", name: "Dashboards", icon: ChartNoAxesColumn },
@@ -68,7 +77,8 @@ export default function App() {
       {locale === "en" ? "中文" : "English"}
     </button>
   );
-  const [view, setView] = useState<View>(() => {
+  const [view, setView] = useState<AppView>(() => {
+      if (/^\/a\/[^/]+/.test(location.pathname)) return "app";
       const hash = location.hash.slice(1);
       return navigation.some((n) => n.id === hash)
         ? (hash as View)
@@ -77,6 +87,15 @@ export default function App() {
     [dashboardID, setDashboardID] = useState("system"),
     [sidebarOpen, setSidebarOpen] = useState(false);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]),
+    [apps, setApps] = useState<
+      {
+        id: string;
+        name: string;
+        pinned?: boolean;
+        enabled?: boolean;
+        type: string;
+      }[]
+    >([]),
     [targets, setTargets] = useState<Target[]>([]),
     [metrics, setMetrics] = useState<Metric[]>([]),
     [stats, setStats] = useState<Stats | null>(null);
@@ -95,16 +114,30 @@ export default function App() {
   );
   const load = useCallback(async () => {
     try {
-      const [ds, ts, ms, st] = await Promise.all([
+      const [ds, ts, ms, st, ps] = await Promise.all([
         api<Dashboard[]>("/dashboards"),
         api<Target[]>("/targets"),
         api<Metric[]>("/metrics"),
         api<Stats>("/stats"),
+        api<
+          {
+            id: string;
+            name: string;
+            pinned?: boolean;
+            enabled?: boolean;
+            type: string;
+          }[]
+        >("/api/plugins"),
       ]);
       setDashboards(ds);
       setTargets(ts);
       setMetrics(ms);
       setStats(st);
+      setApps(
+        ps.filter(
+          (plugin) => plugin.type === "app" && plugin.enabled && plugin.pinned,
+        ),
+      );
       setTick((t) => t + 1);
       setConnectionError("");
       setAuth(false);
@@ -152,9 +185,11 @@ export default function App() {
     (d) => d.id === (view === "overview" ? "system" : dashboardID),
   );
   const title =
-    view === "dashboard"
-      ? current?.name || "Dashboard"
-      : navigation.find((n) => n.id === view)?.name;
+    view === "app"
+      ? "Application"
+      : view === "dashboard"
+        ? current?.name || "Dashboard"
+        : navigation.find((n) => n.id === view)?.name;
   if (auth)
     return (
       <main className="login">
@@ -222,6 +257,21 @@ export default function App() {
               <item.icon size={23} strokeWidth={1.8} />
               <span>{tr(item.name)}</span>
             </button>
+          ))}
+          {apps.map((app) => (
+            <a
+              className="app-nav-link"
+              key={app.id}
+              href={`/a/${encodeURIComponent(app.id)}/`}
+              aria-current={
+                view === "app" && location.pathname.split("/")[2] === app.id
+                  ? "page"
+                  : undefined
+              }
+            >
+              <Puzzle size={23} />
+              <span>{app.name}</span>
+            </a>
           ))}
         </nav>
         <div className="workspace">
@@ -338,6 +388,14 @@ export default function App() {
           )}
           {view === "cli" && <AgentCLI />}
           {view === "plugins" && <Plugins notify={notify} />}
+          {view === "app" && (
+            <Suspense fallback={<p>{tr("Loading plugin…")}</p>}>
+              <AppPluginView
+                id={decodeURIComponent(location.pathname.split("/")[2] || "")}
+                tick={tick}
+              />
+            </Suspense>
+          )}
           {view === "alerts" && (
             <Alerts tick={tick} metrics={metrics} notify={notify} />
           )}

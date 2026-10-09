@@ -34,7 +34,7 @@ const test = base.extend<{}, { endpoint: string }>({
           "--db",
           path.join(temp, "control.db"),
           "--allow-unsigned-plugin",
-          "metricspanel-sdk-datasource",
+          "metricspanel-sdk-datasource,metricspanel-sdk-app",
         ],
         {
           cwd: root,
@@ -84,6 +84,145 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("AppPlugin root, configuration pages, encrypted backend context and pinned navigation", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-app-e2e-"),
+  );
+  const binary = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "app.zip"),
+    run = promisify(execFile),
+    errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await run(
+      "go",
+      ["build", "-o", binary, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(binary, ["--package-app", archive], { windowsHide: true });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    await page.goto(endpoint + "/#plugins");
+    const app = page
+      .locator(".plugin-row")
+      .filter({ hasText: "SDK App Fixture" });
+    await app.getByRole("button", { name: "Configure", exact: true }).click();
+    await page
+      .getByLabel("Pin application in navigation", { exact: true })
+      .check();
+    await page
+      .getByLabel("Application JSON settings", { exact: true })
+      .fill('{"label":"Operations"}');
+    await page
+      .getByLabel("Application secret settings", { exact: true })
+      .fill('{"apiKey":"app-secret-233"}');
+    await page
+      .getByRole("button", { name: "Save application", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("navigation", { name: "Main navigation" })
+        .getByRole("link", { name: "SDK App Fixture", exact: true }),
+    ).toBeVisible();
+    const meta = await page.request.get(
+      endpoint + "/api/plugins/metricspanel-sdk-app/settings",
+    );
+    expect(await meta.text()).not.toContain("app-secret-233");
+    await app
+      .getByRole("link", { name: "Open application", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "SDK App Fixture", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Backend configured: yes", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Backend label: Operations", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("link", { name: "Open SDK details", exact: true })
+      .click();
+    await expect(
+      page.getByText("Current path: /a/metricspanel-sdk-app/details", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByText("Backend configured: yes", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "SDK settings", exact: true })
+      .click();
+    await page
+      .getByLabel("SDK label", { exact: true })
+      .fill("Updated operations");
+    await page
+      .getByRole("button", { name: "Save SDK configuration", exact: true })
+      .click();
+    await expect(page.getByRole("status")).toContainText("SDK settings saved");
+    await page
+      .getByRole("button", { name: "Application", exact: true })
+      .click();
+    await expect(
+      page.getByText("Backend label: Updated operations", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Init calls: 1", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await expect(
+      page.getByText("Grafana 应用插件", { exact: true }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.request.put(endpoint + "/api/v1/plugins/metricspanel-sdk-app", {
+      data: { enabled: false },
+    });
+    await expect(page.getByRole("alert")).toContainText("Plugin is disabled");
+    const child = await page.request.get(
+      endpoint + "/public/plugins/metricspanel-sdk-datasource/module.js",
+    );
+    expect(child.status()).toBe(403);
+    expect(errors).toEqual([]);
+  } finally {
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    await fetch(endpoint + "/api/v1/plugins/metricspanel-sdk-app", {
+      method: "DELETE",
+    });
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-app-e2e-")
+    )
+      throw new Error("Unsafe app test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
 });
 
 test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess", async ({

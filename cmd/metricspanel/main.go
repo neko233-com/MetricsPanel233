@@ -67,6 +67,7 @@ Usage: metricspanel <command> [flags]
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | evaluate | history | delete
   plugins      list | get | install | catalog | enable | disable | delete
+               settings | configure (Grafana application settings)
   datasources  list | get | save | health | delete
   live         channels | watch | publish (watch emits NDJSON)
   schema       Print machine-readable command and API discovery
@@ -187,6 +188,24 @@ func run(args []string) error {
 		}
 	case "plugins":
 		switch action {
+		case "settings":
+			if *id == "" {
+				return errors.New("--id required")
+			}
+			return request("GET", "/api/v1/plugins/"+url.PathEscape(*id)+"/app-settings", nil)
+		case "configure":
+			if *id == "" {
+				return errors.New("--id required")
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			var payload model.AppSettingsInput
+			if err = json.Unmarshal(data, &payload); err != nil {
+				return err
+			}
+			return request("PUT", "/api/v1/plugins/"+url.PathEscape(*id)+"/app-settings", payload)
 		case "list":
 			return request("GET", "/api/v1/plugins", nil)
 		case "get", "enable", "disable", "delete":
@@ -688,10 +707,23 @@ func schema() any {
 	routes["POST"] = append(routes["POST"], "/api/v1/plugins/install", "/api/v1/plugins/catalog", "/api/v1/plugins/assets-session", "/api/datasources", "/api/ds/query")
 	routes["PUT"] = append(routes["PUT"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/plugins/{id}", "/api/datasources/uid/{uid}")
-	result["plugins"] = map[string]any{"frontend_runtime": "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS", "backend_protocol": "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource, SubscribeStream, RunStream, PublishStream", "installation": "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive", "secrets": "AES-256-GCM encrypted datasource secrets; back up secrets.key beside the control DB", "unsigned": "only package IDs explicitly allowed by --allow-unsigned-plugin for development", "limits": map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32}, "pending_capabilities": []string{"chunked QueryData streaming", "app pages and app settings", "Angular legacy plugins", "full Grafana core services"}}
+	result["plugins"] = map[string]any{
+		"frontend_runtime":     "Grafana 13.2.3 public data/runtime/ui SDK; AMD and SystemJS",
+		"backend_protocol":     "Grafana plugin SDK gRPC protocol 2: QueryData, CheckHealth, CallResource, SubscribeStream, RunStream, PublishStream",
+		"installation":         "original ZIP with verified Grafana PGP signature and every file SHA-256; exact catalog version; idempotent identical archive; upgrades preserve enabled preferences",
+		"secrets":              "AES-256-GCM encrypted datasource and application secrets; back up secrets.key beside the control DB",
+		"unsigned":             "only package IDs explicitly allowed by --allow-unsigned-plugin for development",
+		"limits":               map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32},
+		"pending_capabilities": []string{"chunked QueryData streaming", "UI extension points and some app core services", "Angular legacy plugins", "full Grafana core services"},
+	}
 	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")
 	routes["POST"] = append(routes["POST"], "/api/live/session", "/api/live/publish")
 	result["live"] = map[string]any{"protocol": "Centrifuge JSON WebSocket", "channels": []string{"ds/UID/path", "plugin/ID/path"}, "multiplexing": "one SDK RunStream per channel; cancellation after last subscriber", "watch_output": "NDJSON: type, channel, timestamp, data; initial frame counts toward limit; 0 means unlimited", "limits": map[string]int{"channels": 256, "channels_per_connection": 128, "packet_MiB": 1, "frontend_buffer_rows": 10000}, "durability": "live transport is transient; collection and SQLite/ClickHouse storage remain durable"}
+	result["commands"] = append(result["commands"].([]string), "plugins settings --id APP_ID", "plugins configure --id APP_ID --file FILE|- (version detects concurrent changes)")
+	routes["GET"] = append(routes["GET"], "/api/v1/plugins/{id}/app-settings", "/api/plugins/{id}/resources/{path}", "/api/plugins/{id}/health")
+	routes["POST"] = append(routes["POST"], "/api/plugins/{id}/settings")
+	routes["PUT"] = append(routes["PUT"], "/api/v1/plugins/{id}/app-settings")
+	result["apps"] = map[string]any{"frontend": "AppPlugin root and React configuration pages at /a/PLUGIN_ID/; pinned navigation", "configuration": "durable JSON and AES-256-GCM secrets; native writes require current version (initially 0), conflict HTTP 409", "backend": "official AppInstanceSettings on resources, health and Live; bundled datasource contexts inherit app settings", "organization": 1}
 	return result
 }

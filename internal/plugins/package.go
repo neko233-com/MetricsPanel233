@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -385,9 +386,14 @@ func (m *Manager) install(ctx context.Context, raw []byte, expected, requestedID
 	if err != nil {
 		return model.Plugin{}, err
 	}
-	for _, plugin := range p.Plugins {
-		if existing, err := m.Store.Plugin(ctx, plugin.ID); err == nil && existing.PackageID != plugin.PackageID {
-			return model.Plugin{}, errors.New("plugin ID belongs to another installed package")
+	for i, plugin := range p.Plugins {
+		if existing, err := m.Store.Plugin(ctx, plugin.ID); err == nil {
+			if existing.PackageID != plugin.PackageID {
+				return model.Plugin{}, errors.New("plugin ID belongs to another installed package")
+			}
+			p.Plugins[i].Enabled = existing.Enabled
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return model.Plugin{}, err
 		}
 	}
 	rootID := p.Plugins[0].PackageID

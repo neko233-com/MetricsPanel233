@@ -127,6 +127,10 @@ func (e environment) sdkArchive(t *testing.T) []byte {
 	var archive bytes.Buffer
 	z := zip.NewWriter(&archive)
 	files := map[string][]byte{"plugin.json": []byte(`{"id":"metricspanel-sdk-datasource","name":"SDK Fixture","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaVersion":">=12"}}`), "module.js": []byte(`System.register([],function(){return {execute:function(){}}})`), name: executable}
+	files["child/plugin.json"] = files["plugin.json"]
+	files["child/module.js"] = files["module.js"]
+	files["child/"+name] = executable
+	files["plugin.json"] = []byte(`{"id":"metricspanel-sdk-app","name":"SDK App Fixture","type":"app","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`)
 	for name, body := range files {
 		f, err := z.Create(name)
 		require.NoError(t, err)
@@ -138,6 +142,18 @@ func (e environment) sdkArchive(t *testing.T) []byte {
 }
 func (e environment) verifySDKPlugin(address, service string) {
 	e.t.Helper()
+	assert.Contains(e.t, string(e.must(address, "GET", "/api/plugins/metricspanel-sdk-app/health", nil)), "Grafana SDK backend is working")
+	app := e.must(address, "GET", "/api/plugins/metricspanel-sdk-app/resources/example", nil)
+	assert.Contains(e.t, string(app), `"configured":true`)
+	assert.Contains(e.t, string(app), `"label":"Docker operations"`)
+	assert.NotContains(e.t, string(app), "app-secret-233")
+	settings := e.must(address, "GET", "/api/v1/plugins/metricspanel-sdk-app/app-settings", nil)
+	assert.Contains(e.t, string(settings), `"pinned":true`)
+	assert.NotContains(e.t, string(settings), "app-secret-233")
+	cliSettings, err := e.compose("exec", "-T", service, "metricspanel", "plugins", "settings", "--id", "metricspanel-sdk-app")
+	require.NoError(e.t, err, cliSettings)
+	assert.Contains(e.t, cliSettings, "Docker operations")
+	assert.NotContains(e.t, cliSettings, "app-secret-233")
 	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/health", nil)), "Grafana SDK backend is working")
 	assert.Contains(e.t, string(e.must(address, "GET", "/api/datasources/uid/docker-sdk/resources/check?round=233", nil)), `"uid":"docker-sdk"`)
 	now := time.Now().UnixMilli()
@@ -433,6 +449,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			assert.JSONEq(t, string(first), string(e.installPlugin(address, clockArchive)))
 			first = e.installPlugin(address, sdkArchive)
 			assert.JSONEq(t, string(first), string(e.installPlugin(address, sdkArchive)))
+			e.must(address, "POST", "/api/plugins/metricspanel-sdk-app/settings", map[string]any{"enabled": true, "pinned": true, "jsonData": map[string]string{"label": "Docker operations"}, "secureJsonData": map[string]string{"apiKey": "app-secret-233"}})
 			e.must(address, "POST", "/api/datasources", map[string]any{"uid": "docker-sdk", "name": "Docker SDK datasource", "type": "metricspanel-sdk-datasource", "secureJsonData": map[string]string{"apiKey": "test-secret-233"}})
 			e.verifySDKPlugin(address, backend.service)
 			for _, target := range []model.Target{{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true}, {Name: "go", URL: "http://" + backend.goService + ":8080/metrics", IntervalSeconds: 5, Enabled: true}} {
@@ -502,7 +519,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			data = e.must(address, "GET", "/public/plugins/grafana-clock-panel/module.js", nil)
 			assert.Contains(t, string(data), "define(")
 			e.must(address, "DELETE", "/api/datasources/uid/docker-sdk", nil)
-			e.must(address, "DELETE", "/api/v1/plugins/metricspanel-sdk-datasource", nil)
+			e.must(address, "DELETE", "/api/v1/plugins/metricspanel-sdk-app", nil)
 			e.must(address, "DELETE", "/api/v1/plugins/grafana-clock-panel", nil)
 			directories, err := e.compose("exec", "-T", backend.service, "find", "/data/plugins", "-mindepth", "1", "-maxdepth", "1")
 			require.NoError(t, err)
