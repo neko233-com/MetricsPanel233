@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -49,4 +52,19 @@ func TestAnnotationCLIJSONRetryPatchAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	_, err = capture(t, "annotations", "get", "--id", id, "--server", h.URL)
 	require.Error(t, err)
+	view, err := s.SaveAlertRule(context.Background(), model.AlertRule{UID: "cli-alert", Title: "CLI alert", Expr: "vector(1)"})
+	require.NoError(t, err)
+	_, err = srv.Alerts.Evaluate(context.Background(), view.UID, time.Now())
+	require.NoError(t, err)
+	data, err = capture(t, "annotations", "list", "--type", "alert", "--alert-uid", view.UID, "--server", h.URL)
+	require.NoError(t, err)
+	var events []model.Annotation
+	require.NoError(t, json.Unmarshal(data, &events))
+	require.Len(t, events, 1)
+	assert.Equal(t, "Alerting", events[0].NewState)
+	data, err = capture(t, "annotations", "list", "--alert-id", strconv.FormatInt(events[0].AlertID, 10), "--server", h.URL)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), view.UID)
+	_, err = capture(t, "annotations", "tags", "--type", "alert", "--name", "alertname:", "--server", h.URL)
+	require.NoError(t, err)
 }

@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect, useId } from "react";
 import { MessageSquarePlus, Pencil, Trash2, X } from "lucide-react";
 import { api, dashboardUID, jsonBody, message, type Dashboard } from "../api";
-import { annotationsChanged, type Annotation } from "../grafana/annotations";
+import {
+  annotationsChanged,
+  annotationStateLabel,
+  type Annotation,
+} from "../grafana/annotations";
 import { t } from "../i18n";
 
 export function AnnotationEditor({
@@ -156,34 +160,47 @@ export function AnnotationEditor({
           <div className="annotation-list">
             {events.map((event) => (
               <div key={event.id}>
-                <span>{event.text}</span>
-                <button
-                  className="icon-button"
-                  aria-label={t("Edit annotation")}
-                  onClick={() => open(event)}
-                >
-                  <Pencil size={15} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label={t("Delete annotation")}
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api("/api/annotations/" + event.id, {
-                        method: "DELETE",
-                      });
-                      annotationsChanged();
-                    } catch (e) {
-                      setError(message(e));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  <Trash2 size={15} />
-                </button>
+                <span>
+                  {event.text}
+                  {event.newState && (
+                    <small className="annotation-alert-state">
+                      {t("Alert state")}:{" "}
+                      {annotationStateLabel(event.prevState || "Normal", t)} →{" "}
+                      {annotationStateLabel(event.newState, t)}
+                    </small>
+                  )}
+                </span>
+                {!event.alertId && (
+                  <>
+                    <button
+                      className="icon-button"
+                      aria-label={t("Edit annotation")}
+                      onClick={() => open(event)}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      aria-label={t("Delete annotation")}
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await api("/api/annotations/" + event.id, {
+                            method: "DELETE",
+                          });
+                          annotationsChanged();
+                        } catch (e) {
+                          setError(message(e));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>

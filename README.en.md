@@ -151,6 +151,7 @@ metricspanel annotations save --file annotation.json
 metricspanel annotations list --dashboard-uid system --tags '["deploy"]' --start 1791590000000 --end 1791600000000
 metricspanel annotations patch --id 1 --file annotation-patch.json
 metricspanel annotations tags --name deploy
+metricspanel annotations list --type alert --alert-uid RULE_UID
 metricspanel annotations delete --id 1
 ```
 
@@ -159,7 +160,12 @@ Native charts offer a Chinese/English editor, point markers and clipped regions 
 Classic/V1/V2 builtin Grafana dashboard/tag queries execute with variable tags, enabled state and panel filter IDs. Template `hide` preserves visible events.
 SDK panels receive public `PanelData.annotations` frames through official `toDataFrame`; annotation frames are separate from metric series.
 Queries return at most 1000 events; the frontend permits 32 annotation queries and 1000 merged events, text 8192 bytes and 32 tags.
-Plugin datasource annotation adapters, automatic alert state annotations, recurring time regions and full organization permissions remain pending.
+Pending, firing, recovery, no-data/error transitions, and rule update/pause/deletion create point annotations with `prevState`/`newState`.
+State, history, annotations and tags commit together. Unchanged states and stale evaluations produce no duplicates; queries by `type=alert`, `alertUID` and stable numeric `alertId` survive restarts.
+Rule annotations `__dashboardUid__` and a positive `__panelId__` link events to template panels. Unlinked events can be queried by public label tags in `key:value` form.
+Native charts use state colors and bilingual state labels; automatic rows are read-only in the editor. Mixed public SDK annotation frames retain the state fields.
+Automatic annotations follow the newest 100000 transitions, while manual annotations are retained independently. Pre-upgrade history is not backfilled, and recording rules create no alert annotations.
+Plugin datasource annotation adapters, recurring time regions and full organization permissions remain pending.
 Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and mobile layout.
 See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
 

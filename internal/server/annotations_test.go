@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -57,4 +58,40 @@ func TestAnnotationHTTPContractsAuthenticationScopesRegionsAndTags(t *testing.T)
 	assert.Equal(t, 404, call(h, "DELETE", url, "", token, "").Code)
 	assert.Equal(t, 400, call(h, "POST", "/api/annotations/mass-delete", `{}`, token, "").Code)
 	assert.Equal(t, 200, call(h, "GET", "/api/v1/annotations?type=alert", "", token, "").Code)
+}
+
+func TestAutomaticAlertAnnotationsGrafanaLinksFiltersAndRuleRemoval(t *testing.T) {
+	s, h := setup(t, "alert-annotation-token")
+	token := "alert-annotation-token"
+	source := `{"uid":"linked-alert","title":"API is busy","folderUID":"general","ruleGroup":"service","condition":"C","for":"0s","annotations":{"__dashboardUid__":"system","__panelId__":"2"},"labels":{"service":"api"},"data":[{"refId":"C","datasourceUid":"metricspanel","model":{"expr":"vector(233)","instant":true}}]}`
+	w := call(h, "POST", "/api/v1/provisioning/alert-rules", source, token, "")
+	require.Equal(t, 201, w.Code, w.Body.String())
+	w = call(h, "POST", "/api/v1/alerts/rules/linked-alert/evaluate", "", token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, 401, call(h, "GET", "/api/annotations?type=alert", "", "", "").Code)
+	w = call(h, "GET", "/api/annotations?type=alert&alertUID=linked-alert&dashboardUID=system&panelId=2&tags=service:api", "", token, "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var items []model.Annotation
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
+	require.Len(t, items, 1)
+	assert.Equal(t, "Alerting", items[0].NewState)
+	assert.Equal(t, "Normal", items[0].PrevState)
+	assert.Contains(t, string(items[0].Data), `"C":233`)
+	url := fmt.Sprintf("/api/annotations?alertId=%d&type=alert", items[0].AlertID)
+	assert.JSONEq(t, w.Body.String(), call(h, "GET", url, "", token, "").Body.String())
+	assert.JSONEq(t, "[]", call(h, "GET", "/api/annotations?type=annotation", "", token, "").Body.String())
+	assert.JSONEq(t, "[]", call(h, "GET", "/api/annotations?type=alert&userUID=metricspanel", "", token, "").Body.String())
+	assert.Equal(t, 400, call(h, "GET", "/api/annotations?alertId=-1", "", token, "").Code)
+	assert.Equal(t, 400, call(h, "GET", "/api/annotations/tags?type=wrong", "", token, "").Code)
+	assert.Contains(t, call(h, "GET", "/api/annotations/tags?type=alert&tag=service:", "", token, "").Body.String(), `"count":1`)
+	record := `{"uid":"recorded","title":"Record only","expr":"vector(1)","record":"recorded:one"}`
+	require.Equal(t, 200, call(h, "POST", "/api/v1/alerts/rules", record, token, "").Code)
+	require.Equal(t, 200, call(h, "POST", "/api/v1/alerts/rules/recorded/evaluate", "", token, "").Code)
+	assert.JSONEq(t, "[]", call(h, "GET", "/api/annotations?alertUID=recorded", "", token, "").Body.String())
+	require.Equal(t, 200, call(h, "DELETE", "/api/v1/alerts/rules/linked-alert", "", token, "").Code)
+	items, err := s.Annotations(context.Background(), model.AnnotationQuery{AlertUID: "linked-alert"})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Equal(t, "Normal (Deleted)", items[0].NewState)
+	assert.Equal(t, "system", items[0].DashboardUID)
 }

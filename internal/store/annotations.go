@@ -49,6 +49,15 @@ func (s *Store) CreateAnnotation(ctx context.Context, a model.Annotation, key st
 			return a, err
 		}
 	}
+	a, err = insertAnnotation(ctx, tx, a, key, hash)
+	if err != nil {
+		return a, err
+	}
+	return a, tx.Commit()
+}
+
+// Alert transitions use this insertion in their existing state/history transaction.
+func insertAnnotation(ctx context.Context, tx *sql.Tx, a model.Annotation, key, hash string) (model.Annotation, error) {
 	a.Created = time.Now().UnixMilli()
 	a.Updated = a.Created
 	var storedKey any
@@ -66,7 +75,7 @@ func (s *Store) CreateAnnotation(ctx context.Context, a model.Annotation, key st
 	if err = writeAnnotation(ctx, tx, a); err != nil {
 		return a, err
 	}
-	return a, tx.Commit()
+	return a, nil
 }
 
 func writeAnnotation(ctx context.Context, tx *sql.Tx, a model.Annotation) error {
@@ -145,7 +154,7 @@ func (s *Store) Annotations(ctx context.Context, q model.AnnotationQuery) ([]mod
 	if q.Limit == 0 {
 		q.Limit = 100
 	}
-	if q.Limit < 1 || q.Limit > 1000 || q.From < 0 || q.To < 0 || (q.To > 0 && q.From > q.To) || len(q.Tags) > 32 {
+	if q.Limit < 1 || q.Limit > 1000 || q.From < 0 || q.To < 0 || (q.To > 0 && q.From > q.To) || len(q.Tags) > 32 || q.AlertID < 0 || len(q.AlertUID) > 128 || !annotationTypeValid(q.Type) {
 		return nil, fmt.Errorf("%w: query limit 1–1000 and non-inverted range required", model.ErrInvalidAnnotation)
 	}
 	conditions := []string{"1=1"}
@@ -162,6 +171,19 @@ func (s *Store) Annotations(ctx context.Context, q model.AnnotationQuery) ([]mod
 	if q.DashboardUID != "" {
 		conditions = append(conditions, "a.dashboard_uid = ?")
 		args = append(args, q.DashboardUID)
+	}
+	if q.Type == "annotation" {
+		conditions = append(conditions, `NOT EXISTS(SELECT 1 FROM annotation_alerts x WHERE x.annotation_id=a.id)`)
+	} else if q.Type == "alert" {
+		conditions = append(conditions, `EXISTS(SELECT 1 FROM annotation_alerts x WHERE x.annotation_id=a.id)`)
+	}
+	if q.AlertUID != "" {
+		conditions = append(conditions, `EXISTS(SELECT 1 FROM annotation_alerts x WHERE x.annotation_id=a.id AND x.rule_uid=?)`)
+		args = append(args, q.AlertUID)
+	}
+	if q.AlertID > 0 {
+		conditions = append(conditions, `EXISTS(SELECT 1 FROM annotation_alerts x WHERE x.annotation_id=a.id AND x.rule_id=?)`)
+		args = append(args, q.AlertID)
 	}
 	clauses := []string{}
 	for _, tag := range q.Tags {
@@ -211,11 +233,27 @@ func (s *Store) DeleteAnnotation(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Store) AnnotationTags(ctx context.Context, query string, limit int) ([]map[string]any, error) {
-	if limit < 1 || limit > 1000 || len(query) > 256 {
+func annotationTypeValid(kind string) bool {
+	return kind == "" || kind == "annotation" || kind == "alert"
+}
+
+func (s *Store) AnnotationTags(ctx context.Context, query string, limit int, kind ...string) ([]map[string]any, error) {
+	filter := ""
+	if len(kind) > 0 {
+		filter = kind[0]
+	}
+	if limit < 1 || limit > 1000 || len(query) > 256 || !annotationTypeValid(filter) {
 		return nil, fmt.Errorf("%w: tag query limit 1–1000", model.ErrInvalidAnnotation)
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT tag,COUNT(*) FROM annotation_tags WHERE instr(tag,?)>0 GROUP BY tag ORDER BY tag LIMIT ?`, query, limit)
+	condition := ""
+	if filter != "" {
+		exists := "EXISTS"
+		if filter == "annotation" {
+			exists = "NOT EXISTS"
+		}
+		condition = " AND " + exists + `(SELECT 1 FROM annotation_alerts x WHERE x.annotation_id=t.annotation_id)`
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT tag,COUNT(*) FROM annotation_tags t WHERE instr(tag,?)>0`+condition+` GROUP BY tag ORDER BY tag LIMIT ?`, query, limit)
 	if err != nil {
 		return nil, err
 	}

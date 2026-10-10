@@ -240,7 +240,7 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			before = "Normal"
 		}
 		if before != v.State {
-			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason})
+			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason, PrevReason: old[key].Reason, Value: v.Value, Error: out.Error})
 		}
 		out.Instances = append(out.Instances, v)
 	}

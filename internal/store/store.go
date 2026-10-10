@@ -107,6 +107,10 @@ CREATE INDEX IF NOT EXISTS annotations_range ON annotations(time_end DESC,time D
 CREATE INDEX IF NOT EXISTS annotations_dashboard ON annotations(dashboard_uid,time_end DESC,time DESC);
 CREATE TABLE IF NOT EXISTS annotation_tags(annotation_id INTEGER NOT NULL REFERENCES annotations(id) ON DELETE CASCADE,tag TEXT NOT NULL,PRIMARY KEY(annotation_id,tag)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS annotation_tags_lookup ON annotation_tags(tag,annotation_id);
+CREATE TABLE IF NOT EXISTS alert_rule_identity(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS annotation_alerts(annotation_id INTEGER PRIMARY KEY REFERENCES annotations(id) ON DELETE CASCADE,event_id INTEGER NOT NULL UNIQUE,rule_uid TEXT NOT NULL,rule_id INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS annotation_alerts_uid ON annotation_alerts(rule_uid,annotation_id);
+CREATE INDEX IF NOT EXISTS annotation_alerts_rule_id ON annotation_alerts(rule_id,annotation_id);
 CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(id) ON DELETE CASCADE,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
 	if err != nil {

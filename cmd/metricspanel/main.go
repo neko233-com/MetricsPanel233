@@ -118,12 +118,12 @@ func run(args []string) error {
 	file := f.String("file", "-", "JSON file; - reads stdin")
 	format := f.String("format", "native", "dashboard export format: native or grafana (original source)")
 	id := f.String("id", "", "resource ID")
-	name := f.String("name", "", "collector name")
+	name := f.String("name", "", "collector name or annotation tag search")
 	targetURL := f.String("url", "", "exporter /metrics URL")
 	interval := f.Duration("interval", 15*time.Second, "scrape interval (5s–24h)")
 	enabled := f.Bool("enabled", true, "enable automatic collection")
-	start := f.Int64("start", 0, "pattern window start: Unix milliseconds (optional)")
-	end := f.Int64("end", 0, "pattern window end: Unix milliseconds (optional)")
+	start := f.Int64("start", 0, "window start: Unix milliseconds (optional)")
+	end := f.Int64("end", 0, "window end: Unix milliseconds (optional)")
 	normalization := f.String("normalization", "shape", "pattern comparison: shape (remove level/scale) or raw")
 	limit := f.Int("limit", 10, "pattern search limit (1–100), list limit (1–1000), Live event limit (0 unlimited)")
 	exact := f.Bool("exact", false, "exact vector scan instead of approximate HNSW search")
@@ -132,6 +132,9 @@ func run(args []string) error {
 	annotationPanel := f.Int64("panel-id", 0, "annotation panel ID")
 	annotationTags := f.String("tags", "[]", "annotation tags JSON array")
 	annotationMatchAny := f.Bool("match-any", false, "match any annotation tag")
+	annotationType := f.String("type", "", "annotation type: alert or annotation; empty returns both")
+	annotationAlert := f.String("alert-uid", "", "annotation alert rule UID")
+	annotationAlertID := f.Int64("alert-id", 0, "annotation legacy alert numeric ID")
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
 	channel := f.String("channel", "", "Grafana Live channel: ds/UID/path or plugin/ID/path")
 	metadata := f.String("metadata", "null", "Live subscription metadata (JSON)")
@@ -163,10 +166,10 @@ func run(args []string) error {
 			if err := json.Unmarshal([]byte(*annotationTags), &tags); err != nil {
 				return err
 			}
-			params := url.Values{"from": {strconv.FormatInt(*start, 10)}, "to": {strconv.FormatInt(*end, 10)}, "dashboardUID": {*annotationDashboard}, "panelId": {strconv.FormatInt(*annotationPanel, 10)}, "tags": tags, "matchAny": {strconv.FormatBool(*annotationMatchAny)}, "limit": {strconv.Itoa(*limit)}}
+			params := url.Values{"from": {strconv.FormatInt(*start, 10)}, "to": {strconv.FormatInt(*end, 10)}, "dashboardUID": {*annotationDashboard}, "panelId": {strconv.FormatInt(*annotationPanel, 10)}, "tags": tags, "matchAny": {strconv.FormatBool(*annotationMatchAny)}, "limit": {strconv.Itoa(*limit)}, "type": {*annotationType}, "alertUID": {*annotationAlert}, "alertId": {strconv.FormatInt(*annotationAlertID, 10)}}
 			return request("GET", "/api/annotations?"+params.Encode(), nil)
 		case "tags":
-			return request("GET", "/api/annotations/tags?"+url.Values{"tag": {*name}, "limit": {strconv.Itoa(*limit)}}.Encode(), nil)
+			return request("GET", "/api/annotations/tags?"+url.Values{"tag": {*name}, "limit": {strconv.Itoa(*limit)}, "type": {*annotationType}}.Encode(), nil)
 		case "get", "delete":
 			if number, err := strconv.ParseInt(*id, 10, 64); err != nil || number <= 0 {
 				return errors.New("positive annotation --id required")
@@ -806,12 +809,12 @@ func schema() any {
 	result["commands"] = append(result["commands"].([]string), "datasources query --id UID --file FILE|- [--stream --duration 1m] (stream emits NDJSON until EOF; errors preserve partial data and exit 1)")
 	routes["POST"] = append(routes["POST"], "/apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query")
 	result["chunked_queries"] = map[string]any{"accept": "text/jsonl", "record": []string{"refId", "frameId", "frame (DataFrame JSON; schema in first chunk, later data appends)", "error", "errorSource"}, "legacy_route": "/api/ds/query also accepts text/jsonl", "fallback": "unary QueryData only when streaming RPC is unimplemented before any chunk", "frontend": "public BackendSrv.chunked emits raw Uint8Array chunks and final undefined; plugin owns parsing/append", "limits": map[string]int{"chunk_MiB": 8, "request_MiB": 32, "frames": 1024, "queries": 32, "duration_seconds": 60, "concurrent_sources": 4}, "example": map[string]any{"from": "now-5m", "to": "now", "queries": []any{map[string]any{"refId": "A", "expr": "sum(up)", "instant": true}}}}
-	result["commands"] = append(result["commands"].([]string), "annotations list [--dashboard-uid UID --panel-id ID --tags '[]' --match-any --start MS --end MS --limit 100]", "annotations get --id ID", "annotations save --file FILE|- [--id ID for replacement]", "annotations patch --id ID --file FILE|-", "annotations tags [--name FILTER]", "annotations delete --id ID", "annotations graphite --file FILE|-")
+	result["commands"] = append(result["commands"].([]string), "annotations list [--dashboard-uid UID --panel-id ID --tags '[]' --match-any --start MS --end MS --limit 100 --type alert|annotation --alert-uid UID --alert-id ID]", "annotations get --id ID", "annotations save --file FILE|- [--id ID for replacement]", "annotations patch --id ID --file FILE|-", "annotations tags [--name FILTER --type alert|annotation]", "annotations delete --id ID", "annotations graphite --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/annotations", "/api/annotations/{id}", "/api/annotations/tags")
 	routes["POST"] = append(routes["POST"], "/api/annotations", "/api/annotations/graphite", "/api/annotations/mass-delete")
 	routes["PUT"] = append(routes["PUT"], "/api/annotations/{id}")
 	routes["PATCH"] = append(routes["PATCH"], "/api/annotations/{id}")
 	routes["DELETE"] = append(routes["DELETE"], "/api/annotations/{id}")
-	result["annotations"] = map[string]any{"storage": "SQLite WAL control plane for both metric backends", "scope": "local principal 1; organization, dashboardUID/dashboardId and panelId", "query": "inclusive point/region overlap; AND tags or matchAny OR; order by timeEnd/time/id descending", "idempotency": "optional idempotencyKey on creation; same normalized payload returns the existing id across restarts; different payload HTTP 409", "templates": "classic/V1/V2 builtin Grafana dashboard and tag queries, enable/filter ids and variable tags", "rendering": "native chart markers, regions and Chinese/English editor; public SDK PanelData.annotations", "limits": map[string]int{"query": 1000, "queries_per_dashboard": 32, "text_bytes": 8192, "tags": 32}, "pending": []string{"plugin datasource annotation adapters", "automatic alert state annotations", "time-region recurrence queries", "full organization permissions"}}
+	result["annotations"] = map[string]any{"storage": "SQLite WAL control plane for both metric backends", "scope": "local user 1 for manual events; system user 0 for alert events; organization, dashboardUID/dashboardId and panelId", "query": "inclusive point/region overlap; AND tags or matchAny OR; type alert|annotation and alertUID/alertId filters; order by timeEnd/time/id descending", "idempotency": "optional idempotencyKey on creation; same normalized payload returns the existing id across restarts; different payload HTTP 409", "templates": "classic/V1/V2 builtin Grafana dashboard and tag queries, enable/filter ids and variable tags", "rendering": "native chart markers, regions and Chinese/English editor; alert state colors and read-only automatic rows; public SDK PanelData.annotations with state fields even in mixed manual/alert frames", "alerts": map[string]any{"transaction": "state, transition history, annotation and tags commit together; stale evaluations produce no duplicate", "scope": "rule annotations __dashboardUid__ plus positive __panelId__ link to a panel; otherwise global", "states": "Pending, Alerting, Recovering, Normal, NoData, Error; formatted reasons for policy and rule changes", "data": "private labels excluded; public labels become key:value tags; executed expression value in data.values; NoData/error metadata", "retention": "automatic events follow the newest 100000 transition records; manual annotations are retained independently; old pre-upgrade history is not backfilled"}, "limits": map[string]int{"query": 1000, "queries_per_dashboard": 32, "text_bytes": 8192, "tags": 32}, "pending": []string{"plugin datasource annotation adapters", "time-region recurrence queries", "full organization permissions"}}
 	return result
 }

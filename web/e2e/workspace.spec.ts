@@ -102,6 +102,7 @@ test("Durable annotations query template filters, reach SDK frames and support b
     archive = path.join(temp, "events.zip"),
     run = promisify(execFile);
   const ids: number[] = [],
+    ruleUIDs: string[] = [],
     errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const end = Date.now() - 60000,
@@ -402,9 +403,145 @@ test("Durable annotations query template filters, reach SDK frames and support b
       animations: "disabled",
     });
     await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    // Real alert evaluations must reach native markers and public SDK fields.
+    source.time.to = String(Date.now() + 60000);
+    source.annotations.list.push({
+      name: "Service alerts",
+      enable: true,
+      target: {
+        type: "tags",
+        tags: ["service:api", "environment:prod"],
+        matchAny: false,
+      },
+      filter: { ids: [1] },
+    });
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const sampleTime = Date.now() - 5000;
+    const ingest = async (value: number) => {
+      const response = await page.request.post(endpoint + "/api/v1/ingest", {
+        data: {
+          samples: [
+            {
+              name: "annotation_alert_flag",
+              timestamp: sampleTime,
+              value,
+              labels: {},
+            },
+          ],
+        },
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+    };
+    const evaluate = async (uid: string) => {
+      await expect
+        .poll(async () =>
+          (
+            await page.request.post(
+              endpoint + `/api/v1/alerts/rules/${uid}/evaluate`,
+            )
+          ).status(),
+        )
+        .toBe(200);
+    };
+    await ingest(1);
+    ruleUIDs.push("annotation-linked-alert", "annotation-global-alert");
+    let response = await page.request.post(
+      endpoint + "/api/v1/provisioning/alert-rules",
+      {
+        data: {
+          uid: ruleUIDs[0],
+          title: "API deployment alert",
+          folderUID: "general",
+          ruleGroup: "events",
+          condition: "A",
+          for: "0s",
+          annotations: { __dashboardUid__: source.uid, __panelId__: "2" },
+          labels: { service: "api", environment: "prod" },
+          data: [
+            {
+              refId: "A",
+              datasourceUid: "metricspanel",
+              model: { expr: "annotation_alert_flag == bool 1", instant: true },
+            },
+          ],
+        },
+      },
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+    await evaluate(ruleUIDs[0]);
+    await ingest(0);
+    await evaluate(ruleUIDs[0]);
+    response = await page.request.post(endpoint + "/api/v1/alerts/rules", {
+      data: {
+        uid: ruleUIDs[1],
+        title: "Global service alert",
+        expr: "vector(1)",
+        condition: "nonzero",
+        interval_seconds: 86400,
+        labels: { service: "api", environment: "prod" },
+      },
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    await evaluate(ruleUIDs[1]);
+    const alertEvents = await (
+      await page.request.get(
+        endpoint + `/api/annotations?type=alert&alertUID=${ruleUIDs[0]}`,
+      )
+    ).json();
+    expect(
+      alertEvents.map((event: { newState: string }) => event.newState),
+    ).toEqual(["Normal", "Alerting"]);
+    await page.reload();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
+    await expect(panel).toContainText("Panel annotations: 2");
+    await expect(panel).toContainText("Panel alert states: Alerting");
+    await expect(plot.locator(".annotation-marker")).toHaveCount(4);
+    await expect(
+      plot.locator('[data-alert-state="Alerting"] circle'),
+    ).toHaveAttribute("fill", "#f2495c");
+    await expect(
+      plot.locator('[data-alert-state="Normal"] circle'),
+    ).toHaveAttribute("fill", "#39d99c");
+    await expect(
+      plot.locator('[data-alert-state="Alerting"] title'),
+    ).toContainText("正常 → 触发告警");
+    await plot.getByRole("button", { name: "注释", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "注释", exact: true });
+    const alerts = dialog
+      .locator(".annotation-list > div")
+      .filter({ hasText: "API deployment alert" });
+    await expect(alerts).toHaveCount(2);
+    await expect(alerts.first()).toContainText("告警状态");
+    await expect(
+      alerts.getByRole("button", { name: "编辑注释", exact: true }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("alert-annotations-desktop.png"),
+      animations: "disabled",
+    });
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
     expect(errors).toEqual([]);
   } finally {
     await page.goto(endpoint + "/#overview", { timeout: 5000 }).catch(() => {});
+    for (const uid of ruleUIDs) {
+      await page.request
+        .delete(endpoint + "/api/v1/alerts/rules/" + uid, { timeout: 5000 })
+        .catch(() => {});
+      const events = await page.request
+        .get(endpoint + "/api/annotations?alertUID=" + uid, { timeout: 5000 })
+        .then((response) => response.json())
+        .catch(() => []);
+      for (const event of events) ids.push(event.id);
+    }
     for (const id of ids)
       await page.request
         .delete(endpoint + "/api/annotations/" + id, { timeout: 5000 })

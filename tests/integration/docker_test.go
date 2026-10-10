@@ -534,6 +534,12 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, json.Unmarshal(data, &before))
 			require.NotEmpty(t, before.Runtime.Instances)
 			assert.Equal(t, "Pending", before.Runtime.Instances[0].State)
+			var beforeAlertAnnotations []model.Annotation
+			data = e.must(address, "GET", "/api/annotations?type=alert&alertUID=docker-alert", nil)
+			require.NoError(t, json.Unmarshal(data, &beforeAlertAnnotations))
+			require.Len(t, beforeAlertAnnotations, 1)
+			assert.Equal(t, "Pending", beforeAlertAnnotations[0].NewState)
+			assert.Contains(t, beforeAlertAnnotations[0].Tags, "job:mysql")
 			record := model.AlertRule{UID: "docker-record", Title: "MySQL availability recording", Expr: "mysql_up", Record: "mysql:availability", IntervalSeconds: 86400}
 			e.must(address, "POST", "/api/v1/alerts/rules", record)
 			e.must(address, "POST", "/api/v1/alerts/rules/docker-record/evaluate", nil)
@@ -588,6 +594,11 @@ func TestDockerEndToEnd(t *testing.T) {
 			assert.Equal(t, before.Runtime.Instances[0].ActiveAt, after.Runtime.Instances[0].ActiveAt, "restart reset pending timer")
 			assert.Equal(t, before.Runtime.LastEvaluation, after.Runtime.LastEvaluation)
 			assert.Contains(t, string(e.must(address, "GET", "/api/v1/alerts/history?uid=docker-alert", nil)), `"to":"Pending"`)
+			var afterAlertAnnotations []model.Annotation
+			data = e.must(address, "GET", "/api/annotations?type=alert&alertUID=docker-alert", nil)
+			require.NoError(t, json.Unmarshal(data, &afterAlertAnnotations))
+			assert.Equal(t, beforeAlertAnnotations, afterAlertAnnotations, "restart lost or duplicated automatic alert annotations")
+			assert.JSONEq(t, "[]", string(e.must(address, "GET", "/api/annotations?alertUID=docker-record", nil)))
 			v, ok = e.value(address, "mysql:availability")
 			require.True(t, ok, "recording rule sample did not survive app restart")
 			assert.Equal(t, 1.0, v)

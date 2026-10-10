@@ -22,6 +22,11 @@ type Annotation struct {
 	Data         json.RawMessage `json:"data,omitempty"`
 	Created      int64           `json:"created"`
 	Updated      int64           `json:"updated"`
+	AlertID      int64           `json:"alertId,omitempty"`
+	AlertUID     string          `json:"alertUID,omitempty"`
+	AlertName    string          `json:"alertName,omitempty"`
+	PrevState    string          `json:"prevState,omitempty"`
+	NewState     string          `json:"newState,omitempty"`
 }
 
 var ErrInvalidAnnotation = errors.New("invalid annotation")
@@ -74,6 +79,8 @@ type AnnotationQuery struct {
 	Tags                          []string
 	MatchAny                      bool
 	Limit                         int
+	Type, AlertUID                string
+	AlertID                       int64
 }
 
 // Pointers distinguish omitted properties from a supplied empty tag list.

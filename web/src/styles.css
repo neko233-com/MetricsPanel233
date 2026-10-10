@@ -55,6 +55,11 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.annotation-alert-state {
+  display: block;
+  margin-top: 4px;
+  color: #b5bed0;
+}
 @media (max-width: 540px) {
   .annotation-dialog .form-grid {
     grid-template-columns: 1fr;

@@ -106,7 +106,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 	}
 	for _, instance := range previous.Runtime.Instances {
 		if instance.State != "Normal" {
-			if err := insertAlertEvent(ctx, tx, model.AlertEvent{UID: rule.UID, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: rule.UpdatedAt, Reason: reason}); err != nil {
+			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: rule.UID, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: rule.UpdatedAt, Reason: reason, PrevReason: instance.Reason}); err != nil {
 				return model.AlertRuleView{}, err
 			}
 		}
@@ -129,15 +129,25 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 	}
 	return model.AlertRuleView{AlertRule: rule, Runtime: runtime}, nil
 }
-func insertAlertEvent(ctx context.Context, tx *sql.Tx, event model.AlertEvent) error {
+func insertAlertEvent(ctx context.Context, tx *sql.Tx, rule model.AlertRule, event model.AlertEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO alert_events(uid,timestamp,payload) VALUES(?,?,?)`, event.UID, event.Timestamp, string(payload))
-	return err
+	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(uid,timestamp,payload) VALUES(?,?,?)`, event.UID, event.Timestamp, string(payload))
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	return insertAlertAnnotation(ctx, tx, rule, event, id)
 }
 func pruneAlertHistory(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM annotations WHERE id IN (SELECT annotation_id FROM annotation_alerts WHERE event_id<=(SELECT coalesce(max(id),0)-100000 FROM alert_events))`); err != nil {
+		return err
+	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM alert_events WHERE id<=(SELECT coalesce(max(id),0)-100000 FROM alert_events)`)
 	return err
 }
@@ -147,6 +157,13 @@ func (s *Store) CommitAlertEvaluation(ctx context.Context, uid string, version i
 		return err
 	}
 	defer tx.Rollback()
+	view, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, uid))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrStaleEvaluation
+	}
+	if err != nil {
+		return err
+	}
 	payload, err := json.Marshal(runtime)
 	if err != nil {
 		return err
@@ -163,7 +180,7 @@ func (s *Store) CommitAlertEvaluation(ctx context.Context, uid string, version i
 		return ErrStaleEvaluation
 	}
 	for _, event := range events {
-		if err = insertAlertEvent(ctx, tx, event); err != nil {
+		if err = insertAlertEvent(ctx, tx, view.AlertRule, event); err != nil {
 			return err
 		}
 	}
@@ -187,7 +204,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, uid string) error {
 	}
 	for _, instance := range previous.Runtime.Instances {
 		if instance.State != "Normal" {
-			if err := insertAlertEvent(ctx, tx, model.AlertEvent{UID: uid, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: time.Now().UnixMilli(), Reason: "RuleDeleted"}); err != nil {
+			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: uid, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: time.Now().UnixMilli(), Reason: "RuleDeleted", PrevReason: instance.Reason}); err != nil {
 				return err
 			}
 		}

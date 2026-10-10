@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -91,6 +92,12 @@ func (r AlertRule) Validate() error {
 			return errors.New("annotation key/value limit: 100/4096 bytes")
 		}
 	}
+	if uid, panel := r.Annotations["__dashboardUid__"], r.Annotations["__panelId__"]; uid != "" || panel != "" {
+		number, err := strconv.ParseInt(panel, 10, 64)
+		if uid == "" || len(uid) > 128 || err != nil || number <= 0 || number > 9007199254740991 {
+			return errors.New("alert dashboard link requires __dashboardUid__ and a positive __panelId__")
+		}
+	}
 	if err := ValidateLabels(r.Labels); err != nil {
 		return err
 	}
@@ -127,12 +134,15 @@ type AlertRuleView struct {
 	Runtime AlertRuntime `json:"runtime"`
 }
 type AlertEvent struct {
-	ID        int64             `json:"id"`
-	UID       string            `json:"uid"`
-	Key       string            `json:"key"`
-	Labels    map[string]string `json:"labels"`
-	From      string            `json:"from"`
-	To        string            `json:"to"`
-	Timestamp int64             `json:"timestamp"`
-	Reason    string            `json:"reason,omitempty"`
+	ID         int64             `json:"id"`
+	UID        string            `json:"uid"`
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	From       string            `json:"from"`
+	To         string            `json:"to"`
+	Timestamp  int64             `json:"timestamp"`
+	Reason     string            `json:"reason,omitempty"`
+	PrevReason string            `json:"prev_reason,omitempty"`
+	Value      *float64          `json:"value,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }

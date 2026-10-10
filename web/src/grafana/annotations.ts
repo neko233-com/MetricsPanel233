@@ -21,7 +21,41 @@ export type Annotation = {
   tags: string[];
   color?: string;
   queryName?: string;
+  alertId?: number;
+  alertUID?: string;
+  alertName?: string;
+  prevState?: string;
+  newState?: string;
 };
+
+function alertColor(state?: string) {
+  switch (state?.split(" (")[0]) {
+    case "Alerting":
+      return "#f2495c";
+    case "Normal":
+      return "#39d99c";
+    case "Pending":
+    case "Recovering":
+      return "#ffb357";
+    case "Error":
+      return "#e02f44";
+    case "NoData":
+      return "#8e8e8e";
+    default:
+      return undefined;
+  }
+}
+
+export function annotationStateLabel(
+  state: string,
+  translate: (text: string) => string,
+) {
+  const [name, reason] = state.split(" (");
+  return (
+    translate(name === "Pending" ? "Pending alert" : name) +
+    (reason ? ` (${translate(reason.slice(0, -1))})` : "")
+  );
+}
 type Query = {
   enable?: boolean;
   builtIn?: number;
@@ -162,7 +196,7 @@ export function useAnnotations(
           }
           return (await response).map((event) => ({
             ...event,
-            color: q.iconColor || "#5ac8de",
+            color: alertColor(event.newState) || q.iconColor || "#5ac8de",
             queryName: q.name || "Annotations",
           }));
         }),
@@ -189,7 +223,21 @@ export function useAnnotations(
     };
   }, [scope, tick, change, disabled, panel.config?.id]);
   const frames = useMemo<DataFrame[]>(
-    () => (events.length ? [toDataFrame(events)] : []),
+    () =>
+      events.length
+        ? [
+            toDataFrame(
+              events.map((event) => ({
+                ...event,
+                alertId: event.alertId || 0,
+                alertUID: event.alertUID || "",
+                alertName: event.alertName || "",
+                prevState: event.prevState || "",
+                newState: event.newState || "",
+              })),
+            ),
+          ]
+        : [],
     [events],
   );
   return { events, frames, error };

@@ -58,9 +58,10 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 	for _, prefix := range []string{"/api/annotations", "/api/v1/annotations"} {
 		api.HandleFunc("GET "+prefix, func(w http.ResponseWriter, r *http.Request) {
 			params := r.URL.Query()
-			q := model.AnnotationQuery{DashboardUID: params.Get("dashboardUID"), Tags: params["tags"]}
+			q := model.AnnotationQuery{DashboardUID: params.Get("dashboardUID"), Tags: params["tags"], Type: params.Get("type"), AlertUID: params.Get("alertUID")}
 			values := map[string]*int64{"from": &q.From, "to": &q.To, "annotationId": &q.ID, "panelId": &q.PanelID, "userId": &q.UserID}
 			var dashboardID int64
+			values["alertId"] = &q.AlertID
 			values["dashboardId"] = &dashboardID
 			for name, target := range values {
 				if value := params.Get(name); value != "" {
@@ -97,14 +98,17 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 					return
 				}
 			}
-			// The workspace currently has one local principal and manual annotations.
+			// The workspace currently has one local user principal.
 			if kind := params.Get("type"); kind != "" && kind != "annotation" && kind != "alert" {
 				fail(w, 400, errors.New("invalid annotation type"))
 				return
 			}
-			if params.Get("type") == "alert" || (params.Get("userUID") != "" && params.Get("userUID") != "metricspanel") || params.Get("alertId") != "" || params.Get("alertUID") != "" {
+			if params.Get("userUID") != "" && params.Get("userUID") != "metricspanel" {
 				writeJSON(w, 200, []model.Annotation{})
 				return
+			}
+			if params.Get("userUID") == "metricspanel" {
+				q.UserID = 1
 			}
 			result, err := s.Store.Annotations(r.Context(), q)
 			if err != nil {
@@ -123,7 +127,7 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 					return
 				}
 			}
-			result, err := s.Store.AnnotationTags(r.Context(), r.URL.Query().Get("tag"), limit)
+			result, err := s.Store.AnnotationTags(r.Context(), r.URL.Query().Get("tag"), limit, r.URL.Query().Get("type"))
 			if err != nil {
 				annotationError(w, err)
 				return

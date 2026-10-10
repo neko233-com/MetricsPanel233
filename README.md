@@ -235,6 +235,7 @@ metricspanel annotations save --file annotation.json
 metricspanel annotations list --dashboard-uid system --tags '["deploy"]' --start 1791590000000 --end 1791600000000
 metricspanel annotations patch --id 1 --file annotation-patch.json
 metricspanel annotations tags --name deploy
+metricspanel annotations list --type alert --alert-uid RULE_UID
 metricspanel annotations delete --id 1
 ```
 
@@ -243,7 +244,12 @@ metricspanel annotations delete --id 1
 经典/V1/V2 模板的内置 Grafana 仪表盘与标签查询、变量标签、`enable`、面板 `filter.ids` 会执行；模板的 `hide` 不会隐藏事件。
 SDK 面板通过公开 `PanelData.annotations` 接收官方 `toDataFrame` 转换的帧；注释与指标序列分别传递。
 每次查询最多 1000 条，前端最多 32 个注释查询/1000 条合并事件，正文最多 8192 字节、标签最多 32 个。
-插件数据源注释适配、自动告警状态注释、周期性时间区间和完整组织权限仍需补齐。
+告警的等待、触发、恢复、无数据/错误，以及规则修改、暂停和删除会自动生成带 `prevState`/`newState` 的时间点注释。
+状态、历史、注释和标签在同一事务中提交；未改变的状态和过期执行不会重复生成，重启后可通过 `type=alert`、`alertUID` 或稳定数值 `alertId` 查询。
+规则注解中的 `__dashboardUid__` 与正整数 `__panelId__` 关联模板面板；无面板关联时，可用公开标签生成的 `key:value` 标签查询。
+原生图表按状态着色，注释列表以中英文显示状态；自动记录在编辑器中只读。SDK 混合注释帧保留状态字段。
+自动注释跟随最近 100000 条告警状态历史保留，手工注释独立保留。升级前的历史不会回填；recording rule 不生成告警注释。
+插件数据源注释适配、周期性时间区间和完整组织权限仍需补齐。
 Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 

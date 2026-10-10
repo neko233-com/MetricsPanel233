@@ -17,7 +17,11 @@ import {
   type QueryResult,
   type Dashboard,
 } from "../api";
-import { useAnnotations, type Annotation } from "../grafana/annotations";
+import {
+  useAnnotations,
+  annotationStateLabel,
+  type Annotation,
+} from "../grafana/annotations";
 import { AnnotationEditor } from "./AnnotationEditor";
 import { rawSelection, type TimeSelection } from "../grafana/time-range";
 const palette = [
@@ -426,10 +430,11 @@ export function Chart({
                   key={event.id}
                   className="annotation-marker"
                   data-annotation-id={event.id}
+                  data-alert-state={event.newState?.split(" (")[0]}
                   role="img"
                   aria-label={`${tr("Annotation")}: ${event.text}`}
                 >
-                  <title>{`${event.text}\n${event.tags.join(", ")}\n${timeLabel(event.time)}`}</title>
+                  <title>{`${event.text}${event.newState ? `\n${tr("Alert state")}: ${annotationStateLabel(event.prevState || "Normal", tr)} → ${annotationStateLabel(event.newState, tr)}` : ""}\n${event.tags.join(", ")}\n${timeLabel(event.time)}`}</title>
                   {event.timeEnd > event.time && (
                     <rect
                       x={x}
