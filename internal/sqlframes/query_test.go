@@ -113,6 +113,18 @@ func TestNumericWideAndMultiFullLong(t *testing.T) {
 	assert.Equal(t, 3, table.Rows())
 }
 
+func TestNativeTimeInputKeepsSubsecondsForSQLFunctions(t *testing.T) {
+	at := time.Unix(1790000000, 123456000).UTC()
+	input := data.NewFrame("", data.NewField("clock", nil, []time.Time{at}))
+	out, err := Query(context.Background(), "Q", "SELECT MICROSECOND(CAST(clock AS DATETIME(6))) AS fraction, clock FROM A", map[string]data.Frames{"A": {input}}, at)
+	require.NoError(t, err)
+	seconds, err := out.Fields[0].FloatAt(0)
+	require.NoError(t, err)
+	assert.Equal(t, float64(123456), seconds)
+	assert.Equal(t, at.Truncate(time.Second), out.Fields[1].At(0), "default MySQL TIMESTAMP output precision is zero")
+	assert.Equal(t, at, input.Fields[0].At(0))
+}
+
 func TestFullLongConversionSortedLabelsNullsAndDisplay(t *testing.T) {
 	at := time.Unix(233, 0)
 	a := data.NewFrame("", data.NewField("clock", nil, []time.Time{at.Add(time.Second), at}), data.NewField("metric", data.Labels{"host": "a", "zone": "cn"}, []*float64{nil, new(float64(233))}))

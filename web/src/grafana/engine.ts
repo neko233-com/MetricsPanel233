@@ -62,7 +62,7 @@ import {
 } from "./time-range";
 
 import { t } from "../i18n";
-import { isExpressionRef, remapExpressionQuery } from "./expression-ref";
+import { isExpressionRef, comparisonQueries } from "./expression-ref";
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
   [key: string]: unknown;
@@ -321,12 +321,7 @@ export function watchFrames(
       const references = new Map(
         included.map((query) => [query.refId!, comparisonRefId(query.refId!)]),
       );
-      const compared = included.map((query) => ({
-        ...(hasExpressions && isExpressionRef(query.datasource)
-          ? remapExpressionQuery(query, references)
-          : query),
-        refId: comparisonRefId(query.refId!),
-      }));
+      const compared = comparisonQueries(included, references);
       if (compared.length)
         requests.push({ uid, queries: compared, compare: true });
     }

@@ -73,3 +73,72 @@ test("classic comparison references preserve range parameters and unknown fields
   assert.equal(malformed.conditions[1], 233);
   assert.equal(malformed.conditions[2].query.params, "A");
 });
+
+test("SQL comparisons preserve table references, CTE scopes, aliases and quoted text in isolated requests", () => {
+  const sql =
+    "WITH A_cte AS (SELECT A.value, 'A $A A-compare' AS text FROM `A`) SELECT x.value FROM A_cte x JOIN `long name` B ON x.value=B.value /* $A */";
+  const queries = [
+    {
+      refId: "A",
+      datasource: { uid: "metricspanel" },
+      expr: "vector(233)",
+      hide: true,
+    },
+    { refId: "long name", datasource: { uid: "sdk" }, value: 2, hide: true },
+    {
+      refId: "Q",
+      datasource: { uid: "__expr__" },
+      type: "sql",
+      expression: sql,
+      unknown: 233,
+    },
+    {
+      refId: "M",
+      datasource: { uid: "-100" },
+      type: "math",
+      expression: "$A * 2",
+    },
+  ];
+  const refs = new Map(
+    queries.map((query) => [query.refId, query.refId + "-compare"]),
+  );
+  const compared = exported.comparisonQueries(queries, refs);
+  assert.deepEqual(
+    Array.from(compared, (query) => query.refId),
+    ["A", "long name", "Q", "M"],
+  );
+  assert.equal(compared[2].expression, sql);
+  assert.equal(compared[2].unknown, 233);
+  assert.equal(compared[3].expression, "$A * 2");
+  assert.notEqual(compared[0], queries[0]);
+  assert.equal(queries[2].expression, sql);
+});
+
+test("ordinary comparisons still rename input references and preserve datasource query variables", () => {
+  const queries = [
+    { refId: "A", datasource: { uid: "metricspanel" }, expr: "up{job='$job'}" },
+    {
+      refId: "M",
+      datasource: { type: "__expr__" },
+      type: "math",
+      expression: "$A*2",
+    },
+    {
+      refId: "sql-source",
+      datasource: { uid: "mysql" },
+      type: "sql",
+      expression: "SELECT * FROM actual_table",
+    },
+  ];
+  const refs = new Map(
+    queries.map((query) => [query.refId, query.refId + "-compare"]),
+  );
+  const compared = exported.comparisonQueries(queries, refs);
+  assert.deepEqual(
+    Array.from(compared, (query) => query.refId),
+    ["A-compare", "M-compare", "sql-source-compare"],
+  );
+  assert.equal(compared[0].expr, "up{job='$job'}");
+  assert.equal(compared[1].expression, "$" + "{A-compare}*2");
+  assert.equal(compared[2].expression, "SELECT * FROM actual_table");
+});

@@ -1,0 +1,21 @@
+{
+  "uid": "sql-memory-comparison",
+  "title": "SQL memory comparison",
+  "timezone": "browser",
+  "time": { "from": "now-30m", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Memory / 内存",
+      "type": "timeseries",
+      "timeCompare": "__previousPeriod",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 12 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "hide": true, "datasource": { "uid": "metricspanel", "type": "prometheus" }, "expr": "metricspanel_memory_bytes" },
+        { "refId": "Q", "datasource": { "uid": "__expr__", "type": "__expr__" }, "type": "sql", "expression": "SELECT time, __value__, 'Memory' AS __display_name__ FROM A ORDER BY time" }
+      ]
+    }
+  ]
+}

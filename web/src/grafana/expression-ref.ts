@@ -1,5 +1,16 @@
 import type { DataSourceRef } from "@grafana/data";
 
+type ExpressionTarget = {
+  refId?: string;
+  type?: string;
+  datasource?: DataSourceRef | string | null;
+  expression?: string;
+  conditions?: Array<{
+    query?: { params?: string[]; [key: string]: unknown };
+    [key: string]: unknown;
+  }>;
+};
+
 export const expressionRef = Object.freeze({
   uid: "__expr__",
   type: "__expr__",
@@ -70,4 +81,25 @@ export function remapExpressionQuery<
         }
       : {}),
   };
+}
+
+// A SQL comparison is a separate backend request. Keep its entire graph's
+// RefIDs so SQL identifiers, CTEs, aliases and literals need no text rewrite.
+// watchFrames marks returned frames as comparisons after the query completes.
+export function comparisonQueries<T extends ExpressionTarget>(
+  queries: readonly T[],
+  refs: Map<string, string>,
+): T[] {
+  if (
+    queries.some(
+      (query) => query.type === "sql" && isExpressionRef(query.datasource),
+    )
+  )
+    return queries.map((query) => ({ ...query }));
+  return queries.map((query) => ({
+    ...(isExpressionRef(query.datasource)
+      ? remapExpressionQuery(query, refs)
+      : query),
+    refId: refs.get(query.refId || "") || query.refId,
+  }));
 }

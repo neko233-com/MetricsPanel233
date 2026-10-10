@@ -38,6 +38,7 @@ const test = base.extend<{}, { endpoint: string }>({
         ],
         {
           cwd: root,
+          windowsHide: true,
           env: {
             ...process.env,
             METRICSPANEL_TOKEN: "",
@@ -84,6 +85,425 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("SQL comparisons isolate real backend windows, preserve variables and aliases across Classic V1 V2", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-sql-compare-e2e-"),
+  );
+  const run = promisify(execFile),
+    fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    );
+  const imported: string[] = [],
+    issues: string[] = [],
+    bodies: any[] = [];
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type())) issues.push(entry.text());
+  });
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname === "/api/ds/query" &&
+      request.method() === "POST"
+    )
+      bodies.push(request.postDataJSON());
+  });
+  const end = Math.floor(Date.now() / 1000) * 1000 - 60000,
+    start = end - 120000,
+    day = 86400000;
+  const sql =
+    "WITH normalized AS (SELECT A.__value__ AS value FROM A) SELECT B.clock, normalized.value * B.value AS __value__, '$A' AS __display_name__, '${__from}' AS source_from, 'A A-compare' AS note FROM normalized CROSS JOIN `long name` B";
+  const graph = (instant: boolean) => [
+    {
+      refId: "A",
+      hide: true,
+      datasource: { uid: "metricspanel", type: "prometheus" },
+      expr: "sql_compare_fixture",
+      instant,
+    },
+    {
+      refId: "long name",
+      hide: true,
+      datasource: {
+        uid: "sql-compare-sdk",
+        type: "metricspanel-sdk-datasource",
+      },
+      value: 2,
+      sqlTable: true,
+    },
+    {
+      refId: "Q",
+      datasource: { uid: "__expr__", type: "__expr__" },
+      type: "sql",
+      expression: instant
+        ? sql
+        : "SELECT A.time, A.__value__ * B.value AS __value__, '$A' AS __display_name__ FROM A CROSS JOIN `long name` B ORDER BY A.time",
+      unknown: { keep: "A" },
+    },
+  ];
+  const source: any = {
+    uid: "sql-compare-classic",
+    title: "SQL comparison",
+    timezone: "utc",
+    time: { from: String(start), to: String(end) },
+    refresh: "",
+    templating: {
+      list: [
+        {
+          name: "A",
+          type: "constant",
+          query: "SQL business",
+          current: { text: "SQL business", value: "SQL business" },
+        },
+      ],
+    },
+    panels: [
+      {
+        id: 1,
+        title: "SQL SDK comparison",
+        type: "metricspanel-events-panel",
+        timeCompare: "1d",
+        gridPos: { x: 0, y: 0, w: 12, h: 16 },
+        targets: graph(true),
+      },
+      {
+        id: 2,
+        title: "SQL curves",
+        type: "timeseries",
+        timeCompare: "1d",
+        gridPos: { x: 12, y: 0, w: 12, h: 16 },
+        targets: graph(false),
+      },
+    ],
+  };
+  const sdk = page.getByRole("region", {
+    name: "SQL SDK comparison",
+    exact: true,
+  });
+  const plot = page.getByRole("region", { name: "SQL curves", exact: true });
+  const inspect = async () =>
+    JSON.parse(
+      (await sdk.getByText(/^Frame details:/).innerText()).replace(
+        "Frame details: ",
+        "",
+      ),
+    );
+  const verify = async (offset: number, value: number) => {
+    await expect(sdk).toContainText("Panel value: 300");
+    await sdk.getByText("Frame inspection", { exact: true }).click();
+    await expect
+      .poll(async () => (await inspect()).map((f: any) => f.refId).sort())
+      .toEqual(["Q", "Q-compare"]);
+    expect(
+      (await inspect()).find((f: any) => f.refId === "Q-compare"),
+    ).toMatchObject({
+      compare: true,
+      diff: -offset,
+      time: end - offset,
+      value,
+    });
+    await expect(plot.locator("polyline:not([stroke-dasharray])")).toHaveCount(
+      1,
+    );
+    await expect(
+      plot.locator('polyline[stroke-dasharray="1 5 4 5"]'),
+    ).toHaveCount(1);
+    await expect(plot).toContainText("SQL business");
+    await expect(sdk.getByRole("alert")).toHaveCount(0);
+    await expect(plot.getByRole("alert")).toHaveCount(0);
+    expect(await page.title()).toContain("MetricsPanel233");
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, timeout: 60000, windowsHide: true },
+    );
+    for (const [mode, name] of [
+      ["--package", "source.zip"],
+      ["--package-extension-events", "events.zip"],
+    ]) {
+      const archive = path.join(temp, name);
+      await run(fixture, [mode, archive], { cwd: repoRoot, windowsHide: true });
+      const result = await page.request.post(
+        endpoint + "/api/v1/plugins/install",
+        {
+          data: await readFile(archive),
+          headers: { "Content-Type": "application/zip" },
+        },
+      );
+      expect(result.ok(), await result.text()).toBeTruthy();
+    }
+    expect(
+      (
+        await page.request.post(endpoint + "/api/datasources", {
+          data: {
+            uid: "sql-compare-sdk",
+            name: "SQL comparison SDK",
+            type: "metricspanel-sdk-datasource",
+            secureJsonData: { apiKey: "test-secret-233" },
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    expect(
+      (
+        await page.request.post(endpoint + "/api/v1/ingest", {
+          data: {
+            samples: [
+              {
+                name: "sql_compare_fixture",
+                value: 100,
+                timestamp: start + 10000,
+              },
+              {
+                name: "sql_compare_fixture",
+                value: 150,
+                timestamp: start + 60000,
+              },
+              {
+                name: "sql_compare_fixture",
+                value: 25,
+                timestamp: start - 60000,
+              },
+              {
+                name: "sql_compare_fixture",
+                value: 10,
+                timestamp: start - day + 10000,
+              },
+
+            {
+              name: "sql_compare_fixture",
+              value: 5,
+              timestamp: start - day - 60000,
+            },
+              {
+                name: "sql_compare_fixture",
+                value: 15,
+                timestamp: start - day + 60000,
+              },
+            ],
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    for (const format of ["classic", "v1", "v2"]) {
+      const uid = `sql-compare-${format}`;
+      const classic = { ...source, uid };
+      const resource =
+        format === "classic"
+          ? classic
+          : format === "v1"
+            ? {
+                apiVersion: "dashboard.grafana.app/v1beta1",
+                kind: "Dashboard",
+                metadata: { name: uid, unknown: 233 },
+                spec: classic,
+              }
+            : {
+                apiVersion: "dashboard.grafana.app/v2beta1",
+                kind: "Dashboard",
+                metadata: { name: uid, unknown: 233 },
+                spec: {
+                  title: source.title,
+                  timeSettings: {
+                    ...source.time,
+                    timezone: "utc",
+                    autoRefresh: "",
+                  },
+                  variables: [
+                    {
+                      kind: "ConstantVariable",
+                      spec: {
+                        name: "A",
+                        query: "SQL business",
+                        current: {
+                          text: "SQL business",
+                          value: "SQL business",
+                        },
+                      },
+                    },
+                  ],
+                  elements: Object.fromEntries(
+                    source.panels.map((panel: any) => [
+                      String(panel.id),
+                      {
+                        kind: "Panel",
+                        spec: {
+                          id: panel.id,
+                          title: panel.title,
+                          data: {
+                            kind: "QueryGroup",
+                            spec: {
+                              queryOptions: { timeCompare: panel.timeCompare },
+                              queries: panel.targets.map(
+                                ({ refId, hide, ...query }: any) => ({
+                                  kind: "PanelQuery",
+                                  spec: {
+                                    refId,
+                                    hidden: hide,
+                                    query: {
+                                      kind: "DataQuery",
+                                      group: query.datasource.type,
+                                      spec: query,
+                                    },
+                                  },
+                                }),
+                              ),
+                            },
+                          },
+                          vizConfig: {
+                            kind: "VizConfig",
+                            group: panel.type,
+                            spec: {
+                              options: {},
+                              fieldConfig: { defaults: {}, overrides: [] },
+                            },
+                          },
+                        },
+                      },
+                    ]),
+                  ),
+                  layout: {
+                    kind: "GridLayout",
+                    spec: {
+                      items: source.panels.map((panel: any) => ({
+                        kind: "GridLayoutItem",
+                        spec: {
+                          x: panel.gridPos.x,
+                          y: panel.gridPos.y,
+                          width: panel.gridPos.w,
+                          height: panel.gridPos.h,
+                          element: {
+                            kind: "ElementReference",
+                            name: String(panel.id),
+                          },
+                        },
+                      })),
+                    },
+                  },
+                },
+              };
+      const result = await page.request.post(
+        endpoint + "/api/v1/import/grafana",
+        { data: resource },
+      );
+      expect(result.ok(), await result.text()).toBeTruthy();
+      const saved = (await result.json()).dashboard;
+      imported.push(saved.id);
+      expect(saved.grafana).toEqual(resource);
+      const count = bodies.length;
+      await page.goto(`${endpoint}/d/${uid}/sql`);
+      expect(page.url()).toContain(`/d/${uid}/sql`);
+      await verify(day, 30);
+      const requests = bodies.slice(count);
+      expect(
+        requests.some(
+          (body) =>
+            Number(body.from) === start - day &&
+            Number(body.to) === end - day &&
+            body.queries.some(
+              (q: any) =>
+                q.refId === "Q" &&
+                q.expression.includes("'SQL business'") &&
+                q.expression.includes("'" + (start - day) + "'"),
+            ),
+        ),
+      ).toBeTruthy();
+      expect(
+        requests
+          .flatMap((body) => body.queries)
+          .some((q: any) => q.refId.endsWith("-compare")),
+      ).toBeFalsy();
+      for (const body of requests) {
+        expect(body.queries.filter((q: any) => q.type === "sql")).toHaveLength(
+          1,
+        );
+      }
+      const normal = plot.locator("polyline:not([stroke-dasharray])"),
+        compared = plot.locator('polyline[stroke-dasharray="1 5 4 5"]');
+      expect(
+        Number((await compared.getAttribute("points"))!.split(/[ ,]/)[0]),
+      ).toBeCloseTo(
+        Number((await normal.getAttribute("points"))!.split(/[ ,]/)[0]),
+        4,
+      );
+      if (format === "classic") {
+        for (let round = 0; round < 2; round++) {
+          const before = bodies.length;
+          await page
+            .getByRole("button", { name: "Refresh metrics", exact: true })
+            .click();
+          await expect.poll(() => bodies.length).toBeGreaterThan(before);
+          await expect
+            .poll(async () => (await inspect()).map((f: any) => f.refId).sort())
+            .toEqual(["Q", "Q-compare"]);
+        }
+        await page.screenshot({
+          path: testInfo.outputPath("sql-comparison-desktop.png"),
+          animations: "disabled",
+        });
+        source.panels.forEach(
+          (panel: any) => (panel.timeCompare = "__previousPeriod"),
+        );
+        expect(
+          (
+            await page.request.post(endpoint + "/api/dashboards/db", {
+              data: { dashboard: source, overwrite: true },
+            })
+          ).ok(),
+        ).toBeTruthy();
+        await page.reload();
+        await verify(120000, 50);
+        await page
+          .getByRole("button", { name: "Switch language", exact: true })
+          .click();
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(sdk).toContainText("比较范围: 前一时段");
+        await plot.scrollIntoViewIfNeeded();
+        await expect(plot).toContainText("(比较)");
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBeTruthy();
+        await plot.screenshot({
+          path: testInfo.outputPath("sql-comparison-mobile.png"),
+          animations: "disabled",
+        });
+        await page
+          .getByRole("button", { name: "Switch language", exact: true })
+          .click();
+        await page.setViewportSize({ width: 1536, height: 1024 });
+        source.panels.forEach((panel: any) => (panel.timeCompare = "1d"));
+      }
+    }
+    expect(issues).toEqual([]);
+  } finally {
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    for (const id of imported)
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
+    await page.request.delete(
+      endpoint + "/api/datasources/uid/sql-compare-sdk",
+    );
+    for (const id of ["metricspanel-sdk-datasource", "metricspanel-events-app"])
+      await page.request.delete(endpoint + "/api/v1/plugins/" + id);
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-sql-compare-e2e-")
+    )
+      throw new Error("Unsafe SQL comparison cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
 });
 
 test("Expression graphs execute hidden multi-source inputs, preserve templates and resolve both SDK services", async ({

@@ -318,7 +318,9 @@ SQL 表达式使用与 Grafana 13.2.3 相同的嵌入式 Go MySQL 引擎，支�
 
 Agent 可运行 `metricspanel datasources query --id __expr__ --file examples/queries/sql-metrics.json --stream`；告警示例为 `examples/alerts/graph-sql-memory.json`。告警／录制结果必须恰好一个数值列，字符串列组成唯一实例标签，NULL 字符串省略；重复标签报错。规则的临时 alerting 格式不覆盖原始 JSON，重启保留规则、状态、计时和录制样本。[SQL 契约与固定版本源码](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/sql_command.go)。
 
-SQL 面板比较引用重写和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+SQL 面板支持固定偏移与前一时段比较。两次后端请求分别使用当前／历史窗口，在请求内保留原始 RefID 和 SQL，返回后添加 `-compare` 与 `timeCompare` 元数据，因此 CTE、别名、引号内文本不需改写。原生曲线对齐显示时间，SDK 帧保留历史时间。SQL 使用真实面板变量与时间宏，允许变量和输入 RefID 同名；统一的 `__display_name__` 恢复数值列显示名，混合名称继续保留逐行数据，不修改缓存帧。原始时间输入支持显式 `DATETIME(6)` 精度转换；MySQL 默认 `TIMESTAMP` 输出精度为秒。示例为 `examples/grafana-sql-comparison.json`。
+
+完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围

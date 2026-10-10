@@ -12,6 +12,7 @@ import {
 import { defer, switchMap, map } from "rxjs";
 import { grafanaMeta } from "./grafana-meta";
 import { expressionRef, isExpressionRef } from "./expression-ref";
+import { restoreSQLDisplayNames } from "./sql-frames";
 
 export type ExpressionQuery = DataQuery & {
   type?: string;
@@ -63,7 +64,10 @@ export class ExpressionSource extends DataSourceWithBackend<ExpressionQuery> {
         request.targets.map(async (query) => {
           if (isExpressionRef(query.datasource)) {
             return {
-              ...this.applyTemplateVariables(query, protectedRefs),
+              ...this.applyTemplateVariables(
+                query,
+                query.type === "sql" ? request.scopedVars : protectedRefs,
+              ),
               datasource: expressionRef,
             };
           }
@@ -86,7 +90,7 @@ export class ExpressionSource extends DataSourceWithBackend<ExpressionQuery> {
       switchMap((targets) => super.query({ ...request, targets })),
       map((response) => ({
         ...response,
-        data: response.data.filter(
+        data: restoreSQLDisplayNames(response, request.targets).data.filter(
           (frame) =>
             !request.targets.find((query) => query.refId === frame.refId)?.hide,
         ),

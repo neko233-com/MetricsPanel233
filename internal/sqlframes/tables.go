@@ -88,11 +88,17 @@ func (r *frameRows) Next(ctx *mysql.Context) (mysql.Row, error) {
 		if n, ok := value.(float32); ok && (math.IsNaN(float64(n)) || math.IsInf(float64(n), 0)) {
 			continue
 		}
-		converted, _, err := r.table.schema[i].Type.Convert(ctx, value)
-		if err != nil {
-			return nil, fmt.Errorf("SQL input %s column %s: %w", r.table.Name(), field.Name, err)
+		// Grafana exposes native scalar/time values to the evaluator. Eager
+		// Timestamp conversion would discard subsecond input before an explicit
+		// DATETIME(6) cast can preserve it. JSON needs the SQL wrapper.
+		if field.Type() == data.FieldTypeJSON || field.Type() == data.FieldTypeNullableJSON {
+			converted, _, err := types.JSON.Convert(ctx, value)
+			if err != nil {
+				return nil, fmt.Errorf("SQL input %s column %s: %w", r.table.Name(), field.Name, err)
+			}
+			value = converted
 		}
-		values[i] = converted
+		values[i] = value
 	}
 	r.row++
 	return values, nil
