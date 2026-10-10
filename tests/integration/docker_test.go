@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,10 +246,47 @@ func (e environment) request(address, method, path string, payload any) (int, []
 }
 func (e environment) must(address, method, path string, payload any) []byte {
 	e.t.Helper()
-	status, data, err := e.request(address, method, path, payload)
+	var status int
+	var data []byte
+	var err error
+	deadline := time.Now().Add(25 * time.Second)
+	for {
+		status, data, err = e.request(address, method, path, payload)
+		if err != nil || method != http.MethodPost || !strings.HasPrefix(path, "/api/v1/alerts/rules/") || !strings.HasSuffix(path, "/evaluate") || status != http.StatusConflict {
+			break
+		}
+		var response struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(data, &response) != nil || response.Error.Message != alerting.ErrBusy.Error() || time.Now().After(deadline) {
+			break
+		}
+		// Saving a rule makes it immediately eligible for the real scheduler.
+		// Wait for that evaluation's gate instead of assuming a manual request wins.
+		time.Sleep(100 * time.Millisecond)
+	}
 	require.NoError(e.t, err)
 	require.Equal(e.t, 200, status, string(data))
 	return data
+}
+
+func TestAlertEvaluationRetriesSchedulerContention(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) <= 2 {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": alerting.ErrBusy.Error(), "status": 409}})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]int{"value": 233})
+	}))
+	defer server.Close()
+	e := environment{t: t, client: server.Client()}
+	result := e.must(server.URL, http.MethodPost, "/api/v1/alerts/rules/rule/evaluate", nil)
+	assert.JSONEq(t, `{"value":233}`, string(result))
+	assert.Equal(t, int32(3), requests.Load())
 }
 
 func (e environment) installPlugin(address string, raw []byte) []byte {
