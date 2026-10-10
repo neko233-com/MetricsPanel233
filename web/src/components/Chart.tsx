@@ -162,20 +162,39 @@ export function Chart({
   const visibleSeries = data?.series.slice(0, 8) || [];
   const latest = visibleSeries[0]?.points.at(-1)?.value;
   const color = mint ? palette[1] : palette[0];
+  const legendName =
+    panel.expr ||
+    panel.metric ||
+    Object.values(visibleSeries[0]?.labels || {}).join(" · ") ||
+    panel.title;
+  const editActions = (
+    <div className="panel-actions">
+      {onEdit ? (
+        <button
+          className="icon-button"
+          aria-label={`${tr("Edit")} ${tr(panel.title)}`}
+          onClick={onEdit}
+        >
+          <Pencil size={15} />
+        </button>
+      ) : null}
+      {onRemove ? (
+        <button
+          className="icon-button danger-hover"
+          aria-label={`${tr("Remove")} ${tr(panel.title)}`}
+          onClick={onRemove}
+        >
+          <Trash2 size={15} />
+        </button>
+      ) : null}
+    </div>
+  );
   if (panel.visualization === "stat")
     return (
       <section className="chart-panel stat-panel" aria-label={tr(panel.title)}>
         <div className="panel-heading">
           <h2>{tr(panel.title)}</h2>
-          {onEdit && (
-            <button
-              className="icon-button"
-              aria-label={`${tr("Edit")} ${tr(panel.title)}`}
-              onClick={onEdit}
-            >
-              <Pencil size={15} />
-            </button>
-          )}
+          {editActions}
         </div>
         <div className="stat-value">
           {latest === undefined ? "—" : formatter(latest, panel.unit)}
@@ -183,7 +202,7 @@ export function Chart({
         {error && <p className="form-error">{error}</p>}
         <div className="chart-legend">
           <i style={{ background: color }} />
-          <span className="mono">{panel.expr || panel.metric}</span>
+          <span className="mono">{legendName}</span>
         </div>
       </section>
     );
@@ -192,6 +211,7 @@ export function Chart({
       <section className="chart-panel" aria-label={tr(panel.title)}>
         <div className="panel-heading">
           <h2>{tr(panel.title)}</h2>
+          {editActions}
         </div>
         <div className="table-scroll">
           <table>
@@ -520,7 +540,7 @@ export function Chart({
       </div>
       <div className="chart-legend">
         <i style={{ background: color }} />
-        <span className="mono">{panel.expr || panel.metric}</span>
+        <span className="mono">{legendName}</span>
         <span className="legend-mode">
           {panel.expr
             ? "PromQL"

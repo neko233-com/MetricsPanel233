@@ -1,13 +1,6 @@
 import { t as tr } from "../i18n";
 import { useState } from "react";
-import {
-  ArrowRight,
-  Check,
-  Copy,
-  Plus,
-  RefreshCw,
-  Terminal,
-} from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import {
   api,
   formatValue,
@@ -28,6 +21,7 @@ import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
 import { RefreshPicker } from "../components/RefreshPicker";
 import { AnnotationQueriesButton } from "../components/AnnotationQueriesButton";
+import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
 export function DashboardView({
   dashboard,
   stats,
@@ -41,7 +35,6 @@ export function DashboardView({
   onRefreshChoice,
   reload,
   notify,
-  cli,
 }: {
   dashboard: Dashboard;
   stats: Stats | null;
@@ -55,10 +48,8 @@ export function DashboardView({
   onRefreshChoice: (value: string) => void;
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
-  cli: () => void;
 }) {
   const [editor, setEditor] = useState<Panel | "new" | null>(null);
-  const [copied, setCopied] = useState(false);
   const [removing, setRemoving] = useState<Panel | null>(null);
   async function save(panels: Panel[]) {
     await api(`/dashboards/${encodeURIComponent(dashboard.id)}`, {
@@ -82,18 +73,24 @@ export function DashboardView({
   );
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading dashboard-heading">
         <div>
           <h1>{tr(dashboard.name)}</h1>
           <p>
             {tr(
               dashboard.id === "system"
                 ? "Live metrics from your local collector."
-                : "Your saved metrics, in one view.",
+                : "Panels",
             )}
+            {dashboard.id !== "system" ? `: ${dashboard.panels.length}` : ""}
           </p>
         </div>
         <div className="toolbar">
+          <DashboardSnapshotButton
+            dashboard={dashboard}
+            range={range}
+            reload={reload}
+          />
           <AnnotationQueriesButton
             dashboard={dashboard}
             range={range}
@@ -114,155 +111,136 @@ export function DashboardView({
           </button>
         </div>
       </div>
-      <div className="stats-band">
-        <div>
-          <span>{tr("Ingest rate")}</span>
-          <strong>
-            {stats ? formatValue(stats.ingest_rate) : "—"}{" "}
-            <small>{tr("samples/s")}</small>
-          </strong>
+      {dashboard.id === "system" ? (
+        <div className="stats-band">
+          <div>
+            <span>{tr("Ingest rate")}</span>
+            <strong>
+              {stats ? formatValue(stats.ingest_rate) : "—"}{" "}
+              <small>{tr("samples/s")}</small>
+            </strong>
+          </div>
+          <div>
+            <span>{tr("Active series")}</span>
+            <strong>
+              {stats?.series.toLocaleString() || "—"}{" "}
+              <small>{tr("series")}</small>
+            </strong>
+          </div>
+          <div>
+            <span>{tr("Storage used")}</span>
+            <strong>
+              {stats ? formatValue(stats.storage_bytes, "bytes") : "—"}{" "}
+              <small>
+                {stats?.retention_days || 30}
+                {tr("d retention")}
+              </small>
+            </strong>
+          </div>
+          <div>
+            <span>{tr("Collectors online")}</span>
+            <strong>
+              {stats
+                ? `${stats.collectors_online} / ${stats.collectors_total}`
+                : "—"}{" "}
+              <small>{tr("online")}</small>
+            </strong>
+          </div>
         </div>
-        <div>
-          <span>{tr("Active series")}</span>
-          <strong>
-            {stats?.series.toLocaleString() || "—"}{" "}
-            <small>{tr("series")}</small>
-          </strong>
-        </div>
-        <div>
-          <span>{tr("Storage used")}</span>
-          <strong>
-            {stats ? formatValue(stats.storage_bytes, "bytes") : "—"}{" "}
-            <small>
-              {stats?.retention_days || 30}
-              {tr("d retention")}
-            </small>
-          </strong>
-        </div>
-        <div>
-          <span>{tr("Collectors online")}</span>
-          <strong>
-            {stats
-              ? `${stats.collectors_online} / ${stats.collectors_total}`
-              : "—"}{" "}
-            <small>{tr("online")}</small>
-          </strong>
-        </div>
-      </div>
+      ) : null}
       <div className="chart-grid">
-        {dashboard.panels.slice(0, 2).map(chart)}
+        {(dashboard.id === "system"
+          ? dashboard.panels.slice(0, 2)
+          : dashboard.panels
+        ).map(chart)}
       </div>
-      <div className="secondary-grid">
-        <div>
-          {dashboard.panels[2] ? (
-            chart(dashboard.panels[2], 2)
-          ) : (
-            <div className="empty-workspace">
-              <h2>{tr("Add your first metric panel")}</h2>
-              <p>{tr("Select a metric to start plotting live data.")}</p>
-              <button onClick={() => setEditor("new")} className="primary">
-                <Plus size={18} />
-                {tr("Add panel")}
-              </button>
-            </div>
-          )}
-        </div>
-        <section className="status-panel">
-          <div className="panel-heading">
-            <h2>{tr("Collection status")}</h2>
+      {dashboard.id === "system" || !dashboard.panels.length ? (
+        <div className="secondary-grid">
+          <div>
+            {dashboard.panels[2] ? (
+              chart(dashboard.panels[2], 2)
+            ) : (
+              <div className="empty-workspace">
+                <h2>{tr("Add your first metric panel")}</h2>
+                <p>{tr("Select a metric to start plotting live data.")}</p>
+                <button onClick={() => setEditor("new")} className="primary">
+                  <Plus size={18} />
+                  {tr("Add panel")}
+                </button>
+              </div>
+            )}
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>{tr("Name")}</th>
-                  <th>{tr("Status")}</th>
-                  <th>{tr("Last seen")}</th>
-                  <th>{tr("Uptime")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="mono">{tr("metricspanel")}</td>
-                  <td>
-                    <span className="status healthy">
-                      <i />
-                      {tr("healthy")}
-                    </span>
-                  </td>
-                  <td className="mono">{timeAgo(stats?.last_sample || 0)}</td>
-                  <td className="mono">
-                    {duration(Date.now() - (stats?.started_at || Date.now()))}
-                  </td>
-                </tr>
-                {targets.map((t) => (
-                  <tr key={t.id}>
-                    <td title={t.url}>{t.name}</td>
-                    <td>
-                      <span
-                        className={`status ${!t.enabled ? "muted" : t.last_error ? "unhealthy" : t.last_scrape ? "healthy" : "muted"}`}
-                      >
-                        <i />
-                        {tr(
-                          !t.enabled
-                            ? "paused"
-                            : t.last_error
-                              ? "error"
-                              : t.last_scrape
-                                ? "healthy"
-                                : "pending",
+          {dashboard.id === "system" ? (
+            <section className="status-panel">
+              <div className="panel-heading">
+                <h2>{tr("Collection status")}</h2>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{tr("Name")}</th>
+                      <th>{tr("Status")}</th>
+                      <th>{tr("Last seen")}</th>
+                      <th>{tr("Uptime")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="mono">{tr("metricspanel")}</td>
+                      <td>
+                        <span className="status healthy">
+                          <i />
+                          {tr("healthy")}
+                        </span>
+                      </td>
+                      <td className="mono">
+                        {timeAgo(stats?.last_sample || 0)}
+                      </td>
+                      <td className="mono">
+                        {duration(
+                          Date.now() - (stats?.started_at || Date.now()),
                         )}
-                      </span>
-                    </td>
-                    <td className="mono">{timeAgo(t.last_scrape)}</td>
-                    <td className="mono">
-                      {t.samples}
-                      {tr("samples")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-      {dashboard.panels.length > 3 && (
+                      </td>
+                    </tr>
+                    {targets.map((t) => (
+                      <tr key={t.id}>
+                        <td title={t.url}>{t.name}</td>
+                        <td>
+                          <span
+                            className={`status ${!t.enabled ? "muted" : t.last_error ? "unhealthy" : t.last_scrape ? "healthy" : "muted"}`}
+                          >
+                            <i />
+                            {tr(
+                              !t.enabled
+                                ? "paused"
+                                : t.last_error
+                                  ? "error"
+                                  : t.last_scrape
+                                    ? "healthy"
+                                    : "pending",
+                            )}
+                          </span>
+                        </td>
+                        <td className="mono">{timeAgo(t.last_scrape)}</td>
+                        <td className="mono">
+                          {t.samples}
+                          {tr("samples")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+      {dashboard.id === "system" && dashboard.panels.length > 3 && (
         <div className="chart-grid extra-charts">
           {dashboard.panels.slice(3).map((p, i) => chart(p, i + 3))}
         </div>
       )}
-      <div className="agent-strip">
-        <Terminal size={25} />
-        <strong>{tr("Command line")}</strong>
-        <code>
-          {tr(
-            "metricspanel query --metric metricspanel_memory_bytes --range 30m",
-          )}
-        </code>
-        <button
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(
-                "metricspanel query --metric metricspanel_memory_bytes --range 30m",
-              );
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1800);
-            } catch {
-              notify(
-                tr("Clipboard access failed; select the command to copy it."),
-                true,
-              );
-            }
-          }}
-        >
-          {copied ? <Check size={17} /> : <Copy size={17} />}
-          {tr(copied ? "Copied" : "Copy")}
-        </button>
-        <button className="text-button" onClick={cli}>
-          {tr("View CLI docs")}
-          <ArrowRight size={18} />
-        </button>
-      </div>
       {editor && (
         <PanelEditor
           panel={editor === "new" ? undefined : editor}
@@ -270,7 +248,7 @@ export function DashboardView({
           onClose={() => setEditor(null)}
           onSave={async (p) => {
             await save(
-              editor === "new"
+              editor === "new" || p.id !== editor.id
                 ? [...dashboard.panels, p]
                 : dashboard.panels.map((item) => (item.id === p.id ? p : item)),
             );
@@ -326,6 +304,9 @@ function PanelEditor({
   const [expr, setExpr] = useState(panel?.expr || "");
   const [aggregation, setAggregation] = useState(panel?.aggregation || "last");
   const [unit, setUnit] = useState(panel?.unit || "");
+  const [visualization, setVisualization] = useState(
+    panel?.visualization || "timeseries",
+  );
   const [labels, setLabels] = useState(JSON.stringify(panel?.labels || {}));
   const [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
@@ -339,13 +320,19 @@ function PanelEditor({
           try {
             await onSave({
               ...panel,
-              id: panel?.id || crypto.randomUUID(),
+              id:
+                (e.nativeEvent as SubmitEvent).submitter?.getAttribute(
+                  "value",
+                ) === "duplicate"
+                  ? crypto.randomUUID()
+                  : panel?.id || crypto.randomUUID(),
               title,
               metric,
               expr,
               expressions: expr ? [expr] : undefined,
               aggregation,
               unit,
+              visualization,
               labels: parseLabels(labels),
             });
           } catch (e) {
@@ -364,6 +351,18 @@ function PanelEditor({
             required
             maxLength={100}
           />
+        </label>
+        <label>
+          {tr("Visualization")}
+          <select
+            aria-label={tr("Visualization")}
+            value={visualization}
+            onChange={(event) => setVisualization(event.target.value)}
+          >
+            <option value="timeseries">{tr("Time series")}</option>
+            <option value="stat">{tr("Stat")}</option>
+            <option value="table">{tr("Table")}</option>
+          </select>
         </label>
         <label>
           {tr("Metric")}
@@ -432,6 +431,11 @@ function PanelEditor({
           </p>
         )}
         <div className="form-actions">
+          {panel ? (
+            <button value="duplicate" disabled={saving}>
+              {tr("Duplicate panel")}
+            </button>
+          ) : null}
           <button type="button" onClick={onClose}>
             {tr("Cancel")}
           </button>

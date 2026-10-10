@@ -112,12 +112,15 @@ export default function App() {
   );
   const [view, setView] = useState<AppView>(() => {
       if (/^\/a\/[^/]+/.test(location.pathname)) return "app";
+      if (/^\/d\/[^/]+/.test(location.pathname)) return "dashboard";
       const hash = location.hash.slice(1);
       return navigation.some((n) => n.id === hash)
         ? (hash as View)
         : "overview";
     }),
-    [dashboardID, setDashboardID] = useState("system"),
+    [dashboardID, setDashboardID] = useState(() =>
+      /^\/d\/[^/]+/.test(location.pathname) ? "" : "system",
+    ),
     [sidebarOpen, setSidebarOpen] = useState(false);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]),
     [apps, setApps] = useState<
@@ -563,7 +566,6 @@ export default function App() {
                   onRefreshChoice={changeRefresh}
                   reload={load}
                   notify={notify}
-                  cli={() => navigate("cli")}
                 />
               )
             ) : (

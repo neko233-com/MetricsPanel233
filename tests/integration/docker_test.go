@@ -210,6 +210,37 @@ func (e environment) composeInput(input string, args ...string) (string, error) 
 	return strings.TrimSpace(string(output)), err
 }
 
+func (e environment) verifyDashboardSnapshot(address string, create bool) {
+	source := json.RawMessage(`{"uid":"docker-snapshot","title":"Docker frozen panels","refresh":"","snapshot":{"created":1791183600000,"sourceUID":"missing-source"},"time":{"from":"2026-10-05T08:00:00Z","to":"2026-10-05T18:00:00Z"},"annotations":{"list":[]},"panels":[{"id":1,"title":"Frozen orders","type":"stat","datasource":{"uid":"grafana","type":"grafana"},"targets":[{"refId":"Snapshot","queryType":"snapshot","snapshot":[{"schema":{"refId":"A","fields":[{"name":"Value","type":"number","config":{}}]},"data":{"values":[[233]]}}]}],"gridPos":{"x":0,"y":0,"w":12,"h":8}},{"id":2,"title":"Frozen table","type":"table","datasource":{"uid":"grafana","type":"grafana"},"targets":[{"refId":"Snapshot","queryType":"snapshot","snapshot":[{"schema":{"refId":"B","fields":[{"name":"Value","type":"number","config":{}}]},"data":{"values":[[777]]}}]}],"gridPos":{"x":12,"y":0,"w":12,"h":8}}]}`)
+	if create {
+		e.must(address, "POST", "/api/v1/import/grafana", source)
+	}
+	var dashboards []model.Dashboard
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &dashboards))
+	found := false
+	for _, dashboard := range dashboards {
+		if len(dashboard.Grafana) == 0 {
+			continue
+		}
+		var doc struct {
+			UID string `json:"uid"`
+		}
+		require.NoError(e.t, json.Unmarshal(dashboard.Grafana, &doc))
+		if doc.UID != "docker-snapshot" {
+			continue
+		}
+		found = true
+		require.JSONEq(e.t, string(source), string(dashboard.Grafana))
+		require.Len(e.t, dashboard.Panels, 2)
+		for _, panel := range dashboard.Panels {
+			require.Empty(e.t, panel.Expressions)
+			require.Contains(e.t, string(panel.Config), `"queryType":"snapshot"`)
+		}
+	}
+	require.True(e.t, found, "snapshot lost across restart")
+	e.t.Log("snapshot frames persisted; source queries disabled")
+}
+
 func (e environment) verifySQL(address string, restarted bool) {
 	e.t.Helper()
 	payload := json.RawMessage(`{"from":"now-1m","to":"now","queries":[{"refId":"A","datasource":{"uid":"metricspanel"},"expr":"mysql_up{job=\"mysql\"}","instant":true},{"refId":"B","datasource":{"uid":"docker-sdk"},"value":2,"sqlTable":true},{"refId":"Q","datasource":{"uid":"__expr__"},"type":"sql","expression":"WITH joined AS (SELECT A.job, B.host, A.__value__ * B.value AS total, B.online, B.payload FROM A CROSS JOIN B) SELECT job, host, SUM(total) AS total, MAX(JSON_EXTRACT(payload,'$.n')) AS payload FROM joined WHERE online GROUP BY job, host"}]}`)
@@ -916,6 +947,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			regionConfig := json.RawMessage(`[{"name":"Office hours","datasource":{"type":"grafana","uid":"-- Grafana --"},"target":{"queryType":"timeRegions","timeRegion":{"mode":"cron","cronExpr":"0 9 * * MON-FRI","duration":"8h","timezone":"Asia/Shanghai","unknown":233}}}]`)
 			var nativeRegions model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "POST", "/api/v1/dashboards", model.Dashboard{Name: "Docker time regions", Panels: []model.Panel{}, Annotations: regionConfig}), &nativeRegions))
+			e.verifyDashboardSnapshot(address, true)
 			_, err = e.compose("restart", backend.service)
 			require.NoError(t, err)
 			address = e.address(backend.service)
@@ -926,6 +958,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifySQL(address, true)
 			e.verifyAlertGraph(address, true)
 			e.verifyAlertGroups(address, true)
+			e.verifyDashboardSnapshot(address, false)
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false
@@ -1001,5 +1034,6 @@ func TestDockerEndToEnd(t *testing.T) {
 		address := e.address(service)
 		require.Eventually(t, func() bool { value, ok := e.value(address, "restart_marker"); return ok && value == 234 }, 60*time.Second, 500*time.Millisecond, "single-container restart lost durable state")
 		e.verifyNativeCollectors(address)
+		e.verifyDashboardSnapshot(address, false)
 	}
 }

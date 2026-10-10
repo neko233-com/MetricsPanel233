@@ -16,9 +16,10 @@ import {
   type InterpolationValues,
   dashboardUID,
 } from "../api";
-import { t } from "../i18n";
+import { t, getLocale } from "../i18n";
 import { queryValues, variableOptions } from "../grafana/variables";
 import { layoutPanels } from "../grafana/layout";
+import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
 import type { VariableValues } from "../grafana/engine";
 import type { FrameUpdate } from "../grafana/engine";
 import type { PluginExtensionPanelContext } from "@grafana/data";
@@ -218,7 +219,7 @@ export function TemplateView({
     history.replaceState(
       history.state,
       "",
-      `${location.pathname}?${params}${location.hash}`,
+      `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`,
     );
   }, [key]);
   useEffect(() => {
@@ -279,14 +280,30 @@ export function TemplateView({
         : [],
     };
   }, [dashboard]);
+  const snapshot = (
+    dashboard.grafana as { snapshot?: { created?: number } } | undefined
+  )?.snapshot;
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading dashboard-heading">
         <div>
           <h1>{dashboard.name}</h1>
-          <p>{t("Grafana template")} · PromQL</p>
+          <p>
+            {snapshot?.created
+              ? `${t("Snapshot")} · ${new Date(snapshot.created).toLocaleString(getLocale() === "zh" ? "zh-CN" : "en-US")}`
+              : `${t("Panels")}: ${dashboard.panels.length}`}
+          </p>
         </div>
         <div className="toolbar">
+          <DashboardSnapshotButton
+            dashboard={dashboard}
+            panels={panels.map((entry) => ({
+              ...entry,
+              values: queryValues(entry.values, variables),
+            }))}
+            range={range}
+            reload={reload}
+          />
           <button onClick={() => setEditingQueries(true)}>
             <Pencil size={17} />
             {t("Panel queries")}

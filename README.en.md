@@ -69,6 +69,10 @@ This is a single-instance implementation, with no claimed distributed or product
 
 ## Grafana compatibility
 
+Custom dashboards support multiple time series, stat and table panels, with add/edit/duplicate/delete controls. They display a uniform panel grid without collection status or a CLI promotional strip.
+
+Create snapshot freezes the selected window and all panel data, visualizations, layout and display options. Repeated template panels expand using current variable selections. The independently saved dashboard survives source updates or source-dashboard deletion, uses only builtin snapshot queries, and defaults to fixed bounds with refresh off. Snapshot data lives in the durable control database and never enters monitoring samples. Export with `dashboards export --id ID --format grafana` and import with `dashboards save --file FILE`. The CLI lists/exports/imports/deletes snapshots; capture currently runs in the browser and has no single-step CLI command. Limits are 512 KiB/panel and 4 MiB/snapshot; shorten the window if exceeded. Anonymous sharing, expiry deletion and Grafana `/api/snapshots` routes remain pending.
+
 Grafana's Prometheus datasource can use `http://localhost:7333/prometheus` with the workspace Bearer Authorization header.
 Instant/range query, labels, label values, series, metadata, targets and buildinfo endpoints are implemented using the upstream PromQL engine.
 
@@ -215,6 +219,8 @@ The published package omits the cache/expression core boot exports. Three host-o
 Discovery and both public SDK generations expose the read-only `-- Grafana --` instance with UID `grafana` and numeric ID `-1`. UID, name, numeric ID and type-only `grafana` references resolve it; `metricspanel` remains the default metric source. Datasource variables discover actual instances, filter by plugin type/name regex and expose their UIDs in the selector.
 
 The frontend executes `randomWalk`, `snapshot`, `timeRegions`, `annotations` and `measurements`. Random walks support start/min/max/spread/noise/dropPercent; snapshots use official DataFrame JSON conversion and retain original refIds. Live measurements support channel variables, field filters and buffering; the final unsubscribe cancels backend work. Native and classic/V1/V2 panels can mix these frames with Prometheus queries.
+
+After importing a template, open Panel queries and select `-- Grafana --` to edit all six builtin query modes with English/Chinese forms. Changing modes retains snapshots, filters and unknown options. Snapshots display their frame count; advanced JSON edits their payload. Preview executes real SDK queries, and stop/close cancels live subscriptions. Dashboard annotations use the current UID; tag queries expose match mode and limits. Saves update the original Classic/V1/V2 resource and CLI exports retain its envelope. Server-side alert forms only allow `randomWalk` and `list`; browser queries cannot evaluate server-side alerts.
 
 The backend and agent execute `randomWalk` and `list`, following the [Grafana 13.2.3 core backend split](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go). `listFiles` only lists embedded public web assets and rejects absolute/traversal paths; list queries may omit the time range. Generated sequences, snapshots and recurring regions never enter metric or annotation storage. Random walks allow 10,000 points/frame, 128 frames and 1,000,000 points/query; invalid inputs and non-finite output produce explicit errors.
 

@@ -330,7 +330,13 @@ export class LocalGrafana extends DataSourceWithBackend<GrafanaQuery> {
     signal?: AbortSignal,
   ): Promise<DataQueryResponse> {
     const annotation = options.annotation,
-      target: GrafanaQuery = annotation.target || { refId: "Anno" };
+      target: GrafanaQuery = annotation.target || {
+        refId: annotation.name || "Anno",
+        type: annotation.type ?? "dashboard",
+        limit: annotation.limit ?? 100,
+        tags: annotation.tags ?? [],
+        matchAny: annotation.matchAny ?? false,
+      };
     if (scopes?.length)
       throw new Error("Grafana annotation scopes are not implemented");
     if (target.queryType === "timeRegions")

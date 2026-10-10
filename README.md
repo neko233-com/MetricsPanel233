@@ -118,6 +118,10 @@ metricspanel dashboards export --id IMPORTED_ID --format grafana > original-graf
 
 ## Grafana 生态兼容范围
 
+自建仪表盘支持多个时间序列、数值和表格面板，可新增、编辑、复制和删除。自建仪表盘统一排列面板，不插入采集状态和命令行宣传条。
+
+“创建快照”保存所选时间窗口及全部面板的数据、类型、位置和显示选项；导入模板的重复面板会按当前变量展开。保存后成为独立仪表盘，原数据更新或原仪表盘删除不影响快照。快照只使用内置 `snapshot` 查询，不访问原数据源；刷新默认关闭，保留窗口固定。数据不会写入监控指标库；快照随控制数据库持久化。可用网页或 `dashboards export --id ID --format grafana` 导出，`dashboards save --file FILE` 重新导入。CLI 可列出、导出、导入和删除快照；当前窗口的数据捕获由浏览器执行，CLI 尚无单步捕获命令。每个面板最多 512 KiB，完整快照最多 4 MiB，超限请缩短时间范围。暂未提供匿名公开快照链接、过期删除或 Grafana `/api/snapshots` 接口。
+
 提供 **Prometheus 数据源 API + 官方 PromQL 引擎**。Grafana 的 Prometheus 数据源 URL 指向：
 
 ```text
@@ -302,6 +306,8 @@ Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化
 发现 API 与两代公开 SDK 都提供只读 `-- Grafana --` 数据源，UID 为 `grafana`、数字 ID 为 `-1`；按名称、UID、ID 或仅 `type: grafana` 引用均可解析。默认指标数据源仍为 `metricspanel`。数据源变量读取实际实例并按插件类型和名称正则筛选，界面可选择其 UID。
 
 前端执行 `randomWalk`、`snapshot`、`timeRegions`、`annotations` 和 `measurements`。随机序列支持初始值、上下限、spread、noise 和 dropPercent；快照使用官方 DataFrame JSON 转换并保留原始 refId。Live measurements 支持变量通道、字段筛选和缓冲，最后一个订阅结束会取消后端流。原生与经典/V1/V2 面板可以和 Prometheus 查询混用。
+
+导入模板后打开“面板查询”，选择 `-- Grafana --`，可用中英文表单编辑六种内置查询。切换类型保留原有快照、过滤器和未知选项；快照显示帧数量，数据帧可在高级 JSON 中编辑。预览通过真实 SDK 查询执行，实时流可停止，关闭编辑器也会取消订阅。“当前仪表盘”注释只读取当前 UID 的事件；标签查询可设置匹配方式和条数。保存同时更新原始 Classic/V1/V2 资源，CLI 导出保留资源封装。服务端告警表单仅允许 `randomWalk` 与 `list`，浏览器查询不能用于服务端告警。
 
 后端与 agent 提供 `randomWalk` 和 `list`，沿用 [Grafana 13.2.3 内置后端分工](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go)。`listFiles` 只列出程序内嵌的公共网页文件，拒绝绝对路径和路径穿越；`list` 可省略时间范围。生成序列、快照和周期区域不会写入指标或注释存储。随机序列每帧最多 10,000 点、128 帧、每查询合计 1,000,000 点，非法配置和非有限数值返回具体错误。
 

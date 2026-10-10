@@ -116,7 +116,7 @@ export function writeRangeURL(value: TimeSelection) {
   history.replaceState(
     history.state,
     "",
-    `${location.pathname}?${params}${location.hash}`,
+    `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`,
   );
 }
 export function rangeFromDashboard(

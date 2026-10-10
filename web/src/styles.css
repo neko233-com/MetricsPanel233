@@ -2187,7 +2187,13 @@ dialog::backdrop {
   height: 28px;
   padding: 3px;
 }
+.grafana-random-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.grafana-query-editor { min-width: 0; }
 .query-editor-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.dashboard-heading { display: block; }
+.dashboard-heading h1 { font-size: 26px; letter-spacing: -0.4px; }
+.dashboard-heading p { font-size: 13px; margin-top: 5px; }
+.dashboard-heading .toolbar { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
 .query-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
 .query-actions .checkbox-label { margin: 0; }
 .expression-condition { min-width: 0; padding: 12px; margin: 16px 0; border: 1px solid var(--border); border-radius: 6px; }
@@ -2199,6 +2205,7 @@ dialog::backdrop {
 .query-result-frame h4 { margin: 8px 0; font-size: 13px; color: var(--muted); }
 .query-result-frame .table-scroll { max-height: 240px; overflow: auto; }
 @media (max-width: 600px) {
+  .grafana-random-fields { grid-template-columns: 1fr; }
   .expression-evaluator { grid-template-columns: 1fr; gap: 0; }
   .panel-query-editor .form-row, .alert-graph-editor .form-row { flex-direction: column; gap: 0; }
 }

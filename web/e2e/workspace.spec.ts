@@ -88,6 +88,567 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Builtin Grafana query forms execute all six modes and preserve Classic V1 V2 resources", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-builtin-editors-e2e-"),
+  );
+  const run = promisify(execFile);
+  const fixture = path.join(
+    temp,
+    process.platform === "win32" ? "fixture.exe" : "fixture",
+  );
+  const ids: string[] = [],
+    annotations: number[] = [],
+    issues: string[] = [];
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type())) issues.push(entry.text());
+  });
+  const snapshot = {
+    schema: {
+      refId: "Original",
+      name: "Preserved snapshot",
+      fields: [{ name: "Value", type: "number", config: { unit: "short" } }],
+    },
+    data: { values: [[233, 234]] },
+  };
+  const initial: any = {
+    refId: "A",
+    datasource: { type: "grafana" },
+    queryType: "randomWalk",
+    startValue: 233,
+    spread: 0,
+    noise: 0,
+    snapshot: [snapshot],
+    opaque: { keep: true },
+    filter: { opaque: 233 },
+    timeRegion: { timezone: "utc", opaque: "preserve" },
+    target: { type: "dashboard", opaque: "annotation" },
+  };
+  const classic: any = {
+    uid: "builtin-query-editor",
+    title: "Builtin query forms",
+    refresh: "",
+    timezone: "utc",
+    time: { from: "2026-10-05T08:00:00Z", to: "2026-10-05T18:00:00Z" },
+    opaque: "template",
+    panels: [
+      {
+        id: 41,
+        title: "Builtin result",
+        type: "table",
+        gridPos: { x: 0, y: 0, w: 24, h: 8 },
+        targets: [initial],
+        opaque: "panel",
+        fieldConfig: { defaults: {}, overrides: [] },
+      },
+    ],
+  };
+  const open = async (source: any, uid: string) => {
+    const response = await page.request.post(
+      endpoint + "/api/v1/import/grafana",
+      { data: source },
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+    const saved = (await response.json()).dashboard;
+    ids.push(saved.id);
+    await page.goto(endpoint + "/d/" + uid + "/queries");
+    await expect(
+      page.getByRole("heading", { name: "Builtin query forms", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Panel queries", exact: true })
+      .click();
+    return {
+      saved,
+      dialog: page.getByRole("dialog", { name: "Panel queries", exact: true }),
+    };
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true, timeout: 60000 },
+    );
+    const archive = path.join(temp, "sdk.zip");
+    await run(fixture, ["--package", archive], { windowsHide: true });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    expect(
+      (
+        await page.request.post(endpoint + "/api/datasources", {
+          data: {
+            uid: "builtin-editor-live",
+            name: "Builtin editor live",
+            type: "metricspanel-sdk-datasource",
+            secureJsonData: { apiKey: "test-secret-233" },
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    let { saved, dialog } = await open(classic, classic.uid);
+    const getSaved = async () =>
+      (
+        await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+      ).find((item: any) => item.id === saved.id);
+    for (const dashboardUID of [classic.uid, undefined]) {
+      const response = await page.request.post(endpoint + "/api/annotations", {
+        data: {
+          dashboardUID,
+          time: Date.parse("2026-10-05T09:30:00Z"),
+          text: dashboardUID ? "Scoped editor event" : "Global editor event",
+          tags: ["builtin-editor", "go"],
+        },
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      annotations.push((await response.json()).id);
+    }
+    const mode = dialog.getByLabel("Builtin query type", { exact: true });
+    const preview = async (expected: string) => {
+      await dialog
+        .getByRole("button", { name: "Run builtin query", exact: true })
+        .click();
+      await expect(dialog.locator(".query-preview-data")).toContainText(
+        expected,
+      );
+      await expect(dialog.getByRole("alert")).toHaveCount(0);
+    };
+    await expect(dialog.getByLabel("Datasource", { exact: true })).toHaveValue(
+      "grafana",
+    );
+    await expect(mode.locator("option")).toHaveCount(6);
+    await preview("233");
+    await dialog.getByLabel("Series count", { exact: true }).fill("2");
+    await dialog.getByLabel("Start value", { exact: true }).fill("500");
+    await preview("500");
+    expect(
+      JSON.parse((await dialog.locator(".query-preview-data").textContent())!),
+    ).toHaveLength(2);
+    await dialog.getByLabel("Minimum value", { exact: true }).fill("0");
+    await dialog.getByLabel("Minimum value", { exact: true }).fill("");
+    await dialog.getByText("Advanced query JSON", { exact: true }).click();
+    expect(
+      JSON.parse(
+        await dialog.getByLabel("Query JSON", { exact: true }).inputValue(),
+      ).min,
+    ).toBeUndefined();
+    await mode.selectOption("snapshot");
+    await expect(
+      dialog.getByLabel("Snapshot frames", { exact: true }),
+    ).toHaveText("1");
+    await preview("Original");
+    await expect(dialog.locator(".query-preview-data")).toContainText("234");
+    await mode.selectOption("list");
+    await dialog.getByLabel("Public asset folder", { exact: true }).fill("..");
+    await dialog
+      .getByRole("button", { name: "Run builtin query", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "relative public asset folder",
+    );
+    await dialog.getByLabel("Public asset folder", { exact: true }).fill(".");
+    await preview("index.html");
+    await mode.selectOption("timeRegions");
+    await dialog.getByLabel("Region start time", { exact: true }).fill("09:00");
+    await dialog.getByLabel("Region end time", { exact: true }).fill("10:00");
+    await preview(String(Date.parse("2026-10-05T09:00:00Z")));
+    await mode.selectOption("annotations");
+    await preview("Scoped editor event");
+    await expect(dialog.locator(".query-preview-data")).not.toContainText(
+      "Global editor event",
+    );
+    await dialog
+      .getByLabel("Annotation scope", { exact: true })
+      .selectOption("tags");
+    const tags = dialog.getByLabel("Tags (comma separated)", { exact: true });
+    await tags.fill("builtin-editor");
+    await tags.pressSequentially(", go");
+    await expect(tags).toHaveValue("builtin-editor, go");
+    await dialog.getByLabel("Event limit", { exact: true }).fill("7");
+    await preview("Global editor event");
+    await mode.selectOption("measurements");
+    await dialog
+      .getByLabel("Live channel", { exact: true })
+      .fill("ds/builtin-editor-live/counter");
+    const fields = dialog.getByLabel("Live fields (comma separated)", {
+      exact: true,
+    });
+    await fields.fill("Time");
+    await fields.pressSequentially(", Value");
+    await expect(fields).toHaveValue("Time, Value");
+    await dialog.getByLabel("Live buffer (ms)", { exact: true }).fill("10000");
+    const active = async () =>
+      (
+        await (
+          await page.request.get(
+            endpoint +
+              "/api/datasources/uid/builtin-editor-live/resources/stream-stats",
+          )
+        ).json()
+      ).active;
+    await expect.poll(active).toBe(0);
+    await preview('"Value"');
+    expect(JSON.parse((await dialog.locator(".query-preview-data").textContent())!)[0].fields.map((field: any) => field.name)).toEqual(["Time", "Value"]);
+    await expect.poll(active).toBe(1);
+    await dialog
+      .getByRole("button", { name: "Stop query", exact: true })
+      .click();
+    await expect.poll(active).toBe(0);
+    await mode.selectOption("randomWalk");
+    await preview("500");
+    const edited = JSON.parse(
+      await dialog.getByLabel("Query JSON", { exact: true }).inputValue(),
+    );
+    expect(edited.opaque).toEqual(initial.opaque);
+    expect(edited.snapshot).toEqual([snapshot]);
+    expect(edited.timeRegion).toMatchObject({
+      from: "09:00",
+      to: "10:00",
+      opaque: "preserve",
+    });
+    expect(edited.target).toMatchObject({
+      type: "tags",
+      tags: ["builtin-editor", "go"],
+      limit: 7,
+      opaque: "annotation",
+    });
+    expect(edited.filter).toEqual({ fields: ["Time", "Value"], opaque: 233 });
+    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR)
+      await page.screenshot({
+        path: path.join(
+          process.env.METRICSPANEL_QA_SCREENSHOT_DIR,
+          "builtin-query-editor-en-desktop.png",
+        ),
+        animations: "disabled",
+      });
+    await dialog
+      .getByRole("button", { name: "Save queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const persisted = await getSaved();
+    const expected = structuredClone(classic);
+    expected.panels[0].targets = [edited];
+    expect(persisted.grafana).toEqual(expected);
+    const cliBinary = process.env.METRICSPANEL_TEST_BINARY || path.join(repoRoot, "bin", process.platform === "win32" ? "metricspanel.exe" : "metricspanel");
+    const exported = await run(cliBinary, ["dashboards", "export", "--id", saved.id, "--format", "grafana", "--server", endpoint], { windowsHide: true });
+    expect(JSON.parse(exported.stdout)).toEqual(expected);
+    const v1: any = {
+      apiVersion: "dashboard.grafana.app/v1beta1",
+      kind: "Dashboard",
+      metadata: { name: "builtin-query-editor-v1", opaque: "metadata" },
+      spec: { ...structuredClone(classic), uid: "builtin-query-editor-v1" },
+    };
+    const v2: any = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      kind: "Dashboard",
+      metadata: { name: "builtin-query-editor-v2", opaque: "metadata" },
+      spec: {
+        title: classic.title,
+        timeSettings: {
+          from: classic.time.from,
+          to: classic.time.to,
+          timezone: "utc",
+        },
+        elements: {
+          editable: {
+            kind: "Panel",
+            spec: {
+              id: 41,
+              title: "Builtin result",
+              opaque: "panel",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  opaque: "group",
+                  queries: [
+                    {
+                      kind: "PanelQuery",
+                      opaque: "wrapper",
+                      spec: {
+                        refId: "A",
+                        hidden: false,
+                        query: {
+                          kind: "DataQuery",
+                          group: "grafana",
+                          datasource: { name: "grafana", opaque: "source" },
+                          spec: {
+                            ...initial,
+                            datasource: undefined,
+                            refId: undefined,
+                          },
+                        },
+                      },
+                    },
+                  ],
+                  transformations: [],
+                },
+              },
+              vizConfig: {
+                kind: "VizConfig",
+                group: "table",
+                spec: {
+                  options: {},
+                  fieldConfig: { defaults: {}, overrides: [] },
+                },
+              },
+            },
+          },
+        },
+        layout: {
+          kind: "GridLayout",
+          spec: {
+            items: [
+              {
+                kind: "GridLayoutItem",
+                spec: {
+                  x: 0,
+                  y: 0,
+                  width: 24,
+                  height: 8,
+                  element: { kind: "ElementReference", name: "editable" },
+                },
+              },
+            ],
+          },
+        },
+        opaque: "template",
+      },
+    };
+    for (const resource of [v1, v2]) {
+      ({ saved, dialog } = await open(resource, resource.metadata.name));
+      await dialog.getByLabel("Start value", { exact: true }).fill("777");
+      await dialog
+        .getByRole("button", { name: "Run builtin query", exact: true })
+        .click();
+      await expect(dialog.locator(".query-preview-data")).toContainText("777");
+      await dialog
+        .getByRole("button", { name: "Save queries", exact: true })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      const original = JSON.parse(JSON.stringify(resource));
+      if (resource === v1) original.spec.panels[0].targets[0].startValue = 777;
+      else
+        original.spec.elements.editable.spec.data.spec.queries[0].spec.query.spec.startValue = 777;
+      expect((await getSaved()).grafana).toEqual(original);
+    }
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "面板查询", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "面板查询", exact: true });
+    await expect(
+      dialog.getByLabel("内置查询类型", { exact: true }),
+    ).toHaveValue("randomWalk");
+    await expect(dialog.getByLabel("初始值", { exact: true })).toHaveValue(
+      "777",
+    );
+    await dialog.getByLabel("初始值", { exact: true }).fill("888");
+    await dialog
+      .getByRole("button", { name: "运行内置查询", exact: true })
+      .click();
+    await expect(dialog.locator(".query-preview-data")).toContainText("888");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR)
+      await page.screenshot({
+        path: path.join(
+          process.env.METRICSPANEL_QA_SCREENSHOT_DIR,
+          "builtin-query-editor-zh-mobile.png",
+        ),
+        animations: "disabled",
+      });
+    await dialog
+      .getByRole("button", { name: "关闭对话框", exact: true })
+      .click();
+    expect((await getSaved()).panels[0].config.targets[0].startValue).toBe(777);
+    expect(issues).toEqual([]);
+  } finally {
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    for (const id of annotations)
+      await page.request.delete(endpoint + "/api/annotations/" + id);
+    for (const id of ids)
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
+    await page.request.delete(
+      endpoint + "/api/datasources/uid/builtin-editor-live",
+    );
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-sdk-datasource",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path
+        .basename(resolved)
+        .startsWith("metricspanel233-builtin-editors-e2e-")
+    )
+      throw new Error(
+        "Refusing cleanup outside the builtin editor test directory",
+      );
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("Custom multi-panel dashboards duplicate and edit panels, and snapshots keep frozen data across reload and export", async ({ page, endpoint }) => {
+  test.setTimeout(90000);
+  const ids: string[] = [], issues: string[] = [];
+  let queryRequests = 0;
+  await page.addInitScript(() => localStorage.setItem("metricspanel-locale", "en"));
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => { if (["warning", "error"].includes(entry.type())) issues.push(entry.text()); });
+  page.on("request", (request) => { if (/\/(query|query_range)$/.test(new URL(request.url()).pathname)) queryRequests++; });
+  const timestamp = Date.now() - 5000;
+  try {
+    expect((await page.request.post(endpoint + "/api/v1/ingest", { data: { samples: [{ name: "snapshot_orders", timestamp, value: 233, labels: { service: "orders" } }] } })).ok()).toBeTruthy();
+    await page.goto(endpoint + "/#dashboards");
+    await page.getByRole("button", { name: "New dashboard", exact: true }).click();
+    let dialog = page.getByRole("dialog", { name: "New dashboard", exact: true });
+    await dialog.getByLabel("Dashboard name", { exact: true }).fill("Orders dashboard");
+    await dialog.getByRole("button", { name: "Create dashboard", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Orders dashboard", exact: true })).toBeVisible();
+    let dashboards = await (await page.request.get(endpoint + "/api/v1/dashboards")).json();
+    const original = dashboards.find((dashboard: any) => dashboard.name === "Orders dashboard");
+    ids.push(original.id);
+    for (const [title, type] of [["Orders history", "timeseries"], ["Orders total", "stat"], ["Orders table", "table"]]) {
+      await page.getByRole("button", { name: "Add panel", exact: true }).first().click();
+      dialog = page.getByRole("dialog", { name: "Add panel", exact: true });
+      await dialog.getByLabel("Panel title", { exact: true }).fill(title);
+      await dialog.getByLabel("Visualization", { exact: true }).selectOption(type);
+      await dialog.getByLabel("Metric", { exact: true }).fill("snapshot_orders");
+      await dialog.getByRole("button", { name: "Save panel", exact: true }).click();
+      await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole("region", { name: "Orders total", exact: true }).locator(".stat-value")).toHaveText("233");
+    await expect(page.getByRole("region", { name: "Orders table", exact: true })).toContainText("233");
+    await expect(page.locator(".chart-grid .chart-panel")).toHaveCount(3);
+    await expect(page.locator(".agent-strip")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Collection status", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Edit Orders total", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Edit panel", exact: true });
+    await dialog.getByLabel("Panel title", { exact: true }).fill("Orders copy");
+    await dialog.getByRole("button", { name: "Duplicate panel", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Orders total", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("region", { name: "Orders copy", exact: true })).toContainText("233");
+    await page.getByRole("button", { name: "Remove Orders copy", exact: true }).click();
+    await page.getByRole("dialog", { name: "Remove panel", exact: true }).getByRole("button", { name: "Remove panel", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Orders copy", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Edit Orders table", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Edit panel", exact: true });
+    await expect(dialog.getByLabel("Visualization", { exact: true })).toHaveValue("table");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.METRICSPANEL_QA_SCREENSHOT_DIR, "custom-panels-en.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Create snapshot", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Create snapshot", exact: true });
+    await dialog.getByLabel("Snapshot name", { exact: true }).fill("Orders saved window");
+    await dialog.getByRole("button", { name: "Save snapshot", exact: true }).click();
+    const link = dialog.getByRole("link", { name: "Open snapshot", exact: true });
+    await expect(link).toBeVisible();
+    const snapshotURL = new URL((await link.getAttribute("href"))!, endpoint).href;
+    dashboards = await (await page.request.get(endpoint + "/api/v1/dashboards")).json();
+    const snapshot = dashboards.find((dashboard: any) => dashboard.name === "Orders saved window");
+    ids.push(snapshot.id);
+    expect(snapshot.panels).toHaveLength(3);
+    expect(snapshot.grafana.snapshot.sourceUID).toBe(original.id);
+    expect(snapshot.grafana.panels.every((panel: any) => panel.targets[0].queryType === "snapshot" && panel.datasource.uid === "grafana")).toBeTruthy();
+    expect(snapshot.grafana.annotations.list).toEqual([]);
+    expect(snapshot.grafana.templating.list).toEqual([]);
+    expect(snapshot.grafana.refresh).toBe("");
+    expect(snapshot.grafana.panels[2].targets[0].snapshot[0].data.values[1]).toEqual([233]);
+    expect((await page.request.post(endpoint + "/api/v1/ingest", { data: { samples: [{ name: "snapshot_orders", timestamp, value: 999, labels: { service: "orders" } }] } })).ok()).toBeTruthy();
+    await link.click();
+    await expect(page.getByRole("heading", { name: "Orders saved window", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Orders total", exact: true })).toContainText("233");
+    await expect(page.getByRole("region", { name: "Orders table", exact: true })).toContainText("233");
+    queryRequests = 0;
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Orders total", exact: true })).toContainText("233");
+    expect(queryRequests).toBe(0);
+    expect(page.url()).toBe(snapshotURL);
+    const cliBinary = process.env.METRICSPANEL_TEST_BINARY || path.join(repoRoot, "bin", process.platform === "win32" ? "metricspanel.exe" : "metricspanel");
+    const exported = await promisify(execFile)(cliBinary, ["dashboards", "export", "--id", snapshot.id, "--format", "grafana", "--server", endpoint], { windowsHide: true });
+    expect(JSON.parse(exported.stdout)).toEqual(snapshot.grafana);
+    // Removing the source must leave the independently saved snapshot usable.
+    expect((await page.request.delete(endpoint + "/api/v1/dashboards/" + original.id)).ok()).toBeTruthy();
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Orders total", exact: true })).toContainText("233");
+    await page.getByRole("button", { name: "Switch language", exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("button", { name: "创建快照", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.METRICSPANEL_QA_SCREENSHOT_DIR, "snapshot-zh-mobile.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Switch language", exact: true }).click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    const transformed = { uid: "snapshot-transform-test", title: "Transformed window", refresh: "", time: { from: "now-30m", to: "now" }, templating: { list: [{ name: "label", type: "constant", query: "Frozen column", current: { value: "Frozen column" } }] }, panels: [{ id: 81, title: "Double value", type: "table", timeFrom: "2h", timeShift: "1h", datasource: { uid: "metricspanel", type: "prometheus" }, targets: [{ refId: "A", expr: "vector(12)", instant: true }], fieldConfig: { defaults: {}, overrides: [{ matcher: { id: "byName", options: "Double" }, properties: [{ id: "displayName", value: "$label" }] }] }, transformations: [{ id: "calculateField", options: { mode: "binary", binary: { left: "Value", operator: "*", right: "2" }, alias: "Double", replaceFields: true } }], gridPos: { x: 0, y: 0, w: 24, h: 8 } }] };
+    let response = await page.request.post(endpoint + "/api/v1/import/grafana", { data: transformed });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    ids.push((await response.json()).dashboard.id);
+    await page.goto(endpoint + "/d/" + transformed.uid + "/view");
+    await expect(page.getByRole("region", { name: "Double value", exact: true })).toContainText("24");
+    await expect(page.getByRole("columnheader", { name: "Frozen column", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Create snapshot", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Create snapshot", exact: true });
+    await dialog.getByLabel("Snapshot name", { exact: true }).fill("Transformed snapshot");
+    await dialog.getByRole("button", { name: "Save snapshot", exact: true }).click();
+    await expect(dialog.getByRole("link", { name: "Open snapshot", exact: true })).toBeVisible();
+    dashboards = await (await page.request.get(endpoint + "/api/v1/dashboards")).json();
+    const shifted = dashboards.find((dashboard: any) => dashboard.name === "Transformed snapshot");
+    ids.push(shifted.id);
+    const savedPanel = shifted.grafana.panels[0];
+    const end = Date.parse(shifted.grafana.time.to);
+    expect(savedPanel.snapshotTimeRange.to).toBe(end - 3600000);
+    expect(savedPanel.snapshotTimeRange.from).toBe(end - 3 * 3600000);
+    expect(savedPanel.transformations).toEqual([]);
+    expect(savedPanel.fieldConfig.overrides).toEqual([]);
+    await dialog.getByRole("link", { name: "Open snapshot", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Double value", exact: true })).toContainText("24");
+    queryRequests = 0;
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Double value", exact: true })).toContainText("24");
+    await expect(page.getByRole("columnheader", { name: "Frozen column", exact: true })).toBeVisible();
+    expect(queryRequests).toBe(0);
+    const legacy = { uid: "snapshot-legacy-test", title: "Legacy snapshot", panels: [{ id: 91, title: "Legacy frozen", type: "stat", datasource: { uid: "does-not-exist", type: "prometheus" }, targets: [{ expr: "must_not_query" }], snapshotData: [{ refId: "Old", fields: [{ name: "Value", type: "number", config: {}, values: [777] }] }], transformations: [{ id: "calculateField", options: { mode: "binary", binary: { left: "Value", operator: "*", right: "2" }, alias: "Double", replaceFields: true } }], gridPos: { x: 0, y: 0, w: 24, h: 8 } }] };
+    response = await page.request.post(endpoint + "/api/v1/import/grafana", { data: legacy });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    ids.push((await response.json()).dashboard.id);
+    queryRequests = 0;
+    await page.goto(endpoint + "/d/" + legacy.uid + "/view");
+    await expect(page.getByRole("region", { name: "Legacy frozen", exact: true })).toContainText("1554");
+    expect(queryRequests).toBe(0);
+    await page.getByRole("button", { name: "Create snapshot", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Create snapshot", exact: true });
+    await dialog.getByLabel("Snapshot name", { exact: true }).fill("Legacy transformed snapshot");
+    await dialog.getByRole("button", { name: "Save snapshot", exact: true }).click();
+    await expect(dialog.getByRole("link", { name: "Open snapshot", exact: true })).toBeVisible();
+    dashboards = await (await page.request.get(endpoint + "/api/v1/dashboards")).json();
+    const legacySaved = dashboards.find((dashboard: any) => dashboard.name === "Legacy transformed snapshot");
+    ids.push(legacySaved.id);
+    expect(legacySaved.grafana.panels[0].snapshotData).toBeUndefined();
+    await dialog.getByRole("link", { name: "Open snapshot", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Legacy frozen", exact: true })).toContainText("1554");
+    expect(issues).toEqual([]);
+  } finally {
+    if (!page.isClosed()) await page.goto(endpoint + "/#overview").catch(() => {});
+    for (const id of ids) await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
+  }
+});
+
 test("Native collector forms preserve credentials, scrape Redis, and use plain Chinese/English CLI copy", async ({ page, endpoint }, testInfo) => {
   test.setTimeout(60000);
   const issues: string[] = [], sockets = new Set<Socket>();

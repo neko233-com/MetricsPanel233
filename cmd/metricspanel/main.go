@@ -896,17 +896,26 @@ func schema() any {
 		"limits":               map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32},
 		"pending_capabilities": []string{"additional core UI extension points and app core services", "Angular legacy plugins", "full Grafana core services"},
 	}
+	result["dashboard_snapshots"] = map[string]any{
+		"capture": "Create snapshot captures every visible/repeated panel at one fixed clock through the browser SDK; first real Live frame releases its subscription; query failures save no partial dashboard",
+		"format":  "independent Grafana dashboard with builtin snapshot queries, fixed bounds and refresh disabled; values live in the durable control DB and never enter monitoring samples; legacy snapshotData DTO imports normalize runtime queries and retain original export",
+		"agent":   []string{"dashboards list", "dashboards export --id ID --format grafana", "dashboards save --file SNAPSHOT_JSON", "dashboards delete --id ID"},
+		"limits":  map[string]int{"panel_bytes": 512 * 1024, "dashboard_bytes": 4 * 1024 * 1024, "capture_workers": 4},
+		"pending": []string{"single-step CLI capture", "Grafana /api/snapshots routes", "anonymous sharing and expiry deletion"},
+	}
 	result["builtin_grafana_datasource"] = map[string]any{
 		"identity":             map[string]any{"uid": "grafana", "id": -1, "name": "-- Grafana --", "type": "grafana", "readOnly": true, "default_metrics": "metricspanel"},
 		"frontend_queries":     []string{"randomWalk", "snapshot", "timeRegions", "annotations", "measurements", "list"},
 		"backend_queries":      []string{"randomWalk", "list"},
+		"query_editor":         "Panel queries: English/Chinese SDK editor for all six builtin modes; previews execute the real source, stop/close cancels Live; type-only references resolve grafana; unknown fields and Classic/V1/V2 envelopes retained",
+		"alert_editor":         "randomWalk and list execute server-side; frontend-only modes disabled for alert queries",
 		"files":                "listFiles returns embedded public web assets only; relative folder, optional time range for list queries",
 		"agent":                "datasources query --id grafana --file FILE|- [--stream]; frontend callbacks execute in the browser",
 		"variables":            "actual instance UIDs filtered by plugin type and name regex; visible datasource selector; both SDK generations resolve variable UID references",
 		"runtime_registration": "legacy DataSourceSrv and public runtime/unstable share transient instances; duplicate UID rejected; settings reload retains runtime registrations",
 		"limits":               map[string]int{"random_frames": 128, "points_per_frame": 10000, "generated_points_per_query": 1000000, "snapshot_frames": 128, "snapshot_fields": 1024, "files_default": 500, "files_max": 10000},
 		"storage":              "generated visualization data is never ingested or persisted",
-		"pending":              []string{"Grafana scopes annotation queries", "remaining core datasource query editors"},
+		"pending":              []string{"Grafana scopes annotation queries"},
 	}
 	result["expressions"] = map[string]any{
 		"identity":           map[string]any{"uid": "__expr__", "type": "__expr__", "id": -100, "name": "Expression", "readOnly": true, "discovery": "separate from installable datasources"},

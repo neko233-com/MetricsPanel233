@@ -77,6 +77,8 @@ export type GrafanaTarget = {
   datasource?: string | { type?: string; uid?: string };
 };
 export type GrafanaConfig = {
+  snapshotData?: unknown;
+  snapshotTimeRange?: { from: number; to: number; timezone?: string };
   id?: number;
   type: string;
   description?: string;
@@ -235,8 +237,9 @@ export function watchFrames(
   values: InterpolationValues,
   range: TimeSelection,
   refresh: Observable<unknown>,
+  context: { dashboardUID?: string; sampledAt?: number } = {},
 ): Observable<FrameUpdate> {
-  let sampledAt = Date.now();
+  let sampledAt = context.sampledAt ?? Date.now();
   const trigger = refresh.pipe(
     tap(() => {
       sampledAt = Date.now();
@@ -346,6 +349,8 @@ export function watchFrames(
           });
           return from(
             datasource.query({
+              dashboardUID: context.dashboardUID,
+              panelId: panel.config?.id,
               requestId: `${panel.id}${compare ? "-compare" : ""}-${Date.now()}`,
               interval: `${Math.max(1, Math.ceil((end - start) / 240000))}s`,
               intervalMs: Math.max(

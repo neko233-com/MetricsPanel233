@@ -246,6 +246,43 @@ test("SDK listFiles uses backend transport without inventing query time bounds",
   assert.equal(request.maxDataPoints, 20);
 });
 
+test("direct legacy annotation panel queries retain tags, limit and dashboard scope", async () => {
+  const source = new LocalGrafana(settings);
+  queryAPI = async () => [{ time: 5000, text: "Legacy event" }];
+  const tagged = await rx.firstValueFrom(
+    source.query(
+      request([
+        {
+          refId: "Old",
+          queryType: "annotations",
+          type: "tags",
+          tags: ["$tag"],
+          matchAny: true,
+          limit: 7,
+        },
+      ]),
+    ),
+  );
+  assert.equal(
+    tagged.data[0].fields.find((field) => field.name === "text").values[0],
+    "Legacy event",
+  );
+  let params = new URLSearchParams(apiCalls.at(-1).url.split("?")[1]);
+  assert.deepEqual(params.getAll("tags"), ["prod", "go"]);
+  assert.equal(params.get("limit"), "7");
+  assert.equal(params.get("matchAny"), "true");
+  await rx.firstValueFrom(
+    source.query(
+      request(
+        [{ refId: "Dashboard", queryType: "annotations", type: "dashboard" }],
+        { dashboardUID: "scope-233" },
+      ),
+    ),
+  );
+  params = new URLSearchParams(apiCalls.at(-1).url.split("?")[1]);
+  assert.equal(params.get("dashboardUID"), "scope-233");
+});
+
 test("native SDK annotations expand array tags, preserve alert fields and cancel HTTP work", async () => {
   const source = new LocalGrafana(settings);
   queryAPI = async () => [

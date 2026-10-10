@@ -99,6 +99,27 @@ func Import(data []byte) (ImportResult, error) {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				return err
 			}
+			var snapshot map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &snapshot); err != nil {
+				return err
+			}
+			legacySnapshot, hasSnapshot := snapshot["snapshotData"]
+			if hasSnapshot && string(legacySnapshot) != "null" {
+				frames, err := legacySnapshotFrames(legacySnapshot)
+				if err != nil {
+					return fmt.Errorf("panel %q: %w", p.Title, err)
+				}
+				snapshot["datasource"] = json.RawMessage(`{"uid":"grafana","type":"grafana"}`)
+				snapshot["targets"], err = json.Marshal([]map[string]any{{"refId": "Snapshot", "queryType": "snapshot", "snapshot": frames}})
+				if err != nil {
+					return err
+				}
+				raw, err = json.Marshal(snapshot)
+				if err != nil {
+					return err
+				}
+				p.Targets = nil
+			}
 			if p.Title == "" {
 				p.Title = p.Type
 				if p.Title == "" {

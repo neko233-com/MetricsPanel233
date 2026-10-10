@@ -8,6 +8,7 @@ import {
 import type { Subscription } from "rxjs";
 import {
   api,
+  dashboardUID,
   interpolate,
   jsonBody,
   message,
@@ -94,7 +95,15 @@ export function PanelQueriesEditor({
   const current = drafts.find((draft) => draft.key === selected);
   const query = current?.query;
   const ref = query?.datasource || panel?.config?.datasource;
-  const rawUID = typeof ref === "string" ? ref : ref?.uid || "";
+  const rawUID =
+    typeof ref === "string"
+      ? ref
+      : ref?.uid ||
+        (ref?.type === "grafana"
+          ? "grafana"
+          : ref?.type === "__expr__"
+            ? "__expr__"
+            : "");
   const uid =
     interpolate(rawUID, values, range) ||
     (typeof ref === "object" && ref?.type === "__expr__" ? "__expr__" : "");
@@ -179,6 +188,7 @@ export function PanelQueriesEditor({
         values,
         range,
         new Subject(),
+        { dashboardUID: dashboardUID(baseline.current) },
       ).subscribe({
         next: (update) => {
           setPreview(update);

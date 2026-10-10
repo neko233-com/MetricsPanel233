@@ -108,6 +108,10 @@ export function Dashboards({
                       <ArrowRight size={17} />
                     </button>
                     <div className="subtle mono">{d.id}</div>
+                    {(d.grafana as { snapshot?: unknown } | undefined)
+                      ?.snapshot ? (
+                      <span className="subtle">{tr("Snapshot")}</span>
+                    ) : null}
                   </td>
                   <td>{d.panels.length}</td>
                   <td>{new Date(d.updated_at).toLocaleString()}</td>

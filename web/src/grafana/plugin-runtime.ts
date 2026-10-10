@@ -326,6 +326,7 @@ async function init(): Promise<Runtime> {
       { LocalGrafana },
       { ExpressionSource, expressionSettings },
       expressionCore,
+      { GrafanaQueryEditor },
     ] = await Promise.all([
       import("@grafana/runtime"),
       import("@grafana/ui"),
@@ -335,6 +336,7 @@ async function init(): Promise<Runtime> {
       import("./grafana-source"),
       import("./expression-source"),
       import("metricspanel/sdk-expression-source"),
+      import("./GrafanaQueryEditor"),
     ]);
     if (!loggersInitialized) {
       logging.initializeLoggersRegistry();
@@ -349,8 +351,8 @@ async function init(): Promise<Runtime> {
           LocalPrometheus,
         ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
       if (meta.id === "grafana")
-        return new Data.DataSourcePlugin(
-          LocalGrafana,
+        return new Data.DataSourcePlugin(LocalGrafana).setQueryEditor(
+          GrafanaQueryEditor,
         ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
       return (await loadPlugin(meta.id))
         .plugin as Data.DataSourcePlugin<Data.DataSourceApi>;
@@ -504,6 +506,7 @@ async function init(): Promise<Runtime> {
           instance = new LocalPrometheus(settings);
         } else if (settings.type === "grafana") {
           instance = new LocalGrafana(settings);
+          instance.components = { QueryEditor: GrafanaQueryEditor };
         } else {
           const module = await loadPlugin(settings.type);
           const plugin =

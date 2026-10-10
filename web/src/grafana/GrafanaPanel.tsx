@@ -12,6 +12,7 @@ import { marked } from "marked";
 import { Chart } from "../components/Chart";
 import {
   message,
+  dashboardUID,
   type Panel,
   type InterpolationValues,
   type Dashboard,
@@ -79,7 +80,8 @@ export default function GrafanaPanel({
     key: string;
   }>();
   const local = localZoom?.key === scopeKey ? localZoom.value : undefined;
-  const inputRange = local || range;
+  const inputRange = local || config?.snapshotTimeRange || range;
+  const queryDashboardUID = dashboard ? dashboardUID(dashboard) : undefined;
   useEffect(() => setLocalZoom(undefined), [scopeKey]);
   const refresh = useMemo(() => new Subject<void>(), []);
   useEffect(() => {
@@ -88,7 +90,9 @@ export default function GrafanaPanel({
       return;
     }
     setLoading(true);
-    const listener = watchFrames(panel, values, inputRange, refresh).subscribe({
+    const listener = watchFrames(panel, values, inputRange, refresh, {
+      dashboardUID: queryDashboardUID,
+    }).subscribe({
       next: (update) => {
         onUpdate?.(update);
         setFrames(update.frames);
@@ -105,7 +109,7 @@ export default function GrafanaPanel({
       },
     });
     return () => listener.unsubscribe();
-  }, [JSON.stringify(panel), key, inputRange, refresh]);
+  }, [JSON.stringify(panel), key, inputRange, refresh, queryDashboardUID]);
   useEffect(() => refresh.next(), [tick, refresh]);
   const effective = queryRange
     ? {
