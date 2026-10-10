@@ -87,7 +87,7 @@ func TestIndexedJoinSupportsTenThousandMatchingDimensions(t *testing.T) {
 	assert.Equal(t, float64(466), *output[MaxItems-1].points[0])
 }
 
-func TestThresholdSeriesScalarBoundariesAndUnsupportedHysteresis(t *testing.T) {
+func TestThresholdSeriesScalarBoundariesAndRecovery(t *testing.T) {
 	var model queryModel
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"threshold","expression":"A","conditions":[{"evaluator":{"type":"within_range_included","params":[2,4]}}]}`), &model))
 	operation, err := compile(model)
@@ -104,7 +104,7 @@ func TestThresholdSeriesScalarBoundariesAndUnsupportedHysteresis(t *testing.T) {
 	assert.Equal(t, float64(1), *output[0].points[0])
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"threshold","expression":"A","conditions":[{"evaluator":{"type":"gt","params":[233]},"unloadEvaluator":{"type":"lt","params":[200]}}]}`), &model))
 	_, err = compile(model)
-	require.ErrorContains(t, err, "hysteresis")
+	require.NoError(t, err)
 }
 func TestReduceAllFunctionsAndModes(t *testing.T) {
 	clean := value{times: []time.Time{time.Unix(1, 0), time.Unix(2, 0), time.Unix(3, 0), time.Unix(4, 0)}, points: []*float64{ptr(1), ptr(2), ptr(3), ptr(4)}, labels: data.Labels{"host": "go"}}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
 type queryModel struct {
@@ -28,12 +29,11 @@ type queryModel struct {
 }
 
 type conditionModel struct {
-	UnloadEvaluator json.RawMessage `json:"unloadEvaluator"`
-	Evaluator       struct {
-		Type   string    `json:"type"`
-		Params []float64 `json:"params"`
-	} `json:"evaluator"`
-	Operator struct {
+	UnloadEvaluator    json.RawMessage    `json:"unloadEvaluator"`
+	Evaluator          thresholdEvaluator `json:"evaluator"`
+	LoadedFingerprints []string           `json:"loadedFingerprints"`
+	LoadedDimensions   json.RawMessage    `json:"loadedDimensions"`
+	Operator           struct {
 		Type string `json:"type"`
 	} `json:"operator"`
 	Query struct {
@@ -51,6 +51,8 @@ type operation struct {
 	root         *mathNode
 	dependencies []string
 	interval     time.Duration
+	unload       *thresholdEvaluator
+	loaded       map[data.Fingerprint]struct{}
 }
 
 // Describe validates an expression without querying data, for stored graph
@@ -117,29 +119,8 @@ func compile(m queryModel) (operation, error) {
 		}
 	}
 	if m.Type == "threshold" {
-		if len(m.Conditions) != 1 {
-			return o, errors.New("threshold needs one evaluator")
-		}
-		e := m.Conditions[0].Evaluator
-		if raw := strings.TrimSpace(string(m.Conditions[0].UnloadEvaluator)); raw != "" && raw != "null" {
-			return o, errors.New("stateful hysteresis thresholds are not implemented")
-		}
-		arity := 1
-		switch e.Type {
-		case "gt", "lt", "eq", "ne", "gte", "lte":
-		case "within_range", "outside_range", "within_range_included", "outside_range_included":
-			arity = 2
-		default:
-			return o, fmt.Errorf("unknown threshold evaluator %q", e.Type)
-		}
-		if len(e.Params) != arity {
-			return o, fmt.Errorf("threshold %s needs %d parameters", e.Type, arity)
-		}
-		for _, n := range e.Params {
-			if math.IsNaN(n) || math.IsInf(n, 0) {
-				return o, errors.New("threshold parameters must be finite")
-			}
-		}
+		err := o.compileThreshold()
+		return o, err
 	}
 	return o, nil
 }
@@ -287,34 +268,19 @@ func (o operation) execute(vars map[string]values, from, to time.Time, b *budget
 			}
 			output = append(output, res)
 		case "threshold":
+			evaluator, invert := o.model.Conditions[0].Evaluator, o.model.Invert
+			if o.unload != nil {
+				invert = false
+				// The loaded predicate belongs to the dimension, not individual
+				// points. Hash its labels once for an entire time series.
+				if _, loaded := o.loaded[v.labels.Fingerprint()]; loaded {
+					evaluator, invert = *o.unload, true
+				}
+			}
 			mapped, err := clonePoints(v, b, func(n *float64) *float64 {
 				if n != nil {
-					e := o.model.Conditions[0].Evaluator
-					x, a := *n, e.Params[0]
-					yes := false
-					switch e.Type {
-					case "gt":
-						yes = x > a
-					case "lt":
-						yes = x < a
-					case "eq":
-						yes = x == a
-					case "ne":
-						yes = x != a
-					case "gte":
-						yes = x >= a
-					case "lte":
-						yes = x <= a
-					case "within_range":
-						yes = x > a && x < e.Params[1]
-					case "outside_range":
-						yes = x < a || x > e.Params[1]
-					case "within_range_included":
-						yes = x >= a && x <= e.Params[1]
-					case "outside_range_included":
-						yes = x <= a || x >= e.Params[1]
-					}
-					if o.model.Invert {
+					yes := compareThreshold(evaluator, *n)
+					if invert {
 						yes = !yes
 					}
 					n = boolean(yes)

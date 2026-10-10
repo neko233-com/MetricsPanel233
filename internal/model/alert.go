@@ -141,6 +141,7 @@ func (r AlertRule) Validate() error {
 }
 
 type AlertInstance struct {
+	ResultFingerprint  string            `json:"result_fingerprint,omitempty"`
 	Key                string            `json:"key"`
 	Labels             map[string]string `json:"labels"`
 	State              string            `json:"state"`

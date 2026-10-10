@@ -1,0 +1,38 @@
+{
+  "uid": "graph-recovery-memory",
+  "title": "Memory with recovery threshold",
+  "execution": "grafana",
+  "interval_seconds": 30,
+  "for_seconds": 60,
+  "keep_firing_for_seconds": 30,
+  "no_data_state": "NoData",
+  "error_state": "Error",
+  "annotations": {
+    "summary": "Memory {{ humanize1024 $values.A.Value }}B",
+    "description": "Trigger above 1 GiB; recover below 896 MiB, then wait 30s."
+  },
+  "grafana": {
+    "condition": "C",
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "metricspanel",
+        "model": { "expr": "sum(metricspanel_memory_bytes)", "instant": true }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": { "type": "gt", "params": [1073741824] },
+              "unloadEvaluator": { "type": "lt", "params": [939524096] }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

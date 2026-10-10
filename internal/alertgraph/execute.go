@@ -6,30 +6,50 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/neko233-com/MetricsPanel233/internal/alerttemplates"
 	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 )
 
 type Value struct {
-	Labels           map[string]string
-	Value            float64
-	Missing          bool
-	Matches          json.RawMessage
-	Captures         map[string]alerttemplates.Capture
-	EvaluationString string
+	ResultFingerprint string
+	Labels            map[string]string
+	Value             float64
+	Missing           bool
+	Matches           json.RawMessage
+	Captures          map[string]alerttemplates.Capture
+	EvaluationString  string
 }
 
 func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.SourceQuery) ([]Value, error) {
+	return ExecuteWithLoaded(ctx, p, at, source, nil)
+}
+
+func ExecuteWithLoaded(ctx context.Context, p *Plan, at time.Time, source expressions.SourceQuery, loaded []string) ([]Value, error) {
 	if source == nil {
 		source = func(context.Context, string, []backend.DataQuery) (backend.Responses, string, error) {
 			return nil, "", errors.New("alert backend datasource is not configured")
 		}
 	}
-	response := expressions.Execute(ctx, p.Groups(at), source)
+	groups := p.Groups(at)
+	if p.RecoveryRef != "" {
+		queries := groups["__expr__"]
+		for i := range queries {
+			if queries[i].RefID == p.RecoveryRef {
+				model, err := expressions.WithLoadedFingerprints(queries[i].JSON, loaded)
+				if err != nil {
+					return nil, err
+				}
+				queries[i].JSON = model
+			}
+		}
+	}
+	response := expressions.Execute(ctx, groups, source)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -90,6 +110,9 @@ func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.Sour
 			return nil, errors.New("alert condition requires one reduced numeric value per labelled frame")
 		}
 		v := Value{Labels: frame.Fields[0].Labels.Copy(), Missing: rows == 0}
+		if p.RecoveryRef != "" {
+			v.ResultFingerprint = strconv.FormatUint(uint64(data.Labels(v.Labels).Fingerprint()), 10)
+		}
 		if rows > 0 {
 			n, err := frame.Fields[0].NullableFloatAt(0)
 			if err != nil {

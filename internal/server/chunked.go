@@ -52,10 +52,25 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 			fail(w, 404, errors.New("datasource API group does not match its plugin"))
 			return
 		}
-		var input queriesAPI.QueryDataRequest
-		if err := decode(w, r, &input); err != nil {
+		var envelope struct {
+			queriesAPI.TimeRange
+			Queries []json.RawMessage `json:"queries"`
+			Debug   bool              `json:"debug,omitempty"`
+		}
+		if err := decode(w, r, &envelope); err != nil {
 			fail(w, 400, err)
 			return
+		}
+		input := queriesAPI.QueryDataRequest{TimeRange: envelope.TimeRange, Debug: envelope.Debug}
+		originalModels := map[string]json.RawMessage{}
+		for _, raw := range envelope.Queries {
+			var query queriesAPI.DataQuery
+			if err := json.Unmarshal(raw, &query); err != nil {
+				fail(w, 400, err)
+				return
+			}
+			input.Queries = append(input.Queries, query)
+			originalModels[query.RefID] = raw
 		}
 		if len(input.Queries) == 0 || len(input.Queries) > 32 {
 			fail(w, 400, errors.New("request needs 1–32 queries"))
@@ -155,6 +170,10 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 					fail(w, 400, err)
 					return
 				}
+				if err := restoreQueryProperties(queries, originalModels); err != nil {
+					fail(w, 400, err)
+					return
+				}
 				groups[uid] = queries
 			}
 			s.writeQueryGroups(w, r, groups)
@@ -165,8 +184,40 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 			fail(w, 400, err)
 			return
 		}
+		if err := restoreQueryProperties(queries, originalModels); err != nil {
+			fail(w, 400, err)
+			return
+		}
 		s.writeQueryGroups(w, r, map[string][]backend.DataQuery{ds.UID: queries})
 	})
+}
+
+// The SDK normalizes common query properties but decodes additional properties
+// through float64. Restore their original JSON, including uint64 fingerprint
+// frames, while retaining the SDK's datasource/range/interval normalization.
+func restoreQueryProperties(queries []backend.DataQuery, original map[string]json.RawMessage) error {
+	for i := range queries {
+		var source, normalized map[string]json.RawMessage
+		if err := json.Unmarshal(original[queries[i].RefID], &source); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(queries[i].JSON, &normalized); err != nil {
+			return err
+		}
+		for key, raw := range source {
+			switch key {
+			case "refId", "resultAssertions", "datasource", "datasourceId", "queryType", "maxDataPoints", "intervalMs", "hide", "timeRange":
+			default:
+				normalized[key] = raw
+			}
+		}
+		encoded, err := json.Marshal(normalized)
+		if err != nil {
+			return err
+		}
+		queries[i].JSON = encoded
+	}
+	return nil
 }
 
 type queryChunk struct {

@@ -28,6 +28,7 @@ type Query struct {
 }
 
 type Plan struct {
+	RecoveryRef          string          `json:"-"`
 	OrgID                int64           `json:"orgID"`
 	NotificationSettings json.RawMessage `json:"notification_settings"`
 	Condition            string          `json:"condition"`
@@ -128,6 +129,12 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 				return nil, fmt.Errorf("expression %s: %w", q.RefID, err)
 			}
 			q.dependencies = refs
+			if expressions.HasRecovery(q.Model) {
+				if q.RefID != p.Condition {
+					return nil, fmt.Errorf("recovery threshold %s is only allowed to be the alert condition", q.RefID)
+				}
+				p.RecoveryRef = q.RefID
+			}
 		} else if m.Expr != "" {
 			if len(m.Expr) > 10000 {
 				return nil, fmt.Errorf("query %s exceeds 10000 expression bytes", q.RefID)

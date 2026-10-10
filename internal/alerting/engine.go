@@ -240,6 +240,7 @@ func transition(ctx context.Context, root *url.URL, rule model.AlertRule, previo
 			n := value.Value
 			v.Value, v.ValueText = &n, ""
 			v.Matches = value.Matches
+			v.ResultFingerprint = value.ResultFingerprint
 			v.Annotations, v.TemplateErrors = annotations, templateErrors
 			if math.IsNaN(n) || math.IsInf(n, 0) {
 				v.Value = nil
@@ -386,7 +387,13 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 			queryErr = err
 		} else {
 			graphCtx := querycontext.WithHeaders(queryCtx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": "1", "http_X-Rule-Uid": view.UID})
-			values, queryErr = alertgraph.Execute(graphCtx, plan, at, e.GraphSource)
+			loaded := []string{}
+			for _, instance := range view.Runtime.Instances {
+				if instance.ResultFingerprint != "" && instance.Reason == "" && (instance.State == "Pending" || instance.State == "Firing") {
+					loaded = append(loaded, instance.ResultFingerprint)
+				}
+			}
+			values, queryErr = alertgraph.ExecuteWithLoaded(graphCtx, plan, at, e.GraphSource, loaded)
 		}
 	} else {
 		values, queryErr = e.Query(queryCtx, view.Expr, at)

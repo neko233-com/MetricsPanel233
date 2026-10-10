@@ -127,7 +127,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
-但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL / 状态恢复阈值、
+但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL、
 部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
@@ -314,7 +314,7 @@ Grafana 告警规则使用同一后端表达式引擎执行原始查询图，支
 
 输入为宽时间序列、单数值列加字符串维度的数字表、Prometheus instant vector；null / NaN / Inf 使用官方 DataFrame JSON 保留。比较窗口重命名表达式依赖并保持历史时间戳。每请求最多 32 个查询、10,000 个匹配项、1,000,000 个工作点（输入和中间结果合计）、20 秒及 32 MiB 响应。
 
-SQL、状态恢复阈值和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+SQL 和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
@@ -476,7 +476,11 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 网页实例详情显示渲染后的 summary / description 和可展开模板提示，内容按纯文本显示。原始模板、实例注解及状态历史均持久化，Prometheus alerts API 返回已渲染注解。CLI 示例：`metricspanel alerts save --file examples/alerts/template-memory.json`，再用 alerts get / evaluate / history 读取原定义与结果。契约参考 [模板文档](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) 和 [固定版本模板实现](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go)。
 
-未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+恢复阈值支持 `threshold.conditions[0].unloadEvaluator`，且必须是告警条件节点。首次使用触发判断，Pending / Firing 且没有策略原因的查询维度使用恢复判断的反值；Recovering、Normal、NoData / Error 或带策略原因的实例使用触发判断。每个维度按原查询标签指纹独立处理，配置标签覆盖不会改变指纹。严格 / 含边界比较和范围判断保留各自语义；空值仍走 no-data 策略。原始查询指纹及等待 / 恢复计时持久化，重启后继续判断；GET / PUT 同组规则不会注入临时状态或重置计时。CLI 示例：`metricspanel alerts save --file examples/alerts/graph-recovery-memory.json`，再用 `alerts get / evaluate / history` 检查结果。
+
+Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
+
+未知数据源、非法节点和循环依赖在保存前拒绝；SQL、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 
