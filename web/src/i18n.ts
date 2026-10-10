@@ -243,6 +243,7 @@ const zh: Record<string, string> = {
   Deleted: "已删除",
   KeepLast: "保持上次状态",
   "Labels and annotations": "标签和注解",
+  "Labels (JSON)": "标签（JSON）",
   "Annotations (JSON)": "注解（JSON）",
   "Save rule": "保存规则",
   "No labels": "无标签",
