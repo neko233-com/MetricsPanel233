@@ -29,6 +29,7 @@ type Engine struct {
 	Store       *store.Store
 	Query       QueryFunc
 	GraphSource expressions.SourceQuery
+	groupMu     sync.RWMutex
 	mu          sync.Mutex
 	active      map[string]bool
 	slots       chan struct{}
@@ -323,11 +324,15 @@ func (e *Engine) mutate(uid string, action func() error) error {
 	return action()
 }
 func (e *Engine) SaveRule(ctx context.Context, rule model.AlertRule) (model.AlertRuleView, error) {
+	e.groupMu.RLock()
+	defer e.groupMu.RUnlock()
 	var view model.AlertRuleView
 	err := e.mutate(rule.UID, func() error { var err error; view, err = e.Store.SaveAlertRule(ctx, rule); return err })
 	return view, err
 }
 func (e *Engine) DeleteRule(ctx context.Context, uid string) error {
+	e.groupMu.RLock()
+	defer e.groupMu.RUnlock()
 	return e.mutate(uid, func() error { return e.Store.DeleteAlertRule(ctx, uid) })
 }
 

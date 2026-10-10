@@ -1,7 +1,6 @@
 package server
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,6 +17,8 @@ import (
 func ruleError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrRuleConflict) || errors.Is(err, store.ErrStaleEvaluation) || errors.Is(err, alerting.ErrBusy) {
 		fail(w, 409, err)
+	} else if errors.Is(err, store.ErrInvalidAlertGroup) || errors.Is(err, store.ErrAlertRuleLimit) {
+		fail(w, 400, err)
 	} else {
 		resourceError(w, err)
 	}
@@ -162,6 +163,10 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 			return
 		}
 		rule.Version = version
+		if _, disabled := r.Header["X-Disable-Provenance"]; disabled {
+			editable := ""
+			rule.Provenance = &editable
+		}
 		if err := s.validateAlertSources(r.Context(), rule); err != nil {
 			fail(w, 400, err)
 			return
@@ -186,26 +191,7 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 		}
 		w.WriteHeader(204)
 	})
-	api.HandleFunc("GET /api/v1/provisioning/folder/{folder}/rule-groups/{group}", func(w http.ResponseWriter, r *http.Request) {
-		rules, err := s.Store.AlertRules(r.Context())
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-		out := []alerting.GrafanaRule{}
-		interval := 30
-		for _, rule := range rules {
-			if rule.FolderUID == r.PathValue("folder") && rule.Group == r.PathValue("group") {
-				out = append(out, alerting.ExportGrafana(rule.AlertRule))
-				interval = rule.IntervalSeconds
-			}
-		}
-		if len(out) == 0 {
-			resourceError(w, sql.ErrNoRows)
-			return
-		}
-		writeJSON(w, 200, map[string]any{"title": r.PathValue("group"), "folderUid": r.PathValue("folder"), "interval": interval, "rules": out})
-	})
+	s.alertGroupRoutes(api)
 }
 func (s *Server) promAlertRoutes(mux *http.ServeMux) {
 	alerts := func(rule model.AlertRuleView) []any {

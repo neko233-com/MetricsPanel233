@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/analysis"
 	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
@@ -145,6 +146,67 @@ func (e environment) verifyAlertGraph(address string, restarted bool) {
 	assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
 	assert.Equal(e.t, float64(1), *view.Runtime.Instances[0].Value)
 	assert.Contains(e.t, string(view.Runtime.Instances[0].Matches), `"value":"2"`)
+}
+
+func (e environment) verifyAlertGroups(address string, restarted bool) {
+	e.t.Helper()
+	const path = "/api/v1/provisioning/folder/general/rule-groups/docker-mysql-sdk"
+	const uid = "docker-group-z-mysql"
+	put := func(body any) []byte {
+		var status int
+		var raw []byte
+		require.Eventually(e.t, func() bool {
+			var err error
+			status, raw, err = e.request(address, "PUT", path, body)
+			require.NoError(e.t, err)
+			return status != 409
+		}, 5*time.Second, 100*time.Millisecond, "group evaluation did not finish")
+		require.Equal(e.t, 200, status, string(raw))
+		return raw
+	}
+	if !restarted {
+		put(json.RawMessage(`{"interval":86400,"rules":[{"uid":"docker-group-z-mysql","title":"Grouped MySQL health","condition":"C","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D>1"}}]},{"uid":"docker-group-a-record","title":"Grouped SDK recording","record":{"metric":"sdk:group_value","from":"D","target_datasource_uid":"metricspanel"},"data":[{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}}]}]}`))
+		for _, ruleUID := range []string{uid, "docker-group-a-record"} {
+			status, raw, err := e.request(address, "POST", "/api/v1/alerts/rules/"+ruleUID+"/evaluate", nil)
+			require.NoError(e.t, err)
+			if status != 409 {
+				require.Equal(e.t, 200, status, string(raw))
+			}
+		}
+		require.Eventually(e.t, func() bool { v, ok := e.value(address, "sdk:group_value"); return ok && v == 2 }, 5*time.Second, 100*time.Millisecond)
+	}
+	var group alerting.GrafanaGroup
+	raw := e.must(address, "GET", path, nil)
+	require.NoError(e.t, json.Unmarshal(raw, &group))
+	require.Len(e.t, group.Rules, 2)
+	assert.Equal(e.t, uid, group.Rules[0].UID, "restart must preserve provisioned order")
+	assert.Equal(e.t, "docker-group-a-record", group.Rules[1].UID)
+	var before model.AlertRuleView
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil), &before))
+	require.Equal(e.t, "ok", before.Runtime.Health, before.Runtime.Error)
+	require.NotEmpty(e.t, before.Runtime.Instances)
+	assert.Equal(e.t, "Firing", before.Runtime.Instances[0].State)
+	assert.Equal(e.t, "grafana", before.Execution)
+	if restarted {
+		assert.Equal(e.t, 43200, group.Interval)
+		assert.Equal(e.t, 2, before.Version)
+		status, body, err := e.request(address, "DELETE", path, nil)
+		require.NoError(e.t, err)
+		require.Equal(e.t, 204, status, string(body))
+		status, _, err = e.request(address, "GET", path, nil)
+		require.NoError(e.t, err)
+		assert.Equal(e.t, 404, status)
+		return
+	}
+	put(json.RawMessage(raw))
+	var same model.AlertRuleView
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil), &same))
+	assert.Equal(e.t, before, same, "GET/PUT must not reset version or state")
+	put(map[string]int{"interval": 43200})
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil), &same))
+	assert.Equal(e.t, before.Runtime, same.Runtime)
+	assert.Equal(e.t, before.Version+1, same.Version)
+	assert.Equal(e.t, 43200, same.IntervalSeconds)
 }
 func (e environment) address(service string) string {
 	e.t.Helper()
@@ -591,6 +653,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
 			e.verifyExpressionGraph(address)
 			e.verifyAlertGraph(address, false)
+			e.verifyAlertGroups(address, false)
 			// Duplicate writes replace a sample, including across a full restart.
 			ts := time.Now().UnixMilli()
 			for _, v := range []float64{233, 234} {
@@ -662,6 +725,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifySDKPlugin(address, backend.service)
 			e.verifyExpressionGraph(address)
 			e.verifyAlertGraph(address, true)
+			e.verifyAlertGroups(address, true)
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false

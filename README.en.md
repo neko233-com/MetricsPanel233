@@ -369,13 +369,24 @@ Rules support pending and keep-firing periods, no-data/error policies and durabl
 Prometheus-compatible `/prometheus/api/v1/rules` and `/alerts` expose the rules and active instances.
 Set `record` to a metric name to store query results as a recording rule.
 
-Grafana provisioning rule CRUD and group GET persist new rules with `execution=grafana`. The backend runs the original query graph through the shared expression engine: configured Prometheus, built-in Grafana and SDK backend sources, multi-reference Math and label joins, all Reduce modes, Resample, Threshold and compound Classic conditions. Every query derives its own relative range from one scheduled timestamp, up to 31 days. Plugins receive FromAlert=true, X-Cache-Skip=true and organization headers through the existing encrypted instance settings.
+Grafana provisioning rule CRUD and group GET/PUT/DELETE persist new rules with `execution=grafana`. The backend runs the original query graph through the shared expression engine: configured Prometheus, built-in Grafana and SDK backend sources, multi-reference Math and label joins, all Reduce modes, Resample, Threshold and compound Classic conditions. Every query derives its own relative range from one scheduled timestamp, up to 31 days. Plugins receive FromAlert=true, X-Cache-Skip=true and organization headers through the existing encrypted instance settings.
 
 Conditions return one numeric value per labelled frame. Nulls apply per-instance no-data policies; datasource NoData takes priority over a healthy condition. Nonzero NaN/Inf follow Grafana alert truth and persist safely as value_text. Recording rules reject nonfinite values before ingesting any partial batch. Classic match diagnostics persist in runtime.instances[].matches, limited to 1 MiB per frame. Timers, state, matches and graph definitions survive restart.
 
 The bilingual editor provides query mode selection and Grafana JSON editing. Create a native graph with `metricspanel alerts save --file examples/alerts/graph-memory.json`, or import standard provisioning JSON with alerts import-grafana. GET output can be updated with alerts save using its current version. Switching to native PromQL discards the old graph; existing rules without execution=grafana keep their previous PromQL path.
 
-Unavailable datasources, malformed nodes and cycles fail before save. SQL, recovery thresholds, atomic group updates, annotation templates, external notifications/Alertmanager and complete visual query editors remain pending. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and the [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
+Group PUT replaces rules, schedules, state, history and annotations in one SQLite control-plane transaction. Omitted/null rules update only the interval; an explicit empty array clears the group. URL folder/name override the body. Identical PUT and GET/PUT preserve versions and runtime. Interval, ordering, provenance and move changes retain timers; evaluation changes reset state. Array order survives restart and moved UIDs normalize their source group. Active affected evaluations return 409 before writing. Group intervals are 5–86400 seconds, with at most 1000 total rules.
+
+```powershell
+metricspanel alerts group-save --folder-uid general --group infrastructure --file examples/alerts/grafana-group.json
+metricspanel alerts group-get --folder-uid general --group infrastructure
+metricspanel alerts group-save --folder-uid general --group infrastructure --file interval-only.json
+metricspanel alerts group-delete --folder-uid general --group infrastructure
+```
+
+An interval-only file can contain `{"interval":60}`. Reconcile with returned UIDs; new rules without UIDs receive generated IDs. X-Disable-Provenance or CLI --disable-provenance marks the whole group editable. Provenance is metadata here and does not restrict native editing. Deletion returns HTTP 204 and CLI JSON null. Configure a MySQL collector for the example; missing metrics follow its no-data policy.
+
+Unavailable datasources, malformed nodes and cycles fail before save. SQL, recovery thresholds, annotation templates, external notifications/Alertmanager and complete visual query editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
 
 ## Automated verification
 

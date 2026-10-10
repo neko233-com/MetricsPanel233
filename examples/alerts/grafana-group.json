@@ -1,0 +1,44 @@
+{
+  "title": "infrastructure",
+  "folderUid": "general",
+  "interval": 30,
+  "rules": [
+    {
+      "uid": "group-memory",
+      "title": "Memory above 1 GiB",
+      "condition": "C",
+      "for": "30s",
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "metricspanel",
+          "model": { "expr": "sum(metricspanel_memory_bytes)", "instant": true }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": { "type": "math", "expression": "$A > 1073741824" }
+        }
+      ]
+    },
+    {
+      "uid": "group-mysql",
+      "title": "MySQL unavailable",
+      "condition": "C",
+      "for": "30s",
+      "noDataState": "NoData",
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "metricspanel",
+          "model": { "expr": "mysql_up", "instant": true }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": { "type": "math", "expression": "$A < 1" }
+        }
+      ]
+    }
+  ]
+}

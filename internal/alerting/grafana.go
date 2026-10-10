@@ -372,6 +372,7 @@ func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) 
 	g.OrgID = 1
 	g.UID = r.UID
 	g.Provenance = "api"
+	r.Provenance = &g.Provenance
 	payload, err := json.Marshal(g)
 	r.Grafana = payload
 	return r, err
@@ -410,6 +411,7 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	}
 	g.OrgID = 1
 	g.Provenance = "api"
+	r.Provenance = &g.Provenance
 	r.Grafana, err = json.Marshal(g)
 	if err != nil {
 		return r, err
@@ -490,5 +492,8 @@ func ExportGrafana(r model.AlertRule) GrafanaRule {
 	g.IsPaused = r.Paused
 	g.Updated = time.UnixMilli(r.UpdatedAt).UTC().Format(time.RFC3339Nano)
 	g.Provenance = "api"
+	if r.Provenance != nil {
+		g.Provenance = *r.Provenance
+	}
 	return g
 }

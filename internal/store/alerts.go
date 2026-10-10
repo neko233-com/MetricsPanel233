@@ -12,6 +12,7 @@ import (
 
 var ErrRuleConflict = errors.New("rule version changed; read the current rule before updating")
 var ErrStaleEvaluation = errors.New("rule changed or a newer evaluation was already committed")
+var ErrAlertRuleLimit = errors.New("at most 1000 alert/recording rules")
 
 func scanRule(row interface{ Scan(...any) error }) (model.AlertRuleView, error) {
 	var v model.AlertRuleView
@@ -76,6 +77,20 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 		return model.AlertRuleView{}, err
 	}
 	defer tx.Rollback()
+	view, err := saveAlertRuleTx(ctx, tx, rule, false)
+	if err != nil {
+		return model.AlertRuleView{}, err
+	}
+	if err = pruneAlertHistory(ctx, tx); err != nil {
+		return model.AlertRuleView{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return model.AlertRuleView{}, err
+	}
+	return view, nil
+}
+
+func saveAlertRuleTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, preserveRuntime bool) (model.AlertRuleView, error) {
 	previous, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, rule.UID))
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return model.AlertRuleView{}, err
@@ -93,7 +108,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 			return model.AlertRuleView{}, err
 		}
 		if count >= 1000 {
-			return model.AlertRuleView{}, errors.New("at most 1000 alert/recording rules")
+			return model.AlertRuleView{}, ErrAlertRuleLimit
 		}
 	}
 	rule.Version++
@@ -105,6 +120,9 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 		health = "paused"
 	}
 	for _, instance := range previous.Runtime.Instances {
+		if preserveRuntime {
+			break
+		}
 		if instance.State != "Normal" {
 			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: rule.UID, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: rule.UpdatedAt, Reason: reason, PrevReason: instance.Reason}); err != nil {
 				return model.AlertRuleView{}, err
@@ -112,19 +130,16 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 		}
 	}
 	runtime := model.AlertRuntime{Health: health, Instances: []model.AlertInstance{}}
+	if preserveRuntime {
+		runtime = previous.Runtime
+	}
 	config, _ := json.Marshal(rule)
 	state, _ := json.Marshal(runtime)
-	_, err = tx.ExecContext(ctx, `INSERT INTO alert_rules(uid,version,config,runtime,last_evaluation) VALUES(?,?,?,?,0) ON CONFLICT(uid) DO UPDATE SET version=excluded.version,config=excluded.config,runtime=excluded.runtime,last_evaluation=0`, rule.UID, rule.Version, string(config), string(state))
+	_, err = tx.ExecContext(ctx, `INSERT INTO alert_rules(uid,version,config,runtime,last_evaluation) VALUES(?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET version=excluded.version,config=excluded.config,runtime=excluded.runtime,last_evaluation=excluded.last_evaluation`, rule.UID, rule.Version, string(config), string(state), runtime.LastEvaluation)
 	if err != nil {
 		return model.AlertRuleView{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO alert_schedule(uid,interval_seconds,paused) VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET interval_seconds=excluded.interval_seconds,paused=excluded.paused`, rule.UID, rule.IntervalSeconds, rule.Paused); err != nil {
-		return model.AlertRuleView{}, err
-	}
-	if err = pruneAlertHistory(ctx, tx); err != nil {
-		return model.AlertRuleView{}, err
-	}
-	if err = tx.Commit(); err != nil {
 		return model.AlertRuleView{}, err
 	}
 	return model.AlertRuleView{AlertRule: rule, Runtime: runtime}, nil
@@ -198,6 +213,16 @@ func (s *Store) DeleteAlertRule(ctx context.Context, uid string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = deleteAlertRuleTx(ctx, tx, uid); err != nil {
+		return err
+	}
+	if err = pruneAlertHistory(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deleteAlertRuleTx(ctx context.Context, tx *sql.Tx, uid string) error {
 	previous, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, uid))
 	if err != nil {
 		return err
@@ -212,10 +237,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, uid string) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM alert_rules WHERE uid=?`, uid); err != nil {
 		return err
 	}
-	if err = pruneAlertHistory(ctx, tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) AlertHistory(ctx context.Context, uid string, limit int) ([]model.AlertEvent, error) {
 	if limit < 1 || limit > 1000 {

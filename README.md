@@ -452,14 +452,25 @@ metricspanel alerts import-grafana --file grafana-rule.json
 Prometheus 兼容 `/prometheus/api/v1/rules` 与 `/alerts` 可发现规则及活动实例。
 记录规则指定 `record` 指标名，将原生 PromQL 或 Grafana 图的有限数值结果写回当前指标数据库，可供模板查询。
 
-Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET 可用。
+Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET / PUT / DELETE 可用。
 新导入规则以 `execution=grafana` 持久化原始查询图，评估时复用服务端 expression 引擎。支持已配置的 Prometheus、内置 Grafana 和 Go SDK 后端数据源，Math 多引用与标签连接、Reduce 各模式、Resample、Threshold、复合 Classic conditions；每条查询按同一评估时刻计算自己的 `relativeTimeRange`，最多 31 天。插件接收 `FromAlert=true`、`X-Cache-Skip=true` 和组织标记，密钥仍通过既有加密设置传递。
 
 条件须返回按标签区分的单数值帧；null 应用对应实例的无数据策略，数据源整体 NoData 优先于健康条件。Grafana 的非零 NaN / Inf 仍触发告警，数值以 `value_text` 保存，避免 JSON 编码失败；记录规则拒绝非有限数值，避免部分写入。经典条件匹配详情持久化在 `runtime.instances[].matches`，每帧最多 1 MiB。计时、状态、匹配详情和原始图在重启后保留。
 
 网页告警编辑器提供中文 / 英文查询模式与 Grafana JSON 编辑。`metricspanel alerts save --file examples/alerts/graph-memory.json` 可直接创建原生图规则；`alerts import-grafana` 接收标准 provisioning JSON。CLI 可直接读取并更新含 `runtime` 的 GET 结果，必须保留当前版本。切换为原生 PromQL 会清除旧图；已有未设置 `execution=grafana` 的规则继续原来的 PromQL 执行路径。
 
-未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、规则组原子更新、注解模板、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+规则组 PUT 在一个 SQLite 控制面事务内替换全部规则、调度、状态、历史和注解；省略或传入 null 的 `rules` 仅更新间隔，显式 `rules: []` 清空规则组。URL 中的文件夹 / 组名覆盖请求体。完全相同的 PUT 或 GET / PUT 往返不增加版本、不重置状态；只调整间隔、顺序、来源标记或移动规则时保留计时。查询或判断语义变化才重置状态。请求数组顺序持久化，移动 UID 后整理来源组的顺序。涉及正在评估的规则时整组返回 409，避免记录规则在修改期间写入过期结果。规则组间隔为 5–86400 秒，总规则数最多 1000。
+
+```powershell
+metricspanel alerts group-save --folder-uid general --group infrastructure --file examples/alerts/grafana-group.json
+metricspanel alerts group-get --folder-uid general --group infrastructure
+metricspanel alerts group-save --folder-uid general --group infrastructure --file interval-only.json
+metricspanel alerts group-delete --folder-uid general --group infrastructure
+```
+
+`interval-only.json` 可只包含 `{"interval":60}`。使用返回的 UID 做幂等协调；未提供 UID 的新规则会生成 UID。`X-Disable-Provenance` 请求头或 CLI `--disable-provenance` 设置整组可编辑来源标记；本工具将其作为元数据，原生编辑仍可用。删除返回 HTTP 204，CLI 输出 JSON null。MySQL 示例需要先配置采集器，否则对应规则按无数据策略处理。
+
+未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、注解模板、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

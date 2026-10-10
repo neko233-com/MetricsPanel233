@@ -33,6 +33,8 @@ type AlertRule struct {
 	Record                   string            `json:"record,omitempty"`
 	FolderUID                string            `json:"folder_uid"`
 	Group                    string            `json:"group"`
+	GroupIndex               int               `json:"group_index,omitempty"`
+	Provenance               *string           `json:"provenance,omitempty"`
 	Version                  int               `json:"version"`
 	UpdatedAt                int64             `json:"updated_at"`
 	Grafana                  json.RawMessage   `json:"grafana,omitempty"`
@@ -109,8 +111,11 @@ func (r AlertRule) Validate() error {
 			return errors.New("state policy must be OK, Alerting, NoData, Error or KeepLast")
 		}
 	}
-	if len(r.FolderUID) > 100 || len(r.Group) > 100 || len(r.Annotations) > 32 {
-		return errors.New("folder/group limit: 100 bytes; annotation limit: 32")
+	if len(r.FolderUID) > 100 || len(r.Group) > 100 || r.GroupIndex < 0 || r.GroupIndex >= 1000 || len(r.Annotations) > 32 {
+		return errors.New("folder/group limit: 100 bytes; group index: 0–999; annotation limit: 32")
+	}
+	if r.Provenance != nil && *r.Provenance != "" && *r.Provenance != "api" {
+		return errors.New("provenance must be empty or api")
 	}
 	for key, value := range r.Annotations {
 		if len(key) == 0 || len(key) > 100 || len(value) > 4096 {
