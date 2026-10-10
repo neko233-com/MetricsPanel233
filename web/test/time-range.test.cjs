@@ -34,8 +34,30 @@ const {
   panelZoomToDashboard,
   resolveComparisonRange,
   comparisonRefId,
+  panelComparison,
 } = exportsObject;
 const now = Date.parse("2026-10-10T12:34:56.789Z");
+test("serialized timeCompare wins over the early alias, including explicit disable", () => {
+  const standard = resolvePanelTimeRange("1h", { timeCompare: "1d" }, now);
+  assert.equal(standard.comparison, "1d");
+  assert.equal(standard.info.compareWith, "1d");
+  assert.equal(panelComparison({ compareWith: "1w" }), "1w");
+  assert.equal(panelComparison({ timeCompare: "1d", compareWith: "1w" }), "1d");
+  const disabled = resolvePanelTimeRange(
+    "1h",
+    { timeCompare: "", compareWith: "1d" },
+    now,
+  );
+  assert.equal(disabled.comparison, undefined);
+  assert.equal(disabled.info.compareWith, undefined);
+  const hidden = resolvePanelTimeRange(
+    "1h",
+    { timeCompare: "1d", hideTimeOverride: true },
+    now,
+  );
+  assert.equal(hidden.comparison, "1d");
+  assert.equal(hidden.info.compareWith, undefined);
+});
 test("comparison queries preserve parent bounds and shift exact previous periods", () => {
   const parent = resolveTimeRange("1h", now);
   const compared = resolveComparisonRange(parent, "1d");

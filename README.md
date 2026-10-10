@@ -240,15 +240,20 @@ SDK `PanelProps.onChangeTimeRange` 和原生折线图拖选默认更新工作空
 经典 `refresh` / V2 `timeSettings.autoRefresh` 和刷新选项会应用到定时器，导入模板缺省关闭；原生工作空间缺省 5 秒。
 刷新控件提供关闭、指定间隔和自动模式；URL `refresh` 优先于模板，空值表示关闭，切换与历史保留参数。
 刷新至少间隔 5 秒，自动模式依据窗口宽度和范围计算；隐藏页面暂停请求，恢复时补一次刷新，页面卸载清理定时器。
-`compareWith` 会追加独立的历史查询，支持明确间隔和 `__previousPeriod`；`timeRangeCompare: false` 让单个查询退出比较。
+Grafana 标准 `timeCompare` 会追加独立的历史查询，经典/V1 面板直接保存该字段，V2 保存于 `data.spec.queryOptions.timeCompare`。
+支持明确间隔和 `__previousPeriod`；查询 `timeRangeCompare: false` 退出比较，V2 保存在 `DataQuery.spec` 中。
+早期 MetricsPanel 的 `compareWith` 字段继续可用；标准字段优先，显式空字符串关闭比较，避免旧别名意外启用历史查询。
 比较帧使用幂等的 `-compare` refId 与 SDK `timeCompare.diffMs` 元数据，SDK 保留原始历史时间戳，原生曲线使用官方对齐函数及虚线样式。
 比较的 `1d` / `1M` 按 SDK 固定时长（24 小时 / 30 天）偏移，与 `timeShift` 的日历日期运算不同；相对 raw 范围随刷新重新解析。
 面板上的“缩放范围 → 当前面板”提供原生局部视图，SDK 缩放和拖选仅查询当前面板，保留 URL 和其他面板范围；刷新保持局部窗口，重置或父范围/变量变化恢复仪表盘窗口。
 局部缩放是浏览器视图状态，原始模板导出不变。比较错误会显示并保留主查询结果。
-十一个时间模型测试、Testify 导入测试与浏览器回归覆盖历史请求、比较 opt-out、帧元数据、曲线对齐、刷新、局部缩放及中英文手机布局。
-完整 Scenes 生命周期、模板 `zoomBehavior` 语义和其他未实现的时间交互仍需补齐。
+十二个时间模型测试、Testify 导入测试与浏览器回归覆盖历史请求、比较 opt-out、帧元数据、曲线对齐、刷新、局部缩放及中英文手机布局。
+浏览器实际导入经典/V1/V2 标准字段并检查查询与 Agent CLI 原始导出；也验证空字符串关闭和旧别名。
+Grafana 13.2 的 `zoomBehavior` 属于 Scenes 运行状态，当前经典/V2 序列化未保存它；原生局部缩放保留为浏览器视图操作。
+完整 Scenes 生命周期及其他未实现的时间交互仍需补齐。
 参考 [Grafana 时间 URL 契约](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/)。
 时间覆盖按 [Grafana 13.2 PanelTimeRange 源码](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx) 实现。
+时间比较字段匹配 [经典模板序列化](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModel.ts) 与 [V2 模板序列化](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModelSchemaV2.ts)。
 
 ## Grafana 应用事件
 

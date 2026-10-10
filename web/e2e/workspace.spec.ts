@@ -607,6 +607,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     errors: string[] = [];
   const bodies: { from: string; to: string; queries: { refId: string }[] }[] =
     [];
+  const importedIDs: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/ds/query")
@@ -671,7 +672,8 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
           id: 1,
           title: "Comparison SDK",
           type: "metricspanel-events-panel",
-          compareWith: "1d",
+          timeCompare: "1d",
+          compareWith: "bad",
           gridPos: { x: 0, y: 0, w: 12, h: 16 },
           targets: [
             { refId: "A", expr: "compare_fixture", instant: true },
@@ -687,7 +689,8 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
           id: 2,
           title: "Comparison curves",
           type: "timeseries",
-          compareWith: "1d",
+          timeCompare: "1d",
+          compareWith: "bad",
           gridPos: { x: 12, y: 0, w: 12, h: 16 },
           targets: [{ refId: "N", expr: "compare_fixture" }],
         },
@@ -769,8 +772,8 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
       path: testInfo.outputPath("comparison-desktop.png"),
       animations: "disabled",
     });
-    source.panels[0].compareWith = "__previousPeriod";
-    source.panels[1].compareWith = "__previousPeriod";
+    source.panels[0].timeCompare = "__previousPeriod";
+    source.panels[1].timeCompare = "__previousPeriod";
     expect(
       (
         await page.request.post(endpoint + "/api/dashboards/db", {
@@ -822,8 +825,195 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
     await page.setViewportSize({ width: 1536, height: 1024 });
-    source.panels[0].compareWith = "bad";
-    source.panels[1].compareWith = "bad";
+    source.panels[0].timeCompare = "";
+    source.panels[1].timeCompare = "";
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const disabledCount = bodies.length;
+    await page.reload();
+    await expect(panel).toContainText("Panel value: 150");
+    await expect(plot.locator("polyline")).toHaveCount(1);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+    expect(
+      bodies
+        .slice(disabledCount)
+        .flatMap((body) => body.queries)
+        .some((query) => query.refId.endsWith("-compare")),
+    ).toBeFalsy();
+    for (const format of ["classic", "v1", "v2"]) {
+      const uid = `compare-contract-${format}`;
+      const classic = {
+        ...source,
+        uid,
+        panels: source.panels.map((item) => ({
+          ...item,
+          timeCompare: "1d",
+        })),
+      };
+      const resource =
+        format === "classic"
+          ? classic
+          : format === "v1"
+            ? {
+                apiVersion: "dashboard.grafana.app/v1beta1",
+                kind: "Dashboard",
+                metadata: { name: uid },
+                spec: classic,
+              }
+            : {
+                apiVersion: "dashboard.grafana.app/v2beta1",
+                kind: "Dashboard",
+                metadata: { name: uid },
+                spec: {
+                  title: source.title,
+                  timeSettings: {
+                    ...source.time,
+                    timezone: "utc",
+                    autoRefresh: "",
+                  },
+                  elements: Object.fromEntries(
+                    classic.panels.map((item) => [
+                      String(item.id),
+                      {
+                        kind: "Panel",
+                        spec: {
+                          id: item.id,
+                          title: item.title,
+                          data: {
+                            kind: "QueryGroup",
+                            spec: {
+                              queryOptions: { timeCompare: "1d" },
+                              queries: item.targets.map(
+                                ({ refId, ...query }) => ({
+                                  kind: "PanelQuery",
+                                  spec: {
+                                    refId,
+                                    hidden: false,
+                                    query: {
+                                      kind: "DataQuery",
+                                      group: "prometheus",
+                                      spec: query,
+                                    },
+                                  },
+                                }),
+                              ),
+                            },
+                          },
+                          vizConfig: {
+                            kind: "VizConfig",
+                            group: item.type,
+                            spec: {
+                              options: {},
+                              fieldConfig: { defaults: {}, overrides: [] },
+                            },
+                          },
+                        },
+                      },
+                    ]),
+                  ),
+                  layout: {
+                    kind: "GridLayout",
+                    spec: {
+                      items: classic.panels.map((item) => ({
+                        kind: "GridLayoutItem",
+                        spec: {
+                          x: item.gridPos.x,
+                          y: item.gridPos.y,
+                          width: item.gridPos.w,
+                          height: item.gridPos.h,
+                          element: {
+                            kind: "ElementReference",
+                            name: String(item.id),
+                          },
+                        },
+                      })),
+                    },
+                  },
+                },
+              };
+      const imported = await page.request.post(
+        endpoint + "/api/v1/import/grafana",
+        { data: resource },
+      );
+      expect(imported.ok(), await imported.text()).toBeTruthy();
+      const saved = (await imported.json()).dashboard;
+      importedIDs.push(saved.id);
+      expect(saved.grafana).toEqual(resource);
+      const count = bodies.length;
+      await page.goto(`${endpoint}/d/${uid}/compare`);
+      await expect(panel).toContainText("Panel value: 150");
+      await expect(panel).toContainText("Compare with: 1d");
+      await panel.getByText("Frame inspection", { exact: true }).click();
+      await expect
+        .poll(async () => (await inspect()).map((frame) => frame.refId).sort())
+        .toEqual(["A", "A-compare", "B"]);
+      expect(
+        (await inspect()).find((frame) => frame.refId === "A-compare"),
+      ).toMatchObject({
+        compare: true,
+        diff: -day,
+        time: end - day,
+        value: 15,
+      });
+      await expect(normal).toHaveCount(1);
+      await expect(compared).toHaveCount(1);
+      expect(
+        bodies
+          .slice(count)
+          .flatMap((body) => body.queries)
+          .some((query) => query.refId === "B-compare"),
+      ).toBeFalsy();
+      const stored = await (
+        await page.request.get(endpoint + "/api/v1/dashboards")
+      ).json();
+      expect(
+        stored.find((dashboard: { id: string }) => dashboard.id === saved.id)
+          .grafana,
+      ).toEqual(resource);
+      // Verify the native agent export uses the same lossless source.
+      const output = await run(
+        process.env.METRICSPANEL_TEST_BINARY ||
+          path.join(
+            repoRoot,
+            "bin",
+            process.platform === "win32" ? "metricspanel.exe" : "metricspanel",
+          ),
+        [
+          "dashboards",
+          "export",
+          "--server",
+          endpoint,
+          "--id",
+          saved.id,
+          "--format",
+          "grafana",
+        ],
+        { windowsHide: true, env: { ...process.env, METRICSPANEL_TOKEN: "" } },
+      );
+      expect(JSON.parse(output.stdout)).toEqual(resource);
+    }
+    // Earlier MetricsPanel templates using compareWith still execute.
+    Reflect.deleteProperty(source.panels[0], "timeCompare");
+    Reflect.deleteProperty(source.panels[1], "timeCompare");
+    source.panels[0].compareWith = "1d";
+    source.panels[1].compareWith = "1d";
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await page.goto(endpoint + "/d/compare-dashboard/compare");
+    await expect(panel).toContainText("Compare with: 1d");
+    await expect(compared).toHaveCount(1);
+    source.panels[0].timeCompare = "bad";
+    source.panels[1].timeCompare = "bad";
     source.panels[1].targets[0].timeRangeCompare = false;
     expect(
       (
@@ -842,6 +1032,8 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     expect(errors).toEqual([]);
   } finally {
     await page.goto(endpoint + "/#overview").catch(() => {});
+    for (const id of importedIDs)
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
     await page.request.delete(
       endpoint + "/api/dashboards/uid/compare-dashboard",
     );

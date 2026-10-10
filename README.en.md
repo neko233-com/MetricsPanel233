@@ -156,15 +156,20 @@ SDK zoom and native drag selection reverse a panel's shift before updating the d
 Classic `refresh` / V2 `timeSettings.autoRefresh` and interval choices drive timers; imported dashboards default to off, native workspaces to five seconds.
 Controls offer off, explicit intervals and automatic mode. URL `refresh` overrides saved defaults; an empty value means off, and browser history preserves the choice.
 The minimum interval is five seconds. Automatic mode uses the range and viewport width. Hidden pages pause requests, resume catches up once, and unmount clears timers.
-`compareWith` issues separate historical queries for explicit intervals or `__previousPeriod`; `timeRangeCompare: false` opts individual queries out.
+The standard Grafana `timeCompare` field issues separate historical queries. Classic/V1 panels save it directly; V2 saves `data.spec.queryOptions.timeCompare`.
+Explicit intervals and `__previousPeriod` are supported. Query `timeRangeCompare: false` opts out; V2 retains it in `DataQuery.spec`.
+Early MetricsPanel `compareWith` templates remain supported. The standard field takes precedence; an explicit empty string disables comparison, including when a legacy alias is present.
 Comparison frames carry idempotent `-compare` refIds and SDK `timeCompare.diffMs` metadata. SDK panels retain historical timestamps; native curves use the official alignment helper and dashed styling.
 Comparison `1d` / `1M` offsets follow the SDK's fixed 24-hour / 30-day durations, whereas `timeShift` uses calendar date math. Relative raw ranges advance on refresh.
 Choosing “Zoom scope → This panel” creates a native local view: SDK zoom and drag selection query that panel while preserving the URL and other panels. Refresh retains the local window; reset or parent range/variable changes restore the dashboard window.
 Local zoom is browser view state and preserves original template exports. Comparison errors are visible while primary query data remains available.
-Eleven model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual mobile layout.
-Full Scenes lifecycle, imported `zoomBehavior` semantics and additional time interactions remain outstanding.
+Twelve model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual mobile layout.
+Browser tests import standard classic/V1/V2 resources and verify real queries and lossless agent CLI exports, explicit disable and legacy aliases.
+Grafana 13.2 keeps `zoomBehavior` in Scenes runtime state; its classic/V2 serializers do not persist it. Native local zoom remains a browser view operation.
+Full Scenes lifecycle and additional time interactions remain outstanding.
 See the [Grafana time URL contract](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/).
 Overrides follow the [Grafana 13.2 PanelTimeRange implementation](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx).
+Comparison fields follow the [classic serializer](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModel.ts) and [V2 serializer](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModelSchemaV2.ts).
 
 ## Grafana application events
 

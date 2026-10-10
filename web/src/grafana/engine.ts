@@ -54,6 +54,7 @@ import {
 import {
   resolveTimeRange,
   resolvePanelTimeRange,
+  panelComparison,
   resolveComparisonRange,
   comparisonRefId,
   type PanelTimeRange,
@@ -81,6 +82,7 @@ export type GrafanaConfig = {
   timeFrom?: string;
   timeShift?: string;
   hideTimeOverride?: boolean;
+  timeCompare?: string;
   compareWith?: string;
   targets?: GrafanaTarget[];
   datasource?: GrafanaTarget["datasource"];
@@ -243,6 +245,7 @@ export function watchFrames(
   const panelRange = () => {
     const base = resolveTimeRange(range, sampledAt);
     const fixed = { from: base.start, to: base.end, timezone: base.timezone };
+    const comparison = panelComparison(panel.config || {});
     return resolvePanelTimeRange(
       range,
       {
@@ -253,8 +256,8 @@ export function watchFrames(
           ? interpolate(panel.config.timeShift, values, fixed)
           : undefined,
         hideTimeOverride: panel.config?.hideTimeOverride,
-        compareWith: panel.config?.compareWith
-          ? interpolate(panel.config.compareWith, values, fixed)
+        timeCompare: comparison
+          ? interpolate(comparison, values, fixed)
           : undefined,
       },
       sampledAt,
@@ -292,7 +295,7 @@ export function watchFrames(
     queries,
     compare: false,
   }));
-  if (panel.config?.compareWith)
+  if (panelComparison(panel.config || {}))
     for (const [uid, queries] of groups) {
       const compared = queries
         .filter((query) => query.timeRangeCompare !== false)

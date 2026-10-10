@@ -144,6 +144,15 @@ export type PanelTimeRange = ResolvedTimeRange & {
   comparison?: string;
   info: { timeFrom?: string; timeShift?: string; compareWith?: string };
 };
+// timeCompare is the serialized classic/V1 panel and V2 queryOptions field.
+// Retain the early MetricsPanel compareWith spelling without overriding a saved
+// standard value, including an explicitly disabled comparison (empty string).
+export function panelComparison(overrides: {
+  timeCompare?: string;
+  compareWith?: string;
+}) {
+  return overrides.timeCompare ?? overrides.compareWith;
+}
 // Matches Grafana 13.2 PanelTimeRange: relative overrides require relative parent
 // time, while shifts also apply to fixed dates and use calendar-aware date math.
 export function resolvePanelTimeRange(
@@ -152,6 +161,7 @@ export function resolvePanelTimeRange(
     timeFrom?: string;
     timeShift?: string;
     hideTimeOverride?: boolean;
+    timeCompare?: string;
     compareWith?: string;
   },
   now = Date.now(),
@@ -159,7 +169,8 @@ export function resolvePanelTimeRange(
   let selection = rawSelection(value);
   let resolved = resolveTimeRange(selection, now);
   const info: PanelTimeRange["info"] = {};
-  if (overrides.compareWith) info.compareWith = overrides.compareWith;
+  const comparison = panelComparison(overrides);
+  if (comparison) info.compareWith = comparison;
   if (overrides.timeFrom) {
     const relative = rangeUtil.describeTextRange(overrides.timeFrom);
     if (relative.invalid) throw new Error("Invalid panel relative time");
@@ -209,7 +220,7 @@ export function resolvePanelTimeRange(
     ...resolved,
     sampledAt: now,
     shift: overrides.timeShift || undefined,
-    comparison: overrides.compareWith || undefined,
+    comparison: comparison || undefined,
     info: overrides.hideTimeOverride ? {} : info,
   };
 }
