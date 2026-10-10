@@ -467,7 +467,12 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
           .click();
         await page.setViewportSize({ width: 390, height: 844 });
         await expect(sdk).toContainText("比较范围: 前一时段");
-        await plot.scrollIntoViewIfNeeded();
+        // Responsive grid changes can replace the panel while Playwright is
+        // waiting for scroll stability. Resolve the current panel each attempt.
+        await expect(async () => {
+          await expect(plot).toBeAttached();
+          await plot.scrollIntoViewIfNeeded();
+        }).toPass({ timeout: 10000 });
         await expect(plot).toContainText("(比较)");
         expect(
           await page.evaluate(
