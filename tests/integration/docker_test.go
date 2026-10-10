@@ -118,7 +118,7 @@ func (e environment) composeInput(input string, args ...string) (string, error) 
 
 func (e environment) verifyAlertGraph(address string, restarted bool) {
 	const uid = "docker-sdk-graph"
-	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
+	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","labels":{"severity":"{{ if gt $values.K0.Value 1.0 }}critical{{ else }}warning{{ end }}"},"annotations":{"summary":"MySQL {{ $values.K1.Value }} with SDK {{ $values.K0.Value }}","description":"{{ $labels.severity }} / {{ $values.K0.Labels.job }}"},"data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
 	if !restarted {
 		status, raw, err := e.request(address, "POST", "/api/v1/provisioning/alert-rules", graph)
 		require.NoError(e.t, err)
@@ -146,6 +146,9 @@ func (e environment) verifyAlertGraph(address string, restarted bool) {
 	assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
 	assert.Equal(e.t, float64(1), *view.Runtime.Instances[0].Value)
 	assert.Contains(e.t, string(view.Runtime.Instances[0].Matches), `"value":"2"`)
+	assert.Equal(e.t, "critical", view.Runtime.Instances[0].Labels["severity"])
+	assert.Equal(e.t, "MySQL 1 with SDK 2", view.Runtime.Instances[0].Annotations["summary"])
+	assert.Empty(e.t, view.Runtime.Instances[0].TemplateErrors)
 }
 
 func (e environment) verifyAlertGroups(address string, restarted bool) {

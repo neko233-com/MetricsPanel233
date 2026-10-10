@@ -388,11 +388,6 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	if len(g.NotificationSettings) > 0 && string(g.NotificationSettings) != "null" {
 		return r, errors.New("notification_settings requires a notification integration, which is not configured")
 	}
-	for _, value := range g.Labels {
-		if strings.Contains(value, "{{") {
-			return r, errors.New("templated alert labels are not supported")
-		}
-	}
 	var err error
 	if r.ForSeconds, err = durationSeconds(g.For); err != nil {
 		return r, err

@@ -73,6 +73,9 @@ func insertAlertAnnotation(ctx context.Context, tx *sql.Tx, rule model.AlertRule
 		encodedLength += len(encoded) + 1
 	}
 	data := map[string]any{"labels": labels, "ruleUID": rule.UID, "instance": event.Key}
+	if len(event.Annotations) > 0 {
+		data["annotations"] = event.Annotations
+	}
 	if event.Reason != "" {
 		data["reason"] = event.Reason
 	}

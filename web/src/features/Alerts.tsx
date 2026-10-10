@@ -27,6 +27,8 @@ type Instance = {
   state: string;
   value: number | null;
   value_text?: string;
+  annotations?: Labels;
+  template_errors?: string[];
   active_at: number;
   firing_at: number;
   recovering_at: number;
@@ -402,6 +404,28 @@ export function Alerts({
                                 <tr key={v.key}>
                                   <td className="mono">
                                     {labelText(v.labels)}
+                                    {v.annotations?.summary && (
+                                      <p className="alert-instance-summary">
+                                        {v.annotations.summary}
+                                      </p>
+                                    )}
+                                    {v.annotations?.description && (
+                                      <p className="alert-instance-description">
+                                        {v.annotations.description}
+                                      </p>
+                                    )}
+                                    {!!v.template_errors?.length && (
+                                      <details className="alert-template-warnings">
+                                        <summary>
+                                          {t("Template warnings")}
+                                        </summary>
+                                        {v.template_errors.map(
+                                          (error, index) => (
+                                            <p key={index}>{error}</p>
+                                          ),
+                                        )}
+                                      </details>
+                                    )}
                                     {v.reason && (
                                       <small className="subtle">
                                         {t(v.reason)}

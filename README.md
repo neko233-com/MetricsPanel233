@@ -470,7 +470,13 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 `interval-only.json` 可只包含 `{"interval":60}`。使用返回的 UID 做幂等协调；未提供 UID 的新规则会生成 UID。`X-Disable-Provenance` 请求头或 CLI `--disable-provenance` 设置整组可编辑来源标记；本工具将其作为元数据，原生编辑仍可用。删除返回 HTTP 204，CLI 输出 JSON null。MySQL 示例需要先配置采集器，否则对应规则按无数据策略处理。
 
-未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、注解模板、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+标签与注解支持 Grafana Go 文本模板。`$labels` 包含查询标签及固定版本提供的保留上下文，不包含已配置规则标签；`$values.A.Value` / `.Labels` 读取瞬时数值和表达式捕获，时间序列 range 帧不加入该表，需先 Reduce。捕获按实例标签精确 / 子集 / 超集匹配，精确匹配优先；经典条件只暴露按匹配索引命名的 `C0`、`C1` 等，同时移除查询实例标签。恰好一个数据源捕获时 `$value` 是浮点数，否则是稳定评估字符串。
+
+复用上游 Prometheus 文本函数，另提供 Grafana 的 filterLabels / removeLabels、对应正则版本、mergeLabelValues、graphLink / tableLink；query() 按 Grafana 语义为空操作。`externalURL` / `pathPrefix` 使用既有 `--root-url` / `METRICSPANEL_ROOT_URL`。模板解析、执行或预算错误保留原文并返回 `template_errors`，不改变告警判断和 health。每个标签 / 注解最多输出 512 / 4096 字节，每字段最多 50000 执行步骤；无输出的嵌套循环也计入预算。
+
+网页实例详情显示渲染后的 summary / description 和可展开模板提示，内容按纯文本显示。原始模板、实例注解及状态历史均持久化，Prometheus alerts API 返回已渲染注解。CLI 示例：`metricspanel alerts save --file examples/alerts/template-memory.json`，再用 alerts get / evaluate / history 读取原定义与结果。契约参考 [模板文档](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) 和 [固定版本模板实现](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go)。
+
+未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

@@ -10,14 +10,17 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/neko233-com/MetricsPanel233/internal/alerttemplates"
 	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 )
 
 type Value struct {
-	Labels  map[string]string
-	Value   float64
-	Missing bool
-	Matches json.RawMessage
+	Labels           map[string]string
+	Value            float64
+	Missing          bool
+	Matches          json.RawMessage
+	Captures         map[string]alerttemplates.Capture
+	EvaluationString string
 }
 
 func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.SourceQuery) ([]Value, error) {
@@ -64,6 +67,17 @@ func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.Sour
 		return out, nil
 	}
 	out := []Value{}
+	index, err := newCaptureIndex(ctx, p, response.Responses)
+	if err != nil {
+		return nil, err
+	}
+	classic := false
+	for _, q := range p.Data {
+		if q.RefID == p.Condition && expressions.IsSource(q.DatasourceUID) {
+			kind, _, _ := expressions.Describe(q.Model)
+			classic = kind == "classic_conditions"
+		}
+	}
 	for _, frame := range condition.Frames {
 		rows, err := frame.RowLen()
 		if err != nil {
@@ -94,6 +108,14 @@ func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.Sour
 			if len(v.Matches) > 1<<20 {
 				return nil, errors.New("alert match diagnostics exceed 1 MiB")
 			}
+		}
+		if classic {
+			v.Captures, v.EvaluationString, err = classicCaptures(p.Condition, v.Matches)
+		} else {
+			v.Captures, v.EvaluationString, err = index.match(v.Labels)
+		}
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, v)
 		if len(out) > 1000 {

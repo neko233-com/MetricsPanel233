@@ -211,7 +211,11 @@ func (s *Server) promAlertRoutes(mux *http.ServeMux) {
 			if v.State != "Pending" {
 				state = "firing"
 			}
-			out = append(out, map[string]any{"labels": v.Labels, "annotations": rule.Annotations, "state": state, "activeAt": time.UnixMilli(v.ActiveAt).UTC().Format(time.RFC3339Nano), "value": value})
+			annotations := v.Annotations
+			if annotations == nil {
+				annotations = rule.Annotations
+			}
+			out = append(out, map[string]any{"labels": v.Labels, "annotations": annotations, "state": state, "activeAt": time.UnixMilli(v.ActiveAt).UTC().Format(time.RFC3339Nano), "value": value})
 		}
 		return out
 	}

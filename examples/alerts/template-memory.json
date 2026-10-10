@@ -1,0 +1,37 @@
+{
+  "uid": "templated-memory",
+  "title": "Memory above 1 GiB",
+  "execution": "grafana",
+  "expr": "",
+  "condition": "nonzero",
+  "interval_seconds": 30,
+  "for_seconds": 30,
+  "labels": {
+    "severity": "{{ if gt $values.MiB.Value 2048.0 }}critical{{ else }}warning{{ end }}"
+  },
+  "annotations": {
+    "summary": "Memory is {{ humanize1024 $values.A.Value }}B",
+    "description": "{{ $labels.alertname }}: {{ printf \"%.2f\" $values.MiB.Value }} MiB",
+    "runbook_url": "{{ externalURL }}/#collectors"
+  },
+  "grafana": {
+    "condition": "C",
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "metricspanel",
+        "model": { "expr": "sum(metricspanel_memory_bytes)", "instant": true }
+      },
+      {
+        "refId": "MiB",
+        "datasourceUid": "__expr__",
+        "model": { "type": "math", "expression": "$A / 1024 / 1024" }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": { "type": "math", "expression": "$MiB > 1024" }
+      }
+    ]
+  }
+}

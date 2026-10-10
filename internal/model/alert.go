@@ -147,6 +147,8 @@ type AlertInstance struct {
 	Value              *float64          `json:"value"`
 	ValueText          string            `json:"value_text,omitempty"`
 	Matches            json.RawMessage   `json:"matches,omitempty"`
+	Annotations        map[string]string `json:"annotations,omitempty"`
+	TemplateErrors     []string          `json:"template_errors,omitempty"`
 	ActiveAt           int64             `json:"active_at"`
 	FiringAt           int64             `json:"firing_at"`
 	RecoveringAt       int64             `json:"recovering_at"`
@@ -160,22 +162,24 @@ type AlertRuntime struct {
 	Health         string          `json:"health"`
 	Error          string          `json:"error,omitempty"`
 	Instances      []AlertInstance `json:"instances"`
+	TemplateErrors []string        `json:"template_errors,omitempty"`
 }
 type AlertRuleView struct {
 	AlertRule
 	Runtime AlertRuntime `json:"runtime"`
 }
 type AlertEvent struct {
-	ID         int64             `json:"id"`
-	UID        string            `json:"uid"`
-	Key        string            `json:"key"`
-	Labels     map[string]string `json:"labels"`
-	From       string            `json:"from"`
-	To         string            `json:"to"`
-	Timestamp  int64             `json:"timestamp"`
-	Reason     string            `json:"reason,omitempty"`
-	PrevReason string            `json:"prev_reason,omitempty"`
-	Value      *float64          `json:"value,omitempty"`
-	ValueText  string            `json:"value_text,omitempty"`
-	Error      string            `json:"error,omitempty"`
+	ID          int64             `json:"id"`
+	UID         string            `json:"uid"`
+	Key         string            `json:"key"`
+	Labels      map[string]string `json:"labels"`
+	From        string            `json:"from"`
+	To          string            `json:"to"`
+	Timestamp   int64             `json:"timestamp"`
+	Reason      string            `json:"reason,omitempty"`
+	PrevReason  string            `json:"prev_reason,omitempty"`
+	Value       *float64          `json:"value,omitempty"`
+	ValueText   string            `json:"value_text,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }

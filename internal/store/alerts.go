@@ -124,7 +124,7 @@ func saveAlertRuleTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, pres
 			break
 		}
 		if instance.State != "Normal" {
-			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: rule.UID, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: rule.UpdatedAt, Reason: reason, PrevReason: instance.Reason}); err != nil {
+			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: rule.UID, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: rule.UpdatedAt, Reason: reason, PrevReason: instance.Reason, Annotations: instance.Annotations}); err != nil {
 				return model.AlertRuleView{}, err
 			}
 		}
@@ -229,7 +229,7 @@ func deleteAlertRuleTx(ctx context.Context, tx *sql.Tx, uid string) error {
 	}
 	for _, instance := range previous.Runtime.Instances {
 		if instance.State != "Normal" {
-			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: uid, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: time.Now().UnixMilli(), Reason: "RuleDeleted", PrevReason: instance.Reason}); err != nil {
+			if err := insertAlertEvent(ctx, tx, previous.AlertRule, model.AlertEvent{UID: uid, Key: instance.Key, Labels: instance.Labels, From: instance.State, To: "Normal", Timestamp: time.Now().UnixMilli(), Reason: "RuleDeleted", PrevReason: instance.Reason, Annotations: instance.Annotations}); err != nil {
 				return err
 			}
 		}

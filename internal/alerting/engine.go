@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"sync"
@@ -29,6 +30,7 @@ type Engine struct {
 	Store       *store.Store
 	Query       QueryFunc
 	GraphSource expressions.SourceQuery
+	TemplateURL *url.URL
 	groupMu     sync.RWMutex
 	mu          sync.Mutex
 	active      map[string]bool
@@ -36,7 +38,7 @@ type Engine struct {
 }
 
 func New(s *store.Store, prom *promcompat.API) *Engine {
-	e := &Engine{Store: s, active: map[string]bool{}, slots: make(chan struct{}, 4)}
+	e := &Engine{Store: s, active: map[string]bool{}, slots: make(chan struct{}, 4), TemplateURL: &url.URL{Scheme: "http", Host: "127.0.0.1:7333"}}
 	e.Query = func(ctx context.Context, expr string, at time.Time) ([]Value, error) {
 		query, err := prom.Engine.NewInstantQuery(ctx, prom.Queryable, promql.NewPrometheusQueryOpts(false, 0), expr, at)
 		if err != nil {
@@ -139,7 +141,12 @@ func advance(rule model.AlertRule, v model.AlertInstance, active bool, at int64)
 // Transition is deterministic: evaluation timestamps are supplied by the caller,
 // and persisted timers are used even after the process is restarted.
 func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Value, queryErr error, at int64) (model.AlertRuntime, []model.AlertEvent, error) {
+	return transition(context.Background(), nil, rule, previous, values, queryErr, at)
+}
+
+func transition(ctx context.Context, root *url.URL, rule model.AlertRule, previous model.AlertRuntime, values []Value, queryErr error, at int64) (model.AlertRuntime, []model.AlertEvent, error) {
 	out := model.AlertRuntime{LastEvaluation: at, Health: "ok", Instances: []model.AlertInstance{}}
+	templates := newRuleTemplates(ctx, rule, root, at)
 	old := map[string]model.AlertInstance{}
 	for _, v := range previous.Instances {
 		old[v.Key] = v
@@ -177,11 +184,15 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 	}
 	if policy != "" {
 		if len(old) == 0 && policy != "OK" && policy != "KeepLast" {
-			ls := mergedLabels(nil, rule.Labels, rule.Title)
+			labels, annotations, errors := templates.render(nil, nil)
+			ls := mergedLabels(nil, labels, rule.Title)
 			k := instanceKey(ls)
-			old[k] = model.AlertInstance{Key: k, Labels: ls, State: "Normal"}
+			old[k] = model.AlertInstance{Key: k, Labels: ls, State: "Normal", Annotations: annotations, TemplateErrors: errors}
 		}
 		for key, v := range old {
+			if policy != "KeepLast" {
+				v.Annotations, v.TemplateErrors = templates.annotationsFor(v.Labels)
+			}
 			v.UpdatedAt = at
 			v.Reason = reason
 			switch policy {
@@ -216,7 +227,8 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			if !value.Missing && (math.IsNaN(value.Value) || math.IsInf(value.Value, 0)) && rule.Execution != "grafana" {
 				return out, nil, errors.New("alert value must be finite")
 			}
-			ls := mergedLabels(value.Labels, rule.Labels, rule.Title)
+			labels, annotations, templateErrors := templates.render(&value, value.Labels)
+			ls := mergedLabels(value.Labels, labels, rule.Title)
 			key := instanceKey(ls)
 			if _, duplicate := current[key]; duplicate {
 				return out, nil, errors.New("rule labels collapse multiple query series into one alert instance")
@@ -228,6 +240,7 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			n := value.Value
 			v.Value, v.ValueText = &n, ""
 			v.Matches = value.Matches
+			v.Annotations, v.TemplateErrors = annotations, templateErrors
 			if math.IsNaN(n) || math.IsInf(n, 0) {
 				v.Value = nil
 				v.ValueText = strconv.FormatFloat(n, 'g', -1, 64)
@@ -247,6 +260,7 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 					v.Value = old[key].Value
 					v.ValueText = old[key].ValueText
 					v.Matches = old[key].Matches
+					v.Annotations, v.TemplateErrors = old[key].Annotations, old[key].TemplateErrors
 				case "OK":
 					v = advance(rule, v, false, at)
 				case "Alerting":
@@ -299,7 +313,7 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			before = "Normal"
 		}
 		if before != v.State {
-			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason, PrevReason: old[key].Reason, Value: v.Value, ValueText: v.ValueText, Error: out.Error})
+			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason, PrevReason: old[key].Reason, Value: v.Value, ValueText: v.ValueText, Error: out.Error, Annotations: v.Annotations})
 		}
 		out.Instances = append(out.Instances, v)
 	}
@@ -380,13 +394,15 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 	if ctx.Err() != nil {
 		return view, ctx.Err()
 	} // Shutdown/canceled requests never become alert failures.
-	runtime, events, stateErr := Transition(view.AlertRule, view.Runtime, values, queryErr, at.UnixMilli())
+	runtime, events, stateErr := transition(queryCtx, e.TemplateURL, view.AlertRule, view.Runtime, values, queryErr, at.UnixMilli())
 	if stateErr != nil {
-		runtime, events, _ = Transition(view.AlertRule, view.Runtime, nil, stateErr, at.UnixMilli())
+		runtime, events, _ = transition(queryCtx, e.TemplateURL, view.AlertRule, view.Runtime, nil, stateErr, at.UnixMilli())
 	}
 	if view.Record != "" && queryErr == nil && len(values) > 0 {
 		samples := []model.Sample{}
 		seen := map[string]bool{}
+		templates := newRuleTemplates(queryCtx, view.AlertRule, e.TemplateURL, at.UnixMilli())
+		templateWarnings := map[string]bool{}
 		for _, v := range values {
 			if v.Missing {
 				continue
@@ -395,7 +411,14 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 				queryErr = errors.New("recording rule value must be finite")
 				break
 			}
-			ls := mergedLabels(v.Labels, view.Labels, "")
+			labels, _, warnings := templates.render(&v, v.Labels)
+			for _, warning := range warnings {
+				if !templateWarnings[warning] && len(runtime.TemplateErrors) < 64 {
+					runtime.TemplateErrors = append(runtime.TemplateErrors, warning)
+					templateWarnings[warning] = true
+				}
+			}
+			ls := mergedLabels(v.Labels, labels, "")
 			key := instanceKey(ls)
 			if seen[key] {
 				queryErr = errors.New("recording labels collapse multiple query series")

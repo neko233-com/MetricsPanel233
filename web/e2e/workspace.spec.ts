@@ -5373,6 +5373,132 @@ test("Plugin management and official signed Clock render from its unchanged AMD 
   ).toBeTruthy();
 });
 
+test("Alert templates render per-instance summaries and warnings safely in both languages", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  const issues: string[] = [];
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type())) issues.push(entry.text());
+  });
+  let uid = "";
+  const annotations = {
+    summary: "Load {{ humanize $values.A.Value }} / {{ $labels.alertname }}",
+    description: '<img src=x onerror="window.__template_xss=1">',
+    broken: "{{ unknownFunction }}",
+  };
+  try {
+    await page.goto(endpoint + "/#alerts");
+    await expect(page).toHaveTitle(/MetricsPanel233/);
+    await expect(
+      page.getByRole("heading", { name: "Alerts", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Create alert", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("textbox", { name: "Rule name", exact: true })
+      .fill("Template browser test");
+    await page
+      .getByRole("textbox", { name: "PromQL condition", exact: true })
+      .fill("vector(233)");
+    await page.getByLabel("Evaluate every (s)").fill("86400");
+    await page.getByText("Labels and annotations", { exact: true }).click();
+    await page
+      .getByRole("textbox", { name: "Labels (JSON)", exact: true })
+      .fill(
+        JSON.stringify({
+          severity:
+            "{{ if gt $value 200.0 }}critical{{ else }}warning{{ end }}",
+        }),
+      );
+    await page
+      .getByRole("textbox", { name: "Annotations (JSON)", exact: true })
+      .fill(JSON.stringify(annotations));
+    const save = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/v1/alerts/rules"),
+    );
+    await page.getByRole("button", { name: "Save rule", exact: true }).click();
+    const saved = await (await save).json();
+    uid = saved.uid;
+    expect(uid).toBeTruthy();
+    const row = page
+      .locator(".alert-rule")
+      .filter({ hasText: "Template browser test" });
+    await row
+      .getByRole("button", {
+        name: "Evaluate Template browser test",
+        exact: true,
+      })
+      .click();
+    await expect(row.locator(".alert-rule-status")).toContainText("Firing");
+    await row.locator(".alert-rule-title").click();
+    await expect(row.locator(".alert-instance-summary")).toHaveText(
+      "Load 233 / Template browser test",
+    );
+    await expect(row.locator(".alert-detail")).toContainText(
+      "severity=critical",
+    );
+    await expect(row.locator(".alert-instance-description")).toHaveText(
+      annotations.description,
+    );
+    await expect(row.locator(".alert-detail img")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as any).__template_xss),
+    ).toBeUndefined();
+    await row.getByText("Template warnings", { exact: true }).click();
+    await expect(row.locator(".alert-template-warnings")).toContainText(
+      "unknownFunction",
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("templates-desktop.png"),
+      animations: "disabled",
+    });
+    await page.reload();
+    await row.locator(".alert-rule-title").click();
+    await expect(row.locator(".alert-instance-summary")).toHaveText(
+      "Load 233 / Template browser test",
+    );
+    const raw = await (
+      await page.request.get(endpoint + "/api/v1/alerts/rules/" + uid)
+    ).json();
+    expect(raw.annotations).toEqual(annotations);
+    expect(raw.runtime.instances[0].annotations.summary).toBe(
+      "Load 233 / Template browser test",
+    );
+    expect(raw.runtime.health).toBe("ok");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await row.getByText("模板提示", { exact: true }).click();
+    await expect(row.locator(".alert-template-warnings")).toContainText(
+      "unknownFunction",
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("templates-mobile.png"),
+      animations: "disabled",
+    });
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    expect(issues).toEqual([]);
+  } finally {
+    if (uid)
+      await fetch(
+        endpoint + "/api/v1/alerts/rules/" + encodeURIComponent(uid),
+        { method: "DELETE", signal: AbortSignal.timeout(10000) },
+      );
+  }
+});
+
 test("Grafana alert graphs execute compound conditions and retain graphs through bilingual edits", async ({
   page,
   endpoint,

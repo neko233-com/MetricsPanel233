@@ -212,6 +212,7 @@ const zh: Record<string, string> = {
   "API unavailable": "API 不可用",
   "PromQL condition": "PromQL 条件",
   "Query mode": "查询模式",
+  "Template warnings": "模板提示",
   "Grafana query graph": "Grafana 查询图",
   "Queries and condition (Grafana JSON)": "查询与条件（Grafana JSON）",
   "Quick start": "快速开始",

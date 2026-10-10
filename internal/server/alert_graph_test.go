@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const sdkAlertGraph = `{"uid":"sdk-graph","title":"Mixed SDK graph","condition":"C","for":"10s","data":[
+const sdkAlertGraph = `{"uid":"sdk-graph","title":"Mixed SDK graph","condition":"C","for":"10s","labels":{"severity":"{{ if gt $values.C0.Value 400.0 }}critical{{ else }}warning{{ end }}"},"annotations":{"summary":"SDK multiplied {{ printf \"%.0f\" $values.C0.Value }}","description":"{{ $labels.severity }} / {{ $values.C1.Value }}"},"data":[
 {"refId":"A","datasourceUid":"metricspanel","model":{"expr":"vector(233)","instant":true}},
 {"refId":"B","datasourceUid":"alert-sdk","model":{"value":2,"requireAlert":true}},
 {"refId":"D","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$B"}},
@@ -65,6 +65,10 @@ func TestAlertGraphRealSDKHeadersPersistenceAndNativeEdits(t *testing.T) {
 	require.Len(t, first.Runtime.Instances, 1)
 	assert.Equal(t, "Pending", first.Runtime.Instances[0].State)
 	assert.Contains(t, string(first.Runtime.Instances[0].Matches), `"value":"466"`)
+	assert.Equal(t, "critical", first.Runtime.Instances[0].Labels["severity"])
+	assert.Equal(t, "SDK multiplied 466", first.Runtime.Instances[0].Annotations["summary"])
+	assert.Equal(t, "[no value] / 233", first.Runtime.Instances[0].Annotations["description"])
+	assert.Empty(t, first.Runtime.Instances[0].TemplateErrors)
 	activeAt := first.Runtime.Instances[0].ActiveAt
 	app.Plugins.Close()
 	app.Live.Close()
@@ -79,6 +83,9 @@ func TestAlertGraphRealSDKHeadersPersistenceAndNativeEdits(t *testing.T) {
 	assert.Equal(t, "Firing", second.Runtime.Instances[0].State)
 	assert.Equal(t, activeAt, second.Runtime.Instances[0].ActiveAt)
 	assert.Contains(t, string(second.Runtime.Instances[0].Matches), `"value":"466"`)
+	assert.Equal(t, first.Runtime.Instances[0].Annotations, second.Runtime.Instances[0].Annotations)
+	active := call(app.Handler(), "GET", "/prometheus/api/v1/alerts", "", token, "")
+	assert.Contains(t, active.Body.String(), "SDK multiplied 466")
 	var samples int
 	require.NoError(t, s.DB.QueryRow("SELECT count(*) FROM samples").Scan(&samples))
 	assert.Zero(t, samples)
