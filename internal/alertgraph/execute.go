@@ -92,10 +92,12 @@ func ExecuteWithLoaded(ctx context.Context, p *Plan, at time.Time, source expres
 		return nil, err
 	}
 	classic := false
+	sqlCondition := false
 	for _, q := range p.Data {
 		if q.RefID == p.Condition && expressions.IsSource(q.DatasourceUID) {
 			kind, _, _ := expressions.Describe(q.Model)
 			classic = kind == "classic_conditions"
+			sqlCondition = kind == "sql"
 		}
 	}
 	for _, frame := range condition.Frames {
@@ -104,6 +106,9 @@ func ExecuteWithLoaded(ctx context.Context, p *Plan, at time.Time, source expres
 			return nil, err
 		}
 		if len(frame.Fields) == 0 {
+			continue
+		}
+		if sqlCondition && rows == 0 {
 			continue
 		}
 		if len(frame.Fields) != 1 || !frame.Fields[0].Type().Numeric() || rows > 1 {

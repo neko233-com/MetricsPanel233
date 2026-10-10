@@ -380,7 +380,7 @@ func run(args []string) error {
 			if err != nil {
 				return err
 			}
-			var payload any
+			var payload json.RawMessage
 			if err := json.Unmarshal(data, &payload); err != nil {
 				return err
 			}
@@ -412,13 +412,18 @@ func run(args []string) error {
 			if err != nil {
 				return err
 			}
-			var payload any
+			var payload json.RawMessage
 			if err = json.Unmarshal(data, &payload); err != nil {
 				return err
 			}
 			if action == "save" {
-				if object, ok := payload.(map[string]any); ok {
+				var object map[string]json.RawMessage
+				if json.Unmarshal(payload, &object) == nil && object != nil {
 					delete(object, "runtime")
+					payload, err = json.Marshal(object)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			path := "/api/v1/alerts/rules"
@@ -824,7 +829,7 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "alerts group-get --folder-uid UID --group NAME", "alerts group-save --folder-uid UID --group NAME --file FILE|- [--disable-provenance]", "alerts group-delete --folder-uid UID --group NAME")
 	result["alert_groups"] = map[string]any{"contract": "Grafana provisioning GET/PUT/DELETE; URL folder/name override payload; interval 5–86400 seconds; at most 1000 total rules", "replacement": "all rules replace atomically; omitted/null rules only update interval; explicit [] clears group; removed rules retain transition history and annotations", "state": "identical PUT and GET/PUT preserve versions and runtime; interval/order/provenance/move changes retain pending timers; evaluation changes reset state", "ordering": "array order survives restart; moving a UID normalizes its source group", "concurrency": "single-rule mutations serialized with group writes; every affected UID gate acquired together; any active affected evaluation returns HTTP 409 before writing", "provenance": "X-Disable-Provenance header or CLI --disable-provenance sets all rules editable; provenance is metadata and does not restrict native edits", "agent": "examples/alerts/grafana-group.json; use returned UIDs for idempotent reconciliation; group-delete returns JSON null for HTTP 204", "pending": []string{"folder and organization permission management", "App Platform rule APIs", "group provisioning file-format export"}}
-	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese query mode and Grafana JSON editor; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"SQL expressions", "external notifications and Alertmanager", "complete visual query editors"}}
+	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions", "SQL over backend frames"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese query mode and Grafana JSON editor; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"external notifications and Alertmanager", "complete visual query editors"}}
 	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
 	result["commands"] = append(result["commands"].([]string), "plugins list", "plugins get --id ID", "plugins install --file PACKAGE.zip", "plugins catalog --id ID --plugin-version EXACT", "plugins enable --id ID", "plugins disable --id ID", "plugins delete --id PACKAGE_ID", "datasources list", "datasources get --id UID", "datasources save --file FILE|- [--id UID] (update requires version)", "datasources health --id UID", "datasources delete --id UID")
 	routes["GET"] = append(routes["GET"], "/api/v1/plugins", "/api/v1/plugins/{id}", "/api/plugins", "/api/plugins/{id}/settings", "/api/datasources", "/api/datasources/uid/{uid}", "/api/datasources/uid/{uid}/health", "/public/plugins/{id}/{asset}")
@@ -854,7 +859,7 @@ func schema() any {
 	}
 	result["expressions"] = map[string]any{
 		"identity":           map[string]any{"uid": "__expr__", "type": "__expr__", "id": -100, "name": "Expression", "readOnly": true, "discovery": "separate from installable datasources"},
-		"operations":         []string{"math", "reduce", "resample", "threshold", "classic_conditions"},
+		"operations":         []string{"math", "reduce", "resample", "threshold", "classic_conditions", "sql"},
 		"classic_conditions": map[string]any{"functions": []string{"avg", "sum", "min", "max", "count", "last", "median", "diff", "diff_abs", "percent_diff", "percent_diff_abs", "count_non_null"}, "operators": []string{"and", "or", "logic-or"}, "input": "condition.query.params[0] is the RefID; legacy range params retained", "output": "one unlabelled number: 1, 0 or null; frame.meta.custom match diagnostics have string value, metric and labels", "semantics": "ordered fold without precedence; logic-or short-circuits when firing; series reducers skip null/NaN and retain infinities; numbers bypass reducers; no_value checks null or empty input"},
 		"math":               map[string]any{"references": "$RefID or ${query name}", "operators": []string{"+", "-", "*", "/", "%", "**", "==", "!=", ">", "<", ">=", "<=", "&&", "||", "!"}, "functions": []string{"abs", "log", "round", "ceil", "floor", "is_nan", "is_inf", "is_null", "is_number", "nan", "inf", "infn", "null"}, "precedence": "Grafana 13.2.3 left-associative exponent; unary binds more tightly", "joins": "equal/subset/unlabelled labels; unmatched single pair strips labels; indexed equal-key joins; series timestamp intersection"},
 		"reduce":             map[string]any{"functions": []string{"sum", "mean", "min", "max", "count", "last", "median"}, "modes": []string{"strict (settings omitted or legacy strict)", "dropNN", "replaceNN plus finite replaceWithValue"}},
@@ -864,8 +869,9 @@ func schema() any {
 		"agent":              "datasources query --id __expr__ --file FILE|- [--stream]; JSON and NDJSON preserve results and exit nonzero for partial errors",
 		"storage":            "no input mutation or ingestion; official SDK frames retain null/NaN/Inf",
 		"limits":             map[string]int{"queries": 32, "joined_items": 10000, "working_points": 1000000, "math_tokens": 2048, "parse_steps": 1024, "syntax_depth": 64, "work_steps": 2000000, "seconds": 20, "response_MiB": 32},
-		"pending":            []string{"SQL expressions", "full expression query editor", "remaining Grafana core services"},
+		"pending":            []string{"SQL panel comparison remapping", "full expression query editor", "remaining Grafana core services"},
 	}
+	result["sql_expressions"] = map[string]any{"engine": "Grafana 13.2.3 embedded Go MySQL engine; isolated read-only tables", "model": "type=sql, expression=SELECT query, optional format=alerting", "input": "backend RefIDs are tables; numeric/time-series wide/multi frames become full-long __value__/__metric_name__/optional __display_name__ and label columns; ordinary tables retain all primitive/JSON columns", "query": "JOIN, CTE, subqueries, windows and the pinned Grafana function allowlist; session variables, writes and file operations rejected", "graph": "one terminal SQL expression; only backend queries as inputs; expressions cannot consume SQL results", "alerting": "one numeric column and unique string-label combinations; NULL string labels omitted; alert/record evaluation forces transient alerting format without altering saved models", "limits": map[string]int{"query_bytes": 10000, "input_cells": 100000, "output_cells": 100000, "seconds": 10}, "overflow": "input fails; output truncates at a complete row with a warning notice", "agent": "datasources query --id __expr__ --file examples/queries/sql-metrics.json [--stream]; alerts save --file examples/alerts/graph-sql-memory.json"}
 	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")
 	routes["POST"] = append(routes["POST"], "/api/live/session", "/api/live/publish")

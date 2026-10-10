@@ -30,7 +30,10 @@ func TestGraphImportPreservesNodesAndSupportsCompoundConditions(t *testing.T) {
 	g.Data[2].Model = json.RawMessage(`{"type":"threshold","expression":"B","conditions":[{"evaluator":{"type":"gt","params":[233]},"unloadEvaluator":{"type":"lt","params":[200]}}]}`)
 	_, err = CompileGrafana(g, 15)
 	require.NoError(t, err)
-	for _, body := range []string{`{"type":"sql","expression":"select 1"}`, `{"type":"threshold","expression":"B","conditions":[{"evaluator":{"type":"gt","params":[233]},"unloadEvaluator":{"type":"lt","params":[]}}]}`} {
+	g.Data[2].Model = json.RawMessage(`{"type":"sql","expression":"SELECT 1 AS value"}`)
+	_, err = CompileGrafana(g, 15)
+	require.NoError(t, err)
+	for _, body := range []string{`{"type":"sql","expression":"DELETE FROM A"}`, `{"type":"threshold","expression":"B","conditions":[{"evaluator":{"type":"gt","params":[233]},"unloadEvaluator":{"type":"lt","params":[]}}]}`} {
 		g.Data[2].Model = json.RawMessage(body)
 		_, err = CompileGrafana(g, 15)
 		require.Error(t, err)

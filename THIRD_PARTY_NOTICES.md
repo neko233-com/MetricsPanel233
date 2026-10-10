@@ -23,3 +23,5 @@ Grafana Live transport uses the MIT-licensed `centrifugal/centrifuge` Go server,
 The agent subscription client uses the ISC-licensed `coder/websocket` library.
 Sources and included notices: <https://github.com/centrifugal/centrifuge>, <https://github.com/centrifugal/protocol>,
 <https://github.com/centrifugal/centrifuge-js> and <https://github.com/coder/websocket>.
+
+SQL expressions use the Apache-2.0 Grafana forks of Dolt go-mysql-server and Vitess, pinned to the Grafana 13.2.3 dependency versions in `go.mod`. Source and licenses: <https://github.com/grafana/go-mysql-server/tree/v0.20.2-grafana-4> and <https://github.com/grafana/vitess/tree/v0.0.0-grafana-2>.

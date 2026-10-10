@@ -1,6 +1,7 @@
 package expressions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,11 +12,13 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"github.com/neko233-com/MetricsPanel233/internal/sqlframes"
 )
 
 type queryModel struct {
 	Type        string `json:"type"`
 	Expression  string `json:"expression"`
+	Format      string `json:"format"`
 	Reducer     string `json:"reducer"`
 	Window      string `json:"window"`
 	Downsampler string `json:"downsampler"`
@@ -69,6 +72,10 @@ func Describe(raw json.RawMessage) (string, []string, error) {
 func compile(m queryModel) (operation, error) {
 	o := operation{model: m}
 	switch m.Type {
+	case "sql":
+		refs, err := sqlframes.References(context.Background(), m.Expression)
+		o.dependencies = refs
+		return o, err
 	case "classic_conditions":
 		return compileClassic(m)
 	case "math":

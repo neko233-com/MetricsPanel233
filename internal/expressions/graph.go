@@ -8,6 +8,8 @@ import (
 	"slices"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"github.com/neko233-com/MetricsPanel233/internal/sqlframes"
 )
 
 func IsSource(uid string) bool { return uid == "__expr__" || uid == "-100" || uid == "Expression" }
@@ -27,29 +29,52 @@ func Execute(ctx context.Context, groups map[string][]backend.DataQuery, source 
 	done := map[string]bool{}
 	b := &budget{ctx: ctx}
 	sourceTypes := map[string]string{}
+	rawFrames := map[string]data.Frames{}
+	sqlInputs := map[string]bool{}
 	uids := make([]string, 0, len(groups))
 	for uid := range groups {
 		uids = append(uids, uid)
 	}
 	slices.Sort(uids)
+	// Compile first so SQL dependencies retain full backend tables rather than
+	// being reduced by the ordinary math/threshold input converter.
+	for _, uid := range uids {
+		if !IsSource(uid) {
+			continue
+		}
+		for _, q := range groups[uid] {
+			queries[q.RefID] = q
+			var m queryModel
+			err := json.Unmarshal(q.JSON, &m)
+			var op operation
+			if err == nil {
+				op, err = compile(m)
+			}
+			if err != nil {
+				response.Responses[q.RefID] = backend.DataResponse{Error: err, Status: backend.StatusBadRequest}
+				done[q.RefID] = true
+			} else {
+				ops[q.RefID] = op
+			}
+		}
+	}
+	if err := validateSQLOps(ops); err != nil {
+		for ref := range ops {
+			response.Responses[ref] = backend.DataResponse{Error: err, Status: backend.StatusBadRequest}
+			done[ref] = true
+		}
+	} else {
+		for _, op := range ops {
+			if op.model.Type == "sql" {
+				for _, dep := range op.dependencies {
+					sqlInputs[dep] = true
+				}
+			}
+		}
+	}
 	for _, uid := range uids {
 		group := groups[uid]
 		if IsSource(uid) {
-			for _, q := range group {
-				queries[q.RefID] = q
-				var m queryModel
-				err := json.Unmarshal(q.JSON, &m)
-				var op operation
-				if err == nil {
-					op, err = compile(m)
-				}
-				if err != nil {
-					response.Responses[q.RefID] = backend.DataResponse{Error: err, Status: backend.StatusBadRequest}
-					done[q.RefID] = true
-				} else {
-					ops[q.RefID] = op
-				}
-			}
 			continue
 		}
 		result, sourceType, err := source(ctx, uid, group)
@@ -58,14 +83,31 @@ func Execute(ctx context.Context, groups map[string][]backend.DataQuery, source 
 				response.Responses[q.RefID] = backend.DataResponse{Error: err, Status: backend.StatusBadGateway}
 			} else if r, ok := result[q.RefID]; ok {
 				if r.Error == nil {
-					parsed, convertErr := fromFrames(r.Frames, sourceType, b)
-					if convertErr != nil {
-						r.Error = convertErr
-						r.Status = backend.StatusBadRequest
-						r.Frames = nil
+					rawFrames[q.RefID] = r.Frames
+					if sqlInputs[q.RefID] {
+						frame, convertErr := sqlframes.ToTable(ctx, q.RefID, r.Frames)
+						if convertErr != nil {
+							r.Error = convertErr
+							r.Status = backend.StatusBadRequest
+							r.Frames = nil
+						} else {
+							if frame.Meta != nil {
+								meta := *frame.Meta
+								meta.Channel = ""
+								frame.Meta = &meta
+							}
+							r.Frames = data.Frames{frame}
+						}
 					} else {
-						vars[q.RefID] = parsed
-						r.Frames = toFrames(q.RefID, parsed)
+						parsed, convertErr := fromFrames(r.Frames, sourceType, b)
+						if convertErr != nil {
+							r.Error = convertErr
+							r.Status = backend.StatusBadRequest
+							r.Frames = nil
+						} else {
+							vars[q.RefID] = parsed
+							r.Frames = toFrames(q.RefID, parsed)
+						}
 					}
 				}
 				response.Responses[q.RefID] = r
@@ -102,32 +144,47 @@ func Execute(ctx context.Context, groups map[string][]backend.DataQuery, source 
 				failure = fmt.Errorf("dependency %s failed: %w", dependency, err)
 				break
 			}
-			if _, converted := vars[dependency]; !converted {
-				result := response.Responses[dependency]
-				parsed, err := fromFrames(result.Frames, sourceTypes[dependency], b)
-				if err != nil {
-					failure = fmt.Errorf("dependency %s: %w", dependency, err)
-					break
+			if op.model.Type != "sql" {
+				if _, converted := vars[dependency]; !converted {
+					result := response.Responses[dependency]
+					frames := result.Frames
+					if original, ok := rawFrames[dependency]; ok {
+						frames = original
+					}
+					parsed, err := fromFrames(frames, sourceTypes[dependency], b)
+					if err != nil {
+						failure = fmt.Errorf("dependency %s: %w", dependency, err)
+						break
+					}
+					vars[dependency] = parsed
 				}
-				vars[dependency] = parsed
 			}
 		}
 		if failure == nil {
 			q := queries[ref]
-			output, err := op.execute(vars, q.TimeRange.From, q.TimeRange.To, b)
-			if err != nil {
-				failure = err
-			} else {
-				if op.model.Type != "classic_conditions" {
-					// A math variable can return its input slice directly. Assigning
-					// diagnostic names must not rename that shared dependency.
-					output = slices.Clone(output)
-					for i := range output {
-						output[i].name = ref
-					}
+			if op.model.Type == "sql" {
+				frames, err := sqlResult(ctx, ref, op, q, rawFrames)
+				if err != nil {
+					failure = err
+				} else {
+					response.Responses[ref] = backend.DataResponse{Frames: frames}
 				}
-				vars[ref] = output
-				response.Responses[ref] = backend.DataResponse{Frames: toFrames(ref, output)}
+			} else {
+				output, err := op.execute(vars, q.TimeRange.From, q.TimeRange.To, b)
+				if err != nil {
+					failure = err
+				} else {
+					if op.model.Type != "classic_conditions" {
+						// A math variable can return its input slice directly. Assigning
+						// diagnostic names must not rename that shared dependency.
+						output = slices.Clone(output)
+						for i := range output {
+							output[i].name = ref
+						}
+					}
+					vars[ref] = output
+					response.Responses[ref] = backend.DataResponse{Frames: toFrames(ref, output)}
+				}
 			}
 		}
 		if failure != nil {

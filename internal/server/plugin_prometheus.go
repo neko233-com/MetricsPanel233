@@ -159,7 +159,7 @@ func (s *Server) queryPrometheusSource(ctx context.Context, ds model.DataSource,
 			}
 			frame := data.NewFrame("", data.NewField("Time", nil, times), field)
 			frame.RefID = q.RefID
-			frame.Meta = &data.FrameMeta{Custom: map[string]string{"resultType": result.Data.ResultType}}
+			frame.Meta = &data.FrameMeta{Type: data.FrameTypeTimeSeriesMulti, TypeVersion: data.FrameTypeVersion{0, 1}, Custom: map[string]string{"resultType": result.Data.ResultType}}
 			frames = append(frames, frame)
 		}
 	}

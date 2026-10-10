@@ -153,6 +153,7 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			AnnotationText    string  `json:"annotationText"`
 			AnnotationDelayMS int     `json:"annotationDelayMS"`
 			RequireAlert      bool    `json:"requireAlert"`
+			SQLTable          bool    `json:"sqlTable"`
 		}
 		if err := json.Unmarshal(q.JSON, &input); err != nil {
 			return nil, err
@@ -189,10 +190,18 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			out.Responses[q.RefID] = backend.DataResponse{Frames: data.Frames{frame}}
 			continue
 		}
+		if input.SQLTable {
+			frame := data.NewFrame("sdk-sql-table", data.NewField("host", nil, []string{settings.UID}), data.NewField("value", nil, []float64{input.Value}), data.NewField("budget", nil, []float64{input.Value * 2}), data.NewField("online", nil, []bool{true}), data.NewField("payload", nil, []json.RawMessage{json.RawMessage(`{"n":233}`)}), data.NewField("clock", nil, []time.Time{q.TimeRange.To}))
+			frame.RefID = q.RefID
+			frame.Meta = &data.FrameMeta{Type: data.FrameTypeTable}
+			out.Responses[q.RefID] = backend.DataResponse{Frames: data.Frames{frame}}
+			continue
+		}
 		frame := data.NewFrame("sdk-fixture", data.NewField("Time", nil, []time.Time{q.TimeRange.To}), data.NewField("Value", data.Labels{"source": settings.UID}, []float64{input.Value}))
 		frame.RefID = q.RefID
+		frame.Meta = &data.FrameMeta{Type: data.FrameTypeTimeSeriesMulti}
 		if input.Live {
-			frame.Meta = &data.FrameMeta{Channel: "ds/" + settings.UID + "/counter"}
+			frame.Meta.Channel = "ds/" + settings.UID + "/counter"
 		} else {
 			staticQueries.Add(1)
 		}

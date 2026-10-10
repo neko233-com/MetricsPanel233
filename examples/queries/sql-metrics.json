@@ -1,0 +1,8 @@
+{
+  "from": "now-5m",
+  "to": "now",
+  "queries": [
+    { "refId": "A", "hide": true, "datasource": { "uid": "metricspanel" }, "expr": "metricspanel_memory_bytes", "instant": true },
+    { "refId": "Q", "type": "sql", "datasource": { "uid": "__expr__" }, "expression": "SELECT job, SUM(__value__) / 1024 / 1024 AS memory_mib FROM A GROUP BY job" }
+  ]
+}

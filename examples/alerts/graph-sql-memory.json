@@ -1,0 +1,15 @@
+{
+  "uid": "graph-sql-memory",
+  "title": "SQL memory alert",
+  "execution": "grafana",
+  "interval_seconds": 30,
+  "for_seconds": 30,
+  "annotations": { "summary": "{{ $labels.job }} memory limit: {{ $values.C.Value }}" },
+  "grafana": {
+    "condition": "C",
+    "data": [
+      { "refId": "A", "datasourceUid": "metricspanel", "relativeTimeRange": { "from": 60, "to": 0 }, "model": { "expr": "metricspanel_memory_bytes", "instant": true } },
+      { "refId": "C", "datasourceUid": "__expr__", "model": { "type": "sql", "expression": "SELECT job, CAST(SUM(__value__) > 1073741824 AS SIGNED) AS firing FROM A GROUP BY job" } }
+    ]
+  }
+}

@@ -151,6 +151,9 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 	if nodes[p.Condition] == nil {
 		return nil, fmt.Errorf("unknown condition reference %q", p.Condition)
 	}
+	if err := expressions.ValidateSQLGraph(p.Groups(time.Unix(1, 0))); err != nil {
+		return nil, err
+	}
 	visited, active := map[string]bool{}, map[string]bool{}
 	var visit func(string) error
 	visit = func(ref string) error {
@@ -187,7 +190,17 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 func (p *Plan) Groups(at time.Time) map[string][]backend.DataQuery {
 	groups := map[string][]backend.DataQuery{}
 	for _, q := range p.Data {
-		query := backend.DataQuery{RefID: q.RefID, QueryType: q.QueryType, JSON: q.Model, Interval: q.interval, MaxDataPoints: q.points,
+		model := q.Model
+		if expressions.IsSource(q.DatasourceUID) {
+			kind, _, _ := expressions.Describe(model)
+			if kind == "sql" {
+				properties := map[string]json.RawMessage{}
+				_ = json.Unmarshal(model, &properties)
+				properties["format"] = json.RawMessage(`"alerting"`)
+				model, _ = json.Marshal(properties)
+			}
+		}
+		query := backend.DataQuery{RefID: q.RefID, QueryType: q.QueryType, JSON: model, Interval: q.interval, MaxDataPoints: q.points,
 			TimeRange: backend.TimeRange{From: at.Add(-time.Duration(q.RelativeTimeRange.From) * time.Second), To: at.Add(-time.Duration(q.RelativeTimeRange.To) * time.Second)}}
 		groups[q.DatasourceUID] = append(groups[q.DatasourceUID], query)
 	}

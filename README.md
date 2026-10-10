@@ -314,7 +314,11 @@ Grafana 告警规则使用同一后端表达式引擎执行原始查询图，支
 
 输入为宽时间序列、单数值列加字符串维度的数字表、Prometheus instant vector；null / NaN / Inf 使用官方 DataFrame JSON 保留。比较窗口重命名表达式依赖并保持历史时间戳。每请求最多 32 个查询、10,000 个匹配项、1,000,000 个工作点（输入和中间结果合计）、20 秒及 32 MiB 响应。
 
-SQL 和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+SQL 表达式使用与 Grafana 13.2.3 相同的嵌入式 Go MySQL 引擎，支持 JOIN、CTE、子查询、窗口函数和固定版本函数白名单。后端 RefID 对应表；数字／时间序列 wide、multi 帧转换为 `__value__`、`__metric_name__`、可选显示名及标签列，普通表保留多数值列、字符串、布尔、时间和 JSON。每图只允许一个 SQL 终端节点，只能读取后端数据源，其他表达式不能消费 SQL 结果。查询最长 10000 字节，最多 100000 输入／输出单元格、10 秒；输出超限按完整行截断并附警告，输入超限报错。数据写入、文件访问和会话变量均拒绝。
+
+Agent 可运行 `metricspanel datasources query --id __expr__ --file examples/queries/sql-metrics.json --stream`；告警示例为 `examples/alerts/graph-sql-memory.json`。告警／录制结果必须恰好一个数值列，字符串列组成唯一实例标签，NULL 字符串省略；重复标签报错。规则的临时 alerting 格式不覆盖原始 JSON，重启保留规则、状态、计时和录制样本。[SQL 契约与固定版本源码](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/sql_command.go)。
+
+SQL 面板比较引用重写和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
@@ -480,7 +484,7 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
 
-未知数据源、非法节点和循环依赖在保存前拒绝；SQL、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+未知数据源、非法节点和循环依赖在保存前拒绝；外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

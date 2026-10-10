@@ -59,7 +59,7 @@ func TestGraphMissingReferencesCyclesInvalidExpressionsAndLimits(t *testing.T) {
 		`{"record":{"from":"A","target_datasource_uid":"other"},"data":[{"refId":"A","datasourceUid":"sdk","model":{}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"math","expression":"$Missing"}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"math","expression":"$B"}},{"refId":"B","datasourceUid":"__expr__","model":{"type":"reduce","expression":"A","reducer":"mean"}}]}`,
-		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"sql","expression":"select 1"}}]}`,
+		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"sql","expression":"delete from X"}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"rate("}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"sdk","relativeTimeRange":{"from":0,"to":1},"model":{}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"sdk","relativeTimeRange":{"from":2678401},"model":{}}]}`,

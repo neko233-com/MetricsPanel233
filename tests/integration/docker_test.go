@@ -118,6 +118,57 @@ func (e environment) composeInput(input string, args ...string) (string, error) 
 	return strings.TrimSpace(string(output)), err
 }
 
+func (e environment) verifySQL(address string, restarted bool) {
+	e.t.Helper()
+	payload := json.RawMessage(`{"from":"now-1m","to":"now","queries":[{"refId":"A","datasource":{"uid":"metricspanel"},"expr":"mysql_up","instant":true},{"refId":"B","datasource":{"uid":"docker-sdk"},"value":2,"sqlTable":true},{"refId":"Q","datasource":{"uid":"__expr__"},"type":"sql","expression":"WITH joined AS (SELECT A.job, B.host, A.__value__ * B.value AS total, B.online, B.payload FROM A CROSS JOIN B) SELECT job, host, SUM(total) AS total, MAX(JSON_EXTRACT(payload,'$.n')) AS payload FROM joined WHERE online GROUP BY job, host"}]}`)
+	var envelope map[string]json.RawMessage
+	require.NoError(e.t, json.Unmarshal(payload, &envelope))
+	at := time.Now()
+	envelope["from"], _ = json.Marshal(strconv.FormatInt(at.Add(-time.Minute).UnixMilli(), 10))
+	envelope["to"], _ = json.Marshal(strconv.FormatInt(at.UnixMilli(), 10))
+	payload, _ = json.Marshal(envelope)
+	for _, path := range []string{"/api/ds/query", "/apis/__expr__.datasource.grafana.app/v0alpha1/namespaces/default/connections/__expr__/query"} {
+		var response backend.QueryDataResponse
+		require.NoError(e.t, json.Unmarshal(e.must(address, "POST", path, payload), &response))
+		q := response.Responses["Q"]
+		require.NoError(e.t, q.Error)
+		require.Len(e.t, q.Frames, 1)
+		require.Equal(e.t, 1, q.Frames[0].Rows())
+		n, err := q.Frames[0].Fields[2].FloatAt(0)
+		require.NoError(e.t, err)
+		assert.Equal(e.t, float64(2), n)
+	}
+	for _, rule := range []struct {
+		uid       string
+		recording bool
+	}{{"docker-sql-alert", false}, {"docker-sql-record", true}} {
+		if !restarted {
+			expression := "SELECT host, CAST(SUM(value) > 1 AS SIGNED) AS firing FROM B GROUP BY host"
+			body := map[string]any{"uid": rule.uid, "title": rule.uid, "folderUID": "general", "ruleGroup": "sql", "condition": "Q", "annotations": map[string]string{"summary": "{{ $labels.host }} = {{ $values.Q.Value }}"}, "data": []any{map[string]any{"refId": "B", "datasourceUid": "docker-sdk", "model": map[string]any{"value": 2, "sqlTable": true, "requireAlert": true}}}}
+			if rule.recording {
+				expression = "SELECT host, SUM(value) AS total FROM B GROUP BY host"
+				body["record"] = map[string]string{"metric": "sdk:sql_value", "from": "Q", "target_datasource_uid": "metricspanel"}
+			}
+			body["data"] = append(body["data"].([]any), map[string]any{"refId": "Q", "datasourceUid": "__expr__", "model": map[string]string{"type": "sql", "expression": expression}})
+			status, raw, err := e.request(address, "POST", "/api/v1/provisioning/alert-rules", body)
+			require.NoError(e.t, err)
+			require.Equal(e.t, 201, status, string(raw))
+		}
+		var view model.AlertRuleView
+		require.NoError(e.t, json.Unmarshal(e.must(address, "POST", "/api/v1/alerts/rules/"+rule.uid+"/evaluate", nil), &view))
+		require.Equal(e.t, "ok", view.Runtime.Health, view.Runtime.Error)
+		assert.Contains(e.t, string(view.Grafana), `"type":"sql"`)
+		if !rule.recording {
+			require.Len(e.t, view.Runtime.Instances, 1)
+			assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
+			assert.Equal(e.t, "docker-sdk = 1", view.Runtime.Instances[0].Annotations["summary"])
+		}
+	}
+	v, ok := e.value(address, "sdk:sql_value")
+	require.True(e.t, ok)
+	assert.Equal(e.t, float64(2), v)
+}
+
 func (e environment) verifyAlertGraph(address string, restarted bool) {
 	const uid = "docker-sdk-graph"
 	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","labels":{"severity":"{{ if gt $values.K0.Value 1.0 }}critical{{ else }}warning{{ end }}"},"annotations":{"summary":"MySQL {{ $values.K1.Value }} with SDK {{ $values.K0.Value }}","description":"{{ $labels.severity }} / {{ $values.K0.Labels.job }}"},"data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
@@ -694,6 +745,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_http_requests_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go exporter not scraped")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
 			e.verifyExpressionGraph(address)
+			e.verifySQL(address, false)
 			e.verifyAlertGraph(address, false)
 			e.verifyAlertGroups(address, false)
 			// Duplicate writes replace a sample, including across a full restart.
@@ -766,6 +818,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifyBuiltinGrafana(address)
 			e.verifySDKPlugin(address, backend.service)
 			e.verifyExpressionGraph(address)
+			e.verifySQL(address, true)
 			e.verifyAlertGraph(address, true)
 			e.verifyAlertGroups(address, true)
 			var regionDashboards []model.Dashboard
