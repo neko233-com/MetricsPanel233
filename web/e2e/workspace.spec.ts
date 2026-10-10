@@ -4762,13 +4762,17 @@ test("SDK application events refresh real queries, notify ranges and preserve si
         exact: true,
       }),
     ).toBeVisible();
+    // Each query settles independently; both panels must flush their audit timer
+    // while the browser clock remains paused to exclude the automatic poll.
     await expect
       .poll(async () => {
         await page.clock.runFor(100);
-        return first.innerText();
+        return Promise.all([first.innerText(), second.innerText()]);
       })
-      .toContain("Panel value: 234");
-    await expect(second).toContainText("Panel value: 234");
+      .toEqual([
+        expect.stringContaining("Panel value: 234"),
+        expect.stringContaining("Panel value: 234"),
+      ]);
     expect(statsRequests).toBeGreaterThan(beforeStats);
     expect(queries).toBeGreaterThan(beforeQueries);
     await first
