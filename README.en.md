@@ -70,7 +70,7 @@ Version conflicts and overwrite are supported. Datasource discovery, health and 
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
 **Full Grafana ecosystem parity remains unfinished.** Additional core UI extension points, some app core services, legacy Angular plugins,
-annotations, folders/organizations/permissions, library panels and the full backend API remain unfinished.
+plugin datasource annotation adapters, folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
 Full compatibility remains an objective, not a claim for this release.
@@ -138,6 +138,30 @@ State reconciles every five seconds. Limits are four concurrent provider loads, 
 Agents can inspect declarations with `plugins get --id ID`; client callbacks require the browser runtime.
 Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and mobile layout.
 See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
+
+## Durable annotations
+
+`/api/annotations` supports creation, queries, full and partial updates, deletion and tag enumeration, plus Graphite creation and explicit dashboard/panel mass deletion.
+Times use Unix milliseconds; Graphite `when` uses seconds. Queries match overlapping points/regions and AND tags; `matchAny=true` uses OR.
+Dashboard UID/deprecated numeric ID and panel scopes share the workspace's existing Bearer authentication and single local principal.
+Records and indexed tags live in the SQLite WAL control plane for either metric backend. An optional creation `idempotencyKey` returns the same ID on retries across restarts; a different normalized payload for the key returns HTTP 409.
+
+```sh
+metricspanel annotations save --file annotation.json
+metricspanel annotations list --dashboard-uid system --tags '["deploy"]' --start 1791590000000 --end 1791600000000
+metricspanel annotations patch --id 1 --file annotation-patch.json
+metricspanel annotations tags --name deploy
+metricspanel annotations delete --id 1
+```
+
+Example creation JSON: `{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"Deployment complete","tags":["deploy"],"idempotencyKey":"deploy-233"}`.
+Native charts offer a Chinese/English editor, point markers and clipped regions with plain-text tooltips.
+Classic/V1/V2 builtin Grafana dashboard/tag queries execute with variable tags, enabled state and panel filter IDs. Template `hide` preserves visible events.
+SDK panels receive public `PanelData.annotations` frames through official `toDataFrame`; annotation frames are separate from metric series.
+Queries return at most 1000 events; the frontend permits 32 annotation queries and 1000 merged events, text 8192 bytes and 32 tags.
+Plugin datasource annotation adapters, automatic alert state annotations, recurring time regions and full organization permissions remain pending.
+Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and mobile layout.
+See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
 
 ## Dashboard time ranges
 

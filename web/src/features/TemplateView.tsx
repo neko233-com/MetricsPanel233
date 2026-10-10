@@ -57,6 +57,7 @@ function PanelCell({
   tick,
   style,
   dashboard,
+  annotationDashboard,
   onRange,
 }: {
   panel: Panel;
@@ -66,20 +67,43 @@ function PanelCell({
   tick: number;
   style: CSSProperties;
   dashboard: PluginExtensionPanelContext["dashboard"];
+  annotationDashboard: Dashboard;
 }) {
   const ref = useRef<HTMLDivElement>(null),
     [visible, setVisible] = useState(false);
   const [update, setUpdate] = useState<FrameUpdate | null>(null);
   useEffect(() => {
+    const cell = ref.current;
+    let intersecting = false;
+    const update = () =>
+      setVisible(
+        intersecting ||
+          Boolean(cell?.querySelector("dialog[open]")) ||
+          Boolean(cell?.contains(document.activeElement)),
+      );
+    const focusChanged = () => queueMicrotask(update);
     const observer = new IntersectionObserver(
-      ([entry]) => setVisible(entry.isIntersecting),
+      ([entry]) => {
+        intersecting = entry.isIntersecting;
+        update();
+      },
       { rootMargin: "200px" },
     );
     if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
+    cell?.addEventListener("focusout", focusChanged);
+    return () => {
+      observer.disconnect();
+      cell?.removeEventListener("focusout", focusChanged);
+    };
   }, []);
   return (
-    <div ref={ref} className="grafana-cell" style={style}>
+    <div
+      ref={ref}
+      className="grafana-cell"
+      style={style}
+      role="group"
+      aria-label={panel.title}
+    >
       {visible ? (
         <>
           <GrafanaPanel
@@ -89,6 +113,7 @@ function PanelCell({
             tick={tick}
             onUpdate={setUpdate}
             onRange={onRange}
+            dashboard={annotationDashboard}
           />
           <PanelExtensionActions
             panel={panel}
@@ -113,7 +138,11 @@ function PanelCell({
           <h2>{panel.title}</h2>
         </div>
       ) : (
-        <section className="chart-panel">
+        <section
+          className="chart-panel"
+          aria-label={panel.title}
+          aria-busy="true"
+        >
           <div className="panel-heading">
             <h2>{panel.title}</h2>
           </div>
@@ -341,6 +370,7 @@ export function TemplateView({
               onRange={onRange}
               tick={tick}
               dashboard={extensionDashboard}
+              annotationDashboard={dashboard}
             />
           ))}
         </Suspense>

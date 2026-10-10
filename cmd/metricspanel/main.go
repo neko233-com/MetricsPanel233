@@ -64,6 +64,7 @@ Usage: metricspanel <command> [flags]
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
   targets      list | add | set | delete | scrape
   dashboards   list | save | export | delete
+  annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | evaluate | history | delete
   plugins      list | get | install | catalog | enable | disable | delete
@@ -97,7 +98,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -127,6 +128,10 @@ func run(args []string) error {
 	limit := f.Int("limit", 10, "pattern search limit (1–100), list limit (1–1000), Live event limit (0 unlimited)")
 	exact := f.Bool("exact", false, "exact vector scan instead of approximate HNSW search")
 	includeSelf := f.Bool("include-self", false, "include the reference pattern in search results")
+	annotationDashboard := f.String("dashboard-uid", "", "annotation dashboard UID")
+	annotationPanel := f.Int64("panel-id", 0, "annotation panel ID")
+	annotationTags := f.String("tags", "[]", "annotation tags JSON array")
+	annotationMatchAny := f.Bool("match-any", false, "match any annotation tag")
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
 	channel := f.String("channel", "", "Grafana Live channel: ds/UID/path or plugin/ID/path")
 	metadata := f.String("metadata", "null", "Live subscription metadata (JSON)")
@@ -151,6 +156,51 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "annotations":
+		switch action {
+		case "list":
+			var tags []string
+			if err := json.Unmarshal([]byte(*annotationTags), &tags); err != nil {
+				return err
+			}
+			params := url.Values{"from": {strconv.FormatInt(*start, 10)}, "to": {strconv.FormatInt(*end, 10)}, "dashboardUID": {*annotationDashboard}, "panelId": {strconv.FormatInt(*annotationPanel, 10)}, "tags": tags, "matchAny": {strconv.FormatBool(*annotationMatchAny)}, "limit": {strconv.Itoa(*limit)}}
+			return request("GET", "/api/annotations?"+params.Encode(), nil)
+		case "tags":
+			return request("GET", "/api/annotations/tags?"+url.Values{"tag": {*name}, "limit": {strconv.Itoa(*limit)}}.Encode(), nil)
+		case "get", "delete":
+			if number, err := strconv.ParseInt(*id, 10, 64); err != nil || number <= 0 {
+				return errors.New("positive annotation --id required")
+			}
+			method := "GET"
+			if action == "delete" {
+				method = "DELETE"
+			}
+			return request(method, "/api/annotations/"+*id, nil)
+		case "save", "patch", "graphite":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("annotation file must be JSON")
+			}
+			method, path := "POST", "/api/annotations"
+			if action == "graphite" {
+				path += "/graphite"
+			} else if *id != "" || action == "patch" {
+				if number, err := strconv.ParseInt(*id, 10, 64); err != nil || number <= 0 {
+					return errors.New("positive annotation --id required")
+				}
+				path += "/" + *id
+				method = "PUT"
+				if action == "patch" {
+					method = "PATCH"
+				}
+			}
+			return request(method, path, json.RawMessage(data))
+		default:
+			return errors.New("annotations requires list, get, save, patch, tags, delete or graphite")
+		}
 	case "live":
 		switch action {
 		case "channels":
@@ -756,5 +806,12 @@ func schema() any {
 	result["commands"] = append(result["commands"].([]string), "datasources query --id UID --file FILE|- [--stream --duration 1m] (stream emits NDJSON until EOF; errors preserve partial data and exit 1)")
 	routes["POST"] = append(routes["POST"], "/apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query")
 	result["chunked_queries"] = map[string]any{"accept": "text/jsonl", "record": []string{"refId", "frameId", "frame (DataFrame JSON; schema in first chunk, later data appends)", "error", "errorSource"}, "legacy_route": "/api/ds/query also accepts text/jsonl", "fallback": "unary QueryData only when streaming RPC is unimplemented before any chunk", "frontend": "public BackendSrv.chunked emits raw Uint8Array chunks and final undefined; plugin owns parsing/append", "limits": map[string]int{"chunk_MiB": 8, "request_MiB": 32, "frames": 1024, "queries": 32, "duration_seconds": 60, "concurrent_sources": 4}, "example": map[string]any{"from": "now-5m", "to": "now", "queries": []any{map[string]any{"refId": "A", "expr": "sum(up)", "instant": true}}}}
+	result["commands"] = append(result["commands"].([]string), "annotations list [--dashboard-uid UID --panel-id ID --tags '[]' --match-any --start MS --end MS --limit 100]", "annotations get --id ID", "annotations save --file FILE|- [--id ID for replacement]", "annotations patch --id ID --file FILE|-", "annotations tags [--name FILTER]", "annotations delete --id ID", "annotations graphite --file FILE|-")
+	routes["GET"] = append(routes["GET"], "/api/annotations", "/api/annotations/{id}", "/api/annotations/tags")
+	routes["POST"] = append(routes["POST"], "/api/annotations", "/api/annotations/graphite", "/api/annotations/mass-delete")
+	routes["PUT"] = append(routes["PUT"], "/api/annotations/{id}")
+	routes["PATCH"] = append(routes["PATCH"], "/api/annotations/{id}")
+	routes["DELETE"] = append(routes["DELETE"], "/api/annotations/{id}")
+	result["annotations"] = map[string]any{"storage": "SQLite WAL control plane for both metric backends", "scope": "local principal 1; organization, dashboardUID/dashboardId and panelId", "query": "inclusive point/region overlap; AND tags or matchAny OR; order by timeEnd/time/id descending", "idempotency": "optional idempotencyKey on creation; same normalized payload returns the existing id across restarts; different payload HTTP 409", "templates": "classic/V1/V2 builtin Grafana dashboard and tag queries, enable/filter ids and variable tags", "rendering": "native chart markers, regions and Chinese/English editor; public SDK PanelData.annotations", "limits": map[string]int{"query": 1000, "queries_per_dashboard": 32, "text_bytes": 8192, "tags": 32}, "pending": []string{"plugin datasource annotation adapters", "automatic alert state annotations", "time-region recurrence queries", "full organization permissions"}}
 	return result
 }

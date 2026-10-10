@@ -72,6 +72,7 @@ export function DashboardView({
       panel={p}
       range={range}
       tick={tick}
+      annotationDashboard={dashboard}
       mint={i === 2}
       onRange={onRange}
       onEdit={() => setEditor(p)}

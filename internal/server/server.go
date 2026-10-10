@@ -108,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 	promRoutes.Handle("/", prom.Handler())
 	s.grafanaRoutes(api, promRoutes)
 	s.patternRoutes(api)
+	s.annotationRoutes(api)
 	s.alertRoutes(api)
 	s.pluginRoutes(api, mux)
 	s.appRoutes(api)

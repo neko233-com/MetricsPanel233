@@ -102,6 +102,11 @@ INSERT OR IGNORE INTO alert_schedule(uid,interval_seconds,paused) SELECT uid,jso
 CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL,timestamp INTEGER NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS alert_events_uid ON alert_events(uid,id);
 CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS annotations(id INTEGER PRIMARY KEY AUTOINCREMENT,dashboard_uid TEXT NOT NULL,time INTEGER NOT NULL,time_end INTEGER NOT NULL,panel_id INTEGER NOT NULL,user_id INTEGER NOT NULL,payload TEXT NOT NULL,idempotency_key TEXT UNIQUE,request_hash TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS annotations_range ON annotations(time_end DESC,time DESC);
+CREATE INDEX IF NOT EXISTS annotations_dashboard ON annotations(dashboard_uid,time_end DESC,time DESC);
+CREATE TABLE IF NOT EXISTS annotation_tags(annotation_id INTEGER NOT NULL REFERENCES annotations(id) ON DELETE CASCADE,tag TEXT NOT NULL,PRIMARY KEY(annotation_id,tag)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS annotation_tags_lookup ON annotation_tags(tag,annotation_id);
 CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(id) ON DELETE CASCADE,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
 	if err != nil {

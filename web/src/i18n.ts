@@ -11,6 +11,19 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  Annotations: "注释",
+  Annotation: "注释",
+  Close: "关闭",
+  "Annotation text": "注释内容",
+  "Start (milliseconds)": "起始时间（毫秒）",
+  "End (milliseconds)": "结束时间（毫秒）",
+  "Tags (comma separated)": "标签（逗号分隔）",
+  "Save annotation": "保存注释",
+  "Edit annotation": "编辑注释",
+  "Delete annotation": "删除注释",
+  "Use Unix milliseconds": "请使用 Unix 毫秒时间戳",
+  "Annotation datasource requires a plugin annotation adapter":
+    "注释数据源需要插件注释适配器",
   "Zoom scope": "缩放范围",
   "This panel": "当前面板",
   "Reset panel zoom": "重置面板缩放",

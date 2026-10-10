@@ -128,7 +128,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
 但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、
-部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、annotations、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、插件数据源的注释适配、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -222,6 +222,30 @@ metricspanel datasources health --id remote-prometheus
 页面最多请求 1024 个扩展点。`plugins get --id ID` 可让 Agent 发现声明，实际客户端回调需要浏览器运行时。
 自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和手机布局。
 契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
+
+## 持久化注释
+
+`/api/annotations` 支持创建、查询、完整更新、局部更新、删除和标签枚举；另有 Graphite 写入与明确面板范围的批量删除。
+时间使用 Unix 毫秒，Graphite `when` 使用秒；时间点与区间都按交叠查询，标签默认为 AND，`matchAny=true` 切换 OR。
+支持 `dashboardUID` / 旧版 `dashboardId` 与 `panelId`；当前工作空间使用一个本地主体，接口沿用统一 Bearer 认证。
+注释和标签索引存于 SQLite WAL 控制库，两种指标后端均在重启后保留。可选 `idempotencyKey` 让同一规范化创建请求重试返回相同 ID，键对应不同内容返回 HTTP 409。
+
+```sh
+metricspanel annotations save --file annotation.json
+metricspanel annotations list --dashboard-uid system --tags '["deploy"]' --start 1791590000000 --end 1791600000000
+metricspanel annotations patch --id 1 --file annotation-patch.json
+metricspanel annotations tags --name deploy
+metricspanel annotations delete --id 1
+```
+
+创建文件示例：`{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"部署完成","tags":["deploy"],"idempotencyKey":"deploy-233"}`。
+原生图表的注释按钮提供中英文创建、编辑和删除；标记与区域按当前窗口裁剪，文本使用安全的纯文本提示。
+经典/V1/V2 模板的内置 Grafana 仪表盘与标签查询、变量标签、`enable`、面板 `filter.ids` 会执行；模板的 `hide` 不会隐藏事件。
+SDK 面板通过公开 `PanelData.annotations` 接收官方 `toDataFrame` 转换的帧；注释与指标序列分别传递。
+每次查询最多 1000 条，前端最多 32 个注释查询/1000 条合并事件，正文最多 8192 字节、标签最多 32 个。
+插件数据源注释适配、自动告警状态注释、周期性时间区间和完整组织权限仍需补齐。
+Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
+契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 
 ## Dashboard 时间范围
 

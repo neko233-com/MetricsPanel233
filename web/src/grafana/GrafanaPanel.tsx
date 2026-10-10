@@ -10,7 +10,14 @@ import {
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { Chart } from "../components/Chart";
-import { message, type Panel, type InterpolationValues } from "../api";
+import {
+  message,
+  type Panel,
+  type InterpolationValues,
+  type Dashboard,
+} from "../api";
+import { useAnnotations } from "./annotations";
+import { AnnotationEditor } from "../components/AnnotationEditor";
 import { t, getLocale } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
@@ -45,6 +52,7 @@ export default function GrafanaPanel({
   tick,
   onUpdate,
   onRange,
+  dashboard,
 }: {
   panel: Panel;
   values: InterpolationValues;
@@ -52,6 +60,7 @@ export default function GrafanaPanel({
   onRange: (range: TimeSelection) => void;
   tick: number;
   onUpdate?: (update: FrameUpdate) => void;
+  dashboard?: Dashboard;
 }) {
   const [frames, setFrames] = useState<DataFrame[]>([]),
     [error, setError] = useState(""),
@@ -118,6 +127,7 @@ export default function GrafanaPanel({
   ]
     .filter(Boolean)
     .join(" · ");
+  const annotations = useAnnotations(dashboard, panel, effective, tick, values);
   const changePanelRange = (next: TimeSelection) => {
     try {
       const selected = panelZoomToDashboard(next, queryRange?.shift);
@@ -153,6 +163,9 @@ export default function GrafanaPanel({
         range={effective}
         timeInfo={timeInfo}
         controls={zoomControls}
+        annotations={annotations.events}
+        annotationDashboard={dashboard}
+        annotationError={annotations.error}
         tick={tick}
         result={series}
         resultError={error}
@@ -183,7 +196,25 @@ export default function GrafanaPanel({
           range={inputRange}
           queryRange={queryRange}
           timeInfo={timeInfo}
-          controls={zoomControls}
+          controls={
+            <>
+              {zoomControls}
+              {dashboard && (
+                <AnnotationEditor
+                  dashboard={dashboard}
+                  panelId={Number(panel.config?.id || 0)}
+                  time={
+                    queryRange
+                      ? Math.round((queryRange.start + queryRange.end) / 2)
+                      : Date.now()
+                  }
+                  events={annotations.events}
+                />
+              )}
+            </>
+          }
+          annotations={annotations.frames}
+          annotationError={annotations.error}
           tick={tick}
           loading={loading}
           streaming={streaming}

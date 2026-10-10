@@ -86,6 +86,345 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Durable annotations query template filters, reach SDK frames and support bilingual chart editing", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-annotations-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "events.zip"),
+    run = promisify(execFile);
+  const ids: number[] = [],
+    errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const end = Date.now() - 60000,
+    start = end - 120000;
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-extension-events", archive], {
+      windowsHide: true,
+    });
+    expect(
+      (
+        await page.request.post(endpoint + "/api/v1/plugins/install", {
+          data: await readFile(archive),
+          headers: { "Content-Type": "application/zip" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const source = {
+      uid: "annotation-dashboard",
+      title: "Annotation proof",
+      timezone: "utc",
+      time: { from: String(start), to: String(end) },
+      refresh: "",
+      templating: {
+        list: [
+          {
+            name: "releaseTag",
+            type: "custom",
+            query: "release",
+            current: { value: "release" },
+          },
+        ],
+      },
+      annotations: {
+        list: [
+          {
+            builtIn: 1,
+            name: "Dashboard notes",
+            type: "dashboard",
+            enable: true,
+            hide: true,
+            datasource: { type: "grafana", uid: "-- Grafana --" },
+          },
+          {
+            name: "Releases",
+            target: {
+              type: "tags",
+              tags: ["$releaseTag", "prod"],
+              matchAny: false,
+            },
+            enable: true,
+            iconColor: "#39d99c",
+            datasource: { type: "grafana", uid: "-- Grafana --" },
+          },
+          { name: "Disabled", type: "tags", tags: ["ignored"], enable: false },
+          {
+            name: "Other panels",
+            type: "tags",
+            tags: ["excluded"],
+            enable: true,
+            filter: { ids: [99] },
+          },
+        ],
+      },
+      panels: [
+        {
+          id: 1,
+          title: "Annotation SDK",
+          type: "metricspanel-events-panel",
+          targets: [{ refId: "A", expr: "vector(233)", instant: true }],
+          gridPos: { x: 0, y: 0, w: 12, h: 12 },
+        },
+        {
+          id: 2,
+          title: "Annotated curve",
+          type: "timeseries",
+          targets: [{ refId: "A", expr: "vector(233)" }],
+          gridPos: { x: 12, y: 0, w: 12, h: 12 },
+        },
+      ],
+    };
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    for (const record of [
+      {
+        dashboardUID: source.uid,
+        panelId: 2,
+        time: start - 10000,
+        timeEnd: end + 10000,
+        text: "Maintenance region",
+        tags: ["maintenance"],
+      },
+      {
+        time: start + 60000,
+        text: "Release <script>literal</script>",
+        tags: ["release", "prod"],
+      },
+      { time: start + 50000, text: "Ignored", tags: ["ignored"] },
+      { time: start + 50000, text: "Excluded", tags: ["excluded"] },
+    ]) {
+      const response = await page.request.post(endpoint + "/api/annotations", {
+        data: record,
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      ids.push((await response.json()).id);
+    }
+    await page.goto(endpoint + "/d/annotation-dashboard/annotations");
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
+    const panel = page.getByRole("region", {
+        name: "Annotation SDK",
+        exact: true,
+      }),
+      plot = page.getByRole("region", { name: "Annotated curve", exact: true });
+    await expect(panel).toContainText("Panel annotations: 1");
+    await expect(plot.locator(".annotation-marker")).toHaveCount(2);
+    await expect(plot.locator(".annotation-marker rect")).toHaveCount(1);
+    expect(await plot.locator(".annotation-marker script").count()).toBe(0);
+    await plot
+      .getByRole("button", { name: "Annotations", exact: true })
+      .click();
+    let dialog = page.getByRole("dialog", { name: "Annotations", exact: true });
+    await dialog
+      .getByLabel("Annotation text", { exact: true })
+      .fill("UI deployment");
+    await dialog
+      .getByLabel("Tags (comma separated)", { exact: true })
+      .fill("ui, release");
+    await dialog
+      .getByRole("button", { name: "Save annotation", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(plot.locator(".annotation-marker")).toHaveCount(3);
+    await expect(panel).toContainText("Panel annotations: 1");
+    const stored = await (
+      await page.request.get(
+        endpoint + "/api/annotations?dashboardUID=annotation-dashboard",
+      )
+    ).json();
+    const created = stored.find(
+      (event: { text: string }) => event.text === "UI deployment",
+    );
+    expect(created.panelId).toBe(2);
+    ids.push(created.id);
+    await plot
+      .getByRole("button", { name: "Annotations", exact: true })
+      .click();
+    const row = dialog
+      .locator(".annotation-list > div")
+      .filter({ hasText: "UI deployment" });
+    await row
+      .getByRole("button", { name: "Edit annotation", exact: true })
+      .click();
+    await dialog
+      .getByLabel("Annotation text", { exact: true })
+      .fill("UI edited");
+    await dialog
+      .getByRole("button", { name: "Save annotation", exact: true })
+      .click();
+    await expect(
+      plot.locator('.annotation-marker[aria-label="Annotation: UI edited"]'),
+    ).toHaveCount(1);
+    await plot.screenshot({
+      path: testInfo.outputPath("annotations-desktop.png"),
+      animations: "disabled",
+    });
+    await plot
+      .getByRole("button", { name: "Annotations", exact: true })
+      .click();
+    await dialog
+      .locator(".annotation-list > div")
+      .filter({ hasText: "UI edited" })
+      .getByRole("button", { name: "Delete annotation", exact: true })
+      .click();
+    await expect(
+      dialog.locator(".annotation-list > div").filter({ hasText: "UI edited" }),
+    ).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(plot.locator(".annotation-marker")).toHaveCount(2);
+    // V2 annotation query targets use the same builtin tag adapter.
+    const imported = await page.request.post(
+      endpoint + "/api/v1/import/grafana",
+      {
+        data: {
+          apiVersion: "dashboard.grafana.app/v2beta1",
+          kind: "Dashboard",
+          metadata: { name: "annotation-v2" },
+          spec: {
+            title: "V2 annotation proof",
+            timeSettings: {
+              from: String(start),
+              to: String(end),
+              timezone: "utc",
+              autoRefresh: "",
+            },
+            annotations: [
+              {
+                kind: "AnnotationQuery",
+                spec: {
+                  name: "V2 releases",
+                  enable: true,
+                  hide: false,
+                  query: {
+                    kind: "DataQuery",
+                    group: "grafana",
+                    datasource: { name: "-- Grafana --" },
+                    spec: {
+                      type: "tags",
+                      tags: ["release", "prod"],
+                      matchAny: false,
+                    },
+                  },
+                },
+              },
+            ],
+            elements: {
+              proof: {
+                kind: "Panel",
+                spec: {
+                  id: 1,
+                  title: "V2 annotated curve",
+                  data: {
+                    kind: "QueryGroup",
+                    spec: {
+                      queries: [
+                        {
+                          kind: "PanelQuery",
+                          spec: {
+                            refId: "A",
+                            query: {
+                              kind: "DataQuery",
+                              group: "prometheus",
+                              spec: { expr: "vector(233)" },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  vizConfig: {
+                    kind: "VizConfig",
+                    group: "timeseries",
+                    spec: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+    expect(imported.ok(), await imported.text()).toBeTruthy();
+    const saved = (await imported.json()).dashboard;
+    try {
+      await page.goto(endpoint + "/d/annotation-v2/annotations");
+      const v2 = page.getByRole("region", {
+        name: "V2 annotated curve",
+        exact: true,
+      });
+      await expect(v2.locator(".annotation-marker")).toHaveCount(1);
+    } finally {
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + saved.id);
+    }
+    await page.goto(endpoint + "/d/annotation-dashboard/annotations");
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("group", { name: "Annotated curve", exact: true })
+      .scrollIntoViewIfNeeded();
+    await plot.getByRole("button", { name: "注释", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "注释", exact: true });
+    await expect(dialog).toContainText("注释内容");
+    await expect(
+      dialog.getByRole("button", { name: "保存注释", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("annotations-mobile.png"),
+      animations: "disabled",
+    });
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto(endpoint + "/#overview", { timeout: 5000 }).catch(() => {});
+    for (const id of ids)
+      await page.request
+        .delete(endpoint + "/api/annotations/" + id, { timeout: 5000 })
+        .catch(() => {});
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/annotation-dashboard",
+    );
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-events-app",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-annotations-e2e-")
+    )
+      throw new Error("Unsafe annotation fixture cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("Dashboard defaults, URL windows, date math and SDK zoom query the selected timestamps", async ({
   page,
   endpoint,
@@ -258,8 +597,11 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     );
     const plot = page
       .getByRole("region", { name: "Time native plot", exact: true })
-      .locator("svg");
+      .locator("svg.chart-svg");
     await expect(plot.locator("polyline")).toHaveCount(1);
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
     const box = await plot.boundingBox();
     if (!box) throw new Error("Native plot was not laid out");
     await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4);
@@ -462,13 +804,16 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     expect(params.get("var-shift")).toBe("2h");
     const shiftedPlot = page
       .getByRole("region", { name: "Time native plot", exact: true })
-      .locator("svg");
+      .locator("svg.chart-svg");
     await expect(shiftedPlot).toBeVisible();
     // Constant series have a zero-height polyline, while the SVG remains draggable.
     await expect(shiftedPlot.locator("polyline").first()).toHaveAttribute(
       "points",
       /\d/,
     );
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
     const shiftedBox = (await shiftedPlot.boundingBox())!;
     await page.mouse.move(
       shiftedBox.x + shiftedBox.width * 0.4,
@@ -539,6 +884,9 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       .getByRole("combobox", { name: "Zoom scope", exact: true })
       .selectOption("panel");
     const nativeBefore = siblingCount();
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
     const localBox = (await shiftedPlot.boundingBox())!;
     await page.mouse.move(
       localBox.x + localBox.width * 0.4,
@@ -595,6 +943,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
   endpoint,
 }, testInfo) => {
   test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
   const temp = await mkdtemp(
     path.join(os.tmpdir(), "metricspanel233-compare-e2e-"),
   );
@@ -1033,7 +1382,9 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
   } finally {
     await page.goto(endpoint + "/#overview").catch(() => {});
     for (const id of importedIDs)
-      await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
+      await page.request
+        .delete(endpoint + "/api/v1/dashboards/" + id, { timeout: 5000 })
+        .catch(() => {});
     await page.request.delete(
       endpoint + "/api/dashboards/uid/compare-dashboard",
     );

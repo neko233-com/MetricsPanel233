@@ -63,6 +63,8 @@ export default function PluginPanel({
   queryRange,
   timeInfo,
   controls,
+  annotations,
+  annotationError,
 }: {
   panel: Panel;
   frames: DataFrame[];
@@ -76,6 +78,8 @@ export default function PluginPanel({
   queryRange?: ResolvedTimeRange;
   timeInfo?: string;
   controls?: ReactNode;
+  annotations?: DataFrame[];
+  annotationError?: string;
 }) {
   const [plugin, setPlugin] = useState<PanelPlugin | null>(null),
     [error, setError] = useState(""),
@@ -147,6 +151,7 @@ export default function PluginPanel({
     fieldConfig,
     data: {
       series: frames,
+      annotations,
       state: queryError
         ? LoadingState.Error
         : loading
@@ -185,9 +190,9 @@ export default function PluginPanel({
         )}
       </div>
       {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
-      {(error || queryError) && (
+      {(error || queryError || annotationError) && (
         <p role="alert" className="form-error">
-          {t(error || queryError)}
+          {t(error || queryError || annotationError || "")}
         </p>
       )}
       <div ref={content} className="grafana-plugin-content">

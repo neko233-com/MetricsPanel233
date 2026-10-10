@@ -18,6 +18,48 @@
   --green: #39d99c;
   color-scheme: dark;
 }
+.annotation-dialog {
+  width: min(580px, calc(100vw - 32px));
+}
+.annotation-dialog form,
+.annotation-dialog label,
+.annotation-field {
+  display: grid;
+  gap: 8px;
+}
+.annotation-dialog form {
+  gap: 16px;
+}
+.annotation-dialog .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.annotation-dialog textarea {
+  min-height: 90px;
+}
+.annotation-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  max-height: 230px;
+  overflow: auto;
+}
+.annotation-list > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.annotation-list span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 540px) {
+  .annotation-dialog .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
 * {
   box-sizing: border-box;
 }

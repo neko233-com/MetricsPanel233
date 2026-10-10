@@ -15,7 +15,10 @@ import {
   message,
   type Panel,
   type QueryResult,
+  type Dashboard,
 } from "../api";
+import { useAnnotations, type Annotation } from "../grafana/annotations";
+import { AnnotationEditor } from "./AnnotationEditor";
 import { rawSelection, type TimeSelection } from "../grafana/time-range";
 const palette = [
   "#ff9457",
@@ -41,6 +44,9 @@ export function Chart({
   onRange,
   timeInfo,
   controls,
+  annotations,
+  annotationDashboard,
+  annotationError,
 }: {
   panel: Panel;
   range: TimeSelection;
@@ -55,6 +61,9 @@ export function Chart({
   onRange?: (value: TimeSelection) => void;
   timeInfo?: string;
   controls?: ReactNode;
+  annotations?: Annotation[];
+  annotationDashboard?: Dashboard;
+  annotationError?: string;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
@@ -68,6 +77,15 @@ export function Chart({
   const svgRef = useRef<SVGSVGElement>(null);
   const [svgWidth, setSVGWidth] = useState(580);
   const zone = rawSelection(range).timezone;
+  const loadedAnnotations = useAnnotations(
+    annotationDashboard,
+    panel,
+    range,
+    tick,
+    {},
+    annotations !== undefined,
+  );
+  const events = annotations || loadedAnnotations.events;
   const timeLabel = (timestamp: number) =>
     new Date(timestamp).toLocaleString("en-GB", {
       ...(data && data.end - data.start >= 86400000
@@ -202,6 +220,14 @@ export function Chart({
         <h2>{tr(panel.title)}</h2>
         <div className="panel-actions">
           {controls}
+          {annotationDashboard && (
+            <AnnotationEditor
+              dashboard={annotationDashboard}
+              panelId={Number(panel.config?.id || 0)}
+              time={Math.round((chart.start + chart.end) / 2)}
+              events={events}
+            />
+          )}
           {streaming && (
             <span className="status healthy" role="status">
               <i />
@@ -234,6 +260,11 @@ export function Chart({
         </div>
       </div>
       {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
+      {(annotationError || loadedAnnotations.error) && (
+        <p role="alert" className="form-error">
+          {tr(annotationError || loadedAnnotations.error)}
+        </p>
+      )}
       <div className="chart-wrap">
         <svg
           onPointerDown={(event) => {
@@ -382,6 +413,50 @@ export function Chart({
               </g>
             );
           })}
+          {events
+            .filter(
+              (event) =>
+                event.time <= chart.end && event.timeEnd >= chart.start,
+            )
+            .map((event) => {
+              const x = chart.x(Math.max(event.time, chart.start)),
+                end = chart.x(Math.min(event.timeEnd, chart.end));
+              return (
+                <g
+                  key={event.id}
+                  className="annotation-marker"
+                  data-annotation-id={event.id}
+                  role="img"
+                  aria-label={`${tr("Annotation")}: ${event.text}`}
+                >
+                  <title>{`${event.text}\n${event.tags.join(", ")}\n${timeLabel(event.time)}`}</title>
+                  {event.timeEnd > event.time && (
+                    <rect
+                      x={x}
+                      y={30}
+                      width={Math.max(1, end - x)}
+                      height={155}
+                      fill={event.color || "#5ac8de"}
+                      opacity={0.12}
+                    />
+                  )}
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1={30}
+                    y2={185}
+                    stroke={event.color || "#5ac8de"}
+                    strokeDasharray="3 3"
+                  />
+                  <circle
+                    cx={x}
+                    cy={25}
+                    r={4}
+                    fill={event.color || "#5ac8de"}
+                  />
+                </g>
+              );
+            })}
           {hover !== null && (
             <line
               x1={chart.x(hover)}
