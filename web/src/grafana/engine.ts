@@ -4,7 +4,6 @@ import {
   fieldMatchers,
   getDisplayProcessor,
   getFieldDisplayName,
-  dateTime,
   toDataFrame,
   LoadingState,
   type DataQueryResponse,
@@ -45,12 +44,12 @@ import {
 import {
   message,
   interpolate,
-  rangeMilliseconds,
   type Labels,
   type Panel,
   type QueryResult,
   type InterpolationValues,
 } from "../api";
+import { resolveTimeRange, type TimeSelection } from "./time-range";
 
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
@@ -214,7 +213,7 @@ export type FrameUpdate = {
 export function watchFrames(
   panel: Panel,
   values: InterpolationValues,
-  range: string,
+  range: TimeSelection,
   refresh: Observable<unknown>,
 ): Observable<FrameUpdate> {
   const targets: GrafanaTarget[] =
@@ -248,12 +247,18 @@ export function watchFrames(
     defer(async () => {
       const runtime = await import("./plugin-runtime");
       runtime.setPluginVariables(values, range);
-      return runtime.getPluginDatasource(uid);
+      return { datasource: await runtime.getPluginDatasource(uid), runtime };
     }).pipe(
-      switchMap((datasource) => {
+      switchMap(({ datasource, runtime }) => {
         const query = (targets = queries) => {
-          const end = Date.now(),
-            start = end - rangeMilliseconds(range);
+          const resolved = resolveTimeRange(range),
+            { start, end } = resolved;
+          // SDK macros must use the exact timestamps of this query, including relative refreshes.
+          runtime.setPluginVariables(values, {
+            from: start,
+            to: end,
+            timezone: resolved.timezone,
+          });
           return from(
             datasource.query({
               requestId: `${panel.id}-${Date.now()}`,
@@ -267,19 +272,15 @@ export function watchFrames(
                 refId: query.refId!,
                 datasource: { uid: datasource.uid, type: datasource.type },
               })),
-              range: {
-                from: dateTime(start),
-                to: dateTime(end),
-                raw: { from: "now-" + range, to: "now" },
-              },
-              rangeRaw: { from: "now-" + range, to: "now" },
+              range: resolved.sdk,
+              rangeRaw: resolved.sdk.raw,
               scopedVars: Object.fromEntries(
                 Object.entries(values).map(([name, value]) => [
                   name,
                   { text: value, value },
                 ]),
               ),
-              timezone: "browser",
+              timezone: resolved.timezone,
               app: "dashboard",
               startTime: Date.now(),
               maxDataPoints: 240,
@@ -402,7 +403,7 @@ export function watchFrames(
 export async function queryFrames(
   panel: Panel,
   values: InterpolationValues,
-  range: string,
+  range: TimeSelection,
   signal: AbortSignal,
 ): Promise<DataFrame[]> {
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -420,7 +421,7 @@ export async function queryFrames(
 async function decorateFrames(
   panel: Panel,
   values: InterpolationValues,
-  range: string,
+  range: TimeSelection,
   input: DataFrame[],
 ): Promise<DataFrame[]> {
   const config = panel.config;
@@ -442,6 +443,7 @@ async function decorateFrames(
     defaults: { unit: panel.unit === "seconds" ? "s" : panel.unit },
     overrides: [],
   };
+  const timeZone = resolveTimeRange(range).timezone;
   return transformed.map((frame) => ({
     ...frame,
     fields: frame.fields.map((field) => {
@@ -466,7 +468,11 @@ async function decorateFrames(
       const decorated = { ...field, config: resolved };
       return {
         ...decorated,
-        display: getDisplayProcessor({ field: decorated, theme }),
+        display: getDisplayProcessor({
+          field: decorated,
+          theme,
+          timeZone,
+        }),
       };
     }),
   }));
@@ -474,10 +480,9 @@ async function decorateFrames(
 
 export function framesAsSeries(
   frames: DataFrame[],
-  range: string,
+  range: TimeSelection,
 ): QueryResult {
-  const end = Date.now(),
-    start = end - rangeMilliseconds(range);
+  const { start, end } = resolveTimeRange(range);
   const series = frames.flatMap((frame) => {
     const time = frame.fields.find((f) => f.type === FieldType.time);
     if (!time) return [];

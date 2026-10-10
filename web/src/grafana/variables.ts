@@ -6,6 +6,7 @@ import {
   type InterpolationValues,
 } from "../api";
 import type { VariableValues } from "./engine";
+import { resolveTimeRange, type TimeSelection } from "./time-range";
 
 export function queryValues(
   values: VariableValues,
@@ -26,14 +27,18 @@ export function queryValues(
 export async function variableOptions(
   variable: Variable,
   values: InterpolationValues,
-  range: string,
+  range: TimeSelection,
   signal: AbortSignal,
 ): Promise<string[]> {
   if (variable.type === "datasource") return ["prometheus"];
   let result = variable.options;
   if (variable.type === "query") {
+    const { start, end } = resolveTimeRange(range);
     const query = interpolate(variable.query, values, range),
-      params = new URLSearchParams();
+      params = new URLSearchParams({
+        start: String(start / 1000),
+        end: String(end / 1000),
+      });
     const labels = /^label_values\(\s*(?:(.*),\s*)?([a-zA-Z_][\w]*)\s*\)$/.exec(
       query,
     );
@@ -58,7 +63,7 @@ export async function variableOptions(
     } else if (metrics) {
       result = (
         await api<{ data: string[] }>(
-          "/prometheus/api/v1/label/__name__/values",
+          `/prometheus/api/v1/label/__name__/values?${params}`,
           { signal },
         )
       ).data.filter((name) => new RegExp(metrics[1]).test(name));
@@ -66,7 +71,7 @@ export async function variableOptions(
       const data = await api<{
         data: { result: { metric: Labels; value: [number, string] }[] };
       }>(
-        `/prometheus/api/v1/query?${new URLSearchParams({ query: prom[1] })}`,
+        `/prometheus/api/v1/query?${new URLSearchParams({ query: prom[1], time: String(end / 1000) })}`,
         { signal },
       );
       result = data.data.result.map(

@@ -139,6 +139,21 @@ Agents can inspect declarations with `plugins get --id ID`; client callbacks req
 Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and mobile layout.
 See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
 
+## Dashboard time ranges
+
+Saved `time` / `timeSettings` and timezone defaults from classic, V1 and V2 dashboards drive real queries.
+URLs accept `from/to`, `time/time.window` and `timezone`. Explicit bounds take precedence; centered windows use Unix milliseconds.
+Changing ranges preserves `var-*` values; reloads and browser history restore the selected window.
+The custom picker accepts Unix milliseconds, ISO dates and SDK date math such as `now-1h/h` and `now/d`, including IANA zones and DST.
+One now anchors both endpoints. Fixed windows remain fixed across five-second refreshes; ranges are limited to 31 days.
+
+SDK `PanelProps.onChangeTimeRange` and native chart drag selection update the workspace and URL, then execute real queries.
+Query requests, SDK panel ranges, variable queries, date formatting and pattern capture use the selected bounds and timezone.
+`$__from`, `$__to` and `$__range_ms` retain exact milliseconds, and TemplateSrv.updateTimeRange is connected.
+Five model tests and browser tests cover fixed-window values, zoom, reload, URL parameters, date math, validation and bilingual mobile layout.
+Per-panel `timeFrom/timeShift`, imported automatic refresh settings and other time interactions remain outstanding.
+See the [Grafana time URL contract](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/).
+
 ## Grafana application events
 
 `getAppEvents()` returns the shared official SDK `EventBusSrv`: typed `publish/getStream/subscribe`, scoped buses

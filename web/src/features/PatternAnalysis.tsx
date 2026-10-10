@@ -11,6 +11,11 @@ import {
 } from "../api";
 import { Chart } from "../components/Chart";
 import { t, getLocale } from "../i18n";
+import {
+  rangeLabel,
+  resolveTimeRange,
+  type TimeSelection,
+} from "../grafana/time-range";
 
 type Pattern = {
   id: string;
@@ -43,7 +48,7 @@ export function PatternAnalysis({
   labels,
 }: {
   metric: string;
-  range: string;
+  range: TimeSelection;
   labels: string;
 }) {
   const locale = getLocale();
@@ -145,6 +150,7 @@ export function PatternAnalysis({
             setError("");
             setNotice("");
             try {
+              const selectedRange = resolveTimeRange(range);
               const data = await api<{
                 patterns: Pattern[];
                 skipped: string[];
@@ -152,7 +158,9 @@ export function PatternAnalysis({
                 method: "POST",
                 body: jsonBody({
                   metric,
-                  range,
+                  ...(typeof range === "string"
+                    ? { range }
+                    : { start: selectedRange.start, end: selectedRange.end }),
                   labels: parseLabels(labels),
                   normalization,
                   aggregation,
@@ -179,7 +187,7 @@ export function PatternAnalysis({
       <p className="pattern-help">
         {metric ? (
           <>
-            {t("Capture source")}: <code>{metric}</code> · {range}
+            {t("Capture source")}: <code>{metric}</code> · {rangeLabel(range)}
           </>
         ) : (
           t("Run a metric query to capture a window.")

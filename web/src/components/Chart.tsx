@@ -15,6 +15,7 @@ import {
   type Panel,
   type QueryResult,
 } from "../api";
+import { rawSelection, type TimeSelection } from "../grafana/time-range";
 const palette = [
   "#ff9457",
   "#39d99c",
@@ -25,11 +26,6 @@ const palette = [
   "#f88d9a",
   "#b3cba0",
 ];
-const timeLabel = (timestamp: number) =>
-  new Date(timestamp).toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 export function Chart({
   panel,
   range,
@@ -41,9 +37,10 @@ export function Chart({
   resultError,
   formatter = formatValue,
   streaming = false,
+  onRange,
 }: {
   panel: Panel;
-  range: string;
+  range: TimeSelection;
   tick: number;
   mint?: boolean;
   onEdit?: () => void;
@@ -52,13 +49,29 @@ export function Chart({
   resultError?: string;
   formatter?: (value: number, unit?: string) => string;
   streaming?: boolean;
+  onRange?: (value: TimeSelection) => void;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
   const [hover, setHover] = useState<number | null>(null);
+  const [selection, setSelection] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
+  const selectionStart = useRef<{ time: number; x: number } | null>(null);
   const gradient = useId().replace(/:/g, "");
   const svgRef = useRef<SVGSVGElement>(null);
   const [svgWidth, setSVGWidth] = useState(580);
+  const zone = rawSelection(range).timezone;
+  const timeLabel = (timestamp: number) =>
+    new Date(timestamp).toLocaleString("en-GB", {
+      ...(data && data.end - data.start >= 86400000
+        ? ({ month: "short", day: "2-digit" } as const)
+        : {}),
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: zone === "browser" ? undefined : zone === "utc" ? "UTC" : zone,
+    });
   useLayoutEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -216,6 +229,63 @@ export function Chart({
       </div>
       <div className="chart-wrap">
         <svg
+          onPointerDown={(event) => {
+            if (!onRange || event.button !== 0) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const x = ((event.clientX - bounds.left) / bounds.width) * svgWidth;
+            if (x < 82 || x > right) return;
+            const time =
+              chart.start + ((x - 82) / plotWidth) * (chart.end - chart.start);
+            selectionStart.current = { time, x: event.clientX };
+            setSelection({ start: time, end: time });
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!selectionStart.current) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const x = Math.max(
+              82,
+              Math.min(
+                right,
+                ((event.clientX - bounds.left) / bounds.width) * svgWidth,
+              ),
+            );
+            setSelection({
+              start: selectionStart.current.time,
+              end:
+                chart.start +
+                ((x - 82) / plotWidth) * (chart.end - chart.start),
+            });
+          }}
+          onPointerUp={(event) => {
+            const start = selectionStart.current;
+            if (start && Math.abs(event.clientX - start.x) > 5) {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              const x = Math.max(
+                82,
+                Math.min(
+                  right,
+                  ((event.clientX - bounds.left) / bounds.width) * svgWidth,
+                ),
+              );
+              const end =
+                chart.start +
+                ((x - 82) / plotWidth) * (chart.end - chart.start);
+              onRange?.({
+                from: Math.round(Math.min(start.time, end)),
+                to: Math.round(Math.max(start.time, end)),
+                timezone: zone,
+              });
+            }
+            selectionStart.current = null;
+            setSelection(null);
+            if (event.currentTarget.hasPointerCapture(event.pointerId))
+              event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onPointerCancel={() => {
+            selectionStart.current = null;
+            setSelection(null);
+          }}
           className="chart-svg"
           ref={svgRef}
           viewBox={`0 0 ${svgWidth} 225`}
@@ -312,6 +382,19 @@ export function Chart({
               y2="185"
               stroke="#b5bed0"
               strokeDasharray="3 3"
+            />
+          )}
+          {selection && (
+            <rect
+              x={chart.x(Math.min(selection.start, selection.end))}
+              y="30"
+              width={Math.abs(
+                chart.x(selection.end) - chart.x(selection.start),
+              )}
+              height="155"
+              fill="#85aaff33"
+              stroke="#85aaff"
+              pointerEvents="none"
             />
           )}
         </svg>

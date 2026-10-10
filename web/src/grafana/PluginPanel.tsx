@@ -8,7 +8,6 @@ import {
 } from "react";
 import {
   createTheme,
-  dateTime,
   EventBusSrv,
   LoadingState,
   PluginContextProvider,
@@ -23,14 +22,10 @@ import { merge } from "lodash";
 import { BrowserRouter } from "react-router";
 import { loadPanelPlugin, setPluginVariables } from "./plugin-runtime";
 import { connectPanelEvents } from "./app-events";
-import {
-  rangeMilliseconds,
-  message,
-  type Panel,
-  type InterpolationValues,
-} from "../api";
+import { message, type Panel, type InterpolationValues } from "../api";
 import { interpolate } from "../api";
 import { t } from "../i18n";
+import { resolveTimeRange, type TimeSelection } from "./time-range";
 
 class PluginErrorBoundary extends Component<
   { children: ReactNode },
@@ -60,11 +55,13 @@ export default function PluginPanel({
   loading,
   streaming,
   queryError,
+  onRange,
 }: {
   panel: Panel;
   frames: DataFrame[];
   values: InterpolationValues;
-  range: string;
+  range: TimeSelection;
+  onRange: (range: TimeSelection) => void;
   tick: number;
   loading: boolean;
   streaming: boolean;
@@ -125,12 +122,8 @@ export default function PluginPanel({
   }, []);
   const eventBus = useMemo(() => new EventBusSrv(), []);
   useEffect(() => connectPanelEvents(eventBus), [eventBus]);
-  const end = Date.now(),
-    timeRange = {
-      from: dateTime(end - rangeMilliseconds(range)),
-      to: dateTime(end),
-      raw: { from: "now-" + range, to: "now" },
-    };
+  const resolved = resolveTimeRange(range),
+    timeRange = resolved.sdk;
   setPluginVariables(values, range);
   const props: PanelProps = {
     id: Number((panel.config as { id?: number })?.id || 0),
@@ -150,7 +143,7 @@ export default function PluginPanel({
       error: queryError ? { message: queryError } : undefined,
     },
     timeRange,
-    timeZone: "browser",
+    timeZone: resolved.timezone,
     transparent: false,
     width: size.width,
     height: size.height,
@@ -159,7 +152,8 @@ export default function PluginPanel({
     onOptionsChange: setOptions,
     onFieldConfigChange: setFieldConfig,
     replaceVariables: (text) => interpolate(text, values, range),
-    onChangeTimeRange: () => {},
+    onChangeTimeRange: (next) =>
+      onRange({ ...next, timezone: resolved.timezone }),
   };
   const Renderer = plugin?.panel;
   return (

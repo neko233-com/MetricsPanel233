@@ -15,6 +15,7 @@ import { t } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
 import type { FrameUpdate } from "./engine";
+import type { TimeSelection } from "./time-range";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
@@ -38,10 +39,12 @@ export default function GrafanaPanel({
   range,
   tick,
   onUpdate,
+  onRange,
 }: {
   panel: Panel;
   values: InterpolationValues;
-  range: string;
+  range: TimeSelection;
+  onRange: (range: TimeSelection) => void;
   tick: number;
   onUpdate?: (update: FrameUpdate) => void;
 }) {
@@ -90,6 +93,7 @@ export default function GrafanaPanel({
         result={series}
         resultError={error}
         streaming={streaming}
+        onRange={onRange}
         formatter={(v) => (first ? display(first, v).text : String(v))}
       />
     );
@@ -117,6 +121,7 @@ export default function GrafanaPanel({
           loading={loading}
           streaming={streaming}
           queryError={error}
+          onRange={onRange}
         />
       </Suspense>
     );

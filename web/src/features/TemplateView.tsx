@@ -11,7 +11,6 @@ import { Download, RefreshCw } from "lucide-react";
 import {
   download,
   message,
-  ranges,
   type Dashboard,
   type Panel,
   type InterpolationValues,
@@ -24,12 +23,31 @@ import type { VariableValues } from "../grafana/engine";
 import type { FrameUpdate } from "../grafana/engine";
 import type { PluginExtensionPanelContext } from "@grafana/data";
 import { LoadingState } from "@grafana/data";
+import type { TimeSelection } from "../grafana/time-range";
+import { TimeRangePicker } from "../components/TimeRangePicker";
 const PanelExtensionActions = lazy(() =>
   import("../grafana/PanelExtensionActions").then((module) => ({
     default: module.PanelExtensionActions,
   })),
 );
 const GrafanaPanel = lazy(() => import("../grafana/GrafanaPanel"));
+function selectedVariables(
+  variables: Dashboard["variables"],
+  params: URLSearchParams,
+): VariableValues {
+  return Object.fromEntries(
+    (variables || []).map((variable) => {
+      const selected = params.getAll(`var-${variable.name}`);
+      if (selected.length)
+        return [variable.name, variable.multi ? selected : selected[0]];
+      const current =
+        variable.current ||
+        variable.options[0] ||
+        (variable.include_all ? "$__all" : "");
+      return [variable.name, variable.multi ? current.split("|") : current];
+    }),
+  );
+}
 
 function PanelCell({
   panel,
@@ -38,10 +56,12 @@ function PanelCell({
   tick,
   style,
   dashboard,
+  onRange,
 }: {
   panel: Panel;
   values: InterpolationValues;
-  range: string;
+  range: TimeSelection;
+  onRange: (range: TimeSelection) => void;
   tick: number;
   style: CSSProperties;
   dashboard: PluginExtensionPanelContext["dashboard"];
@@ -67,6 +87,7 @@ function PanelCell({
             range={range}
             tick={tick}
             onUpdate={setUpdate}
+            onRange={onRange}
           />
           <PanelExtensionActions
             panel={panel}
@@ -108,25 +129,23 @@ export function TemplateView({
   refresh,
 }: {
   dashboard: Dashboard;
-  range: string;
-  onRange: (v: string) => void;
+  range: TimeSelection;
+  onRange: (v: TimeSelection) => void;
   tick: number;
   refresh: () => void;
 }) {
   const variables = dashboard.variables || [];
   const [values, setValues] = useState<VariableValues>(() =>
-    Object.fromEntries(
-      variables.map((v) => {
-        const params = new URLSearchParams(location.search).getAll(
-          `var-${v.name}`,
-        );
-        if (params.length) return [v.name, v.multi ? params : params[0]];
-        const current =
-          v.current || v.options[0] || (v.include_all ? "$__all" : "");
-        return [v.name, v.multi ? current.split("|") : current];
-      }),
-    ),
+    selectedVariables(variables, new URLSearchParams(location.search)),
   );
+  useEffect(() => {
+    const restore = () =>
+      setValues(
+        selectedVariables(variables, new URLSearchParams(location.search)),
+      );
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [dashboard.id, JSON.stringify(variables)]);
   const [options, setOptions] = useState<Record<string, string[]>>({}),
     [error, setError] = useState("");
   const key = JSON.stringify(values),
@@ -142,7 +161,7 @@ export function TemplateView({
         params.append(`var-${name}`, choice);
     }
     history.replaceState(
-      {},
+      history.state,
       "",
       `${location.pathname}?${params}${location.hash}`,
     );
@@ -213,17 +232,7 @@ export function TemplateView({
           <p>{t("Grafana template")} · PromQL</p>
         </div>
         <div className="toolbar">
-          <select
-            aria-label={t("Time range")}
-            value={range}
-            onChange={(e) => onRange(e.target.value)}
-          >
-            {ranges.map((r) => (
-              <option key={r.value} value={r.value}>
-                {t(r.label)}
-              </option>
-            ))}
-          </select>
+          <TimeRangePicker value={range} onChange={onRange} />
           <button
             className="icon-button outlined"
             aria-label={t("Refresh metrics")}
@@ -316,6 +325,7 @@ export function TemplateView({
               panel={panel}
               values={queryValues(scoped, variables)}
               range={range}
+              onRange={onRange}
               tick={tick}
               dashboard={extensionDashboard}
             />

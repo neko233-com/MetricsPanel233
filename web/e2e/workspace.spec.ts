@@ -86,6 +86,249 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Dashboard defaults, URL windows, date math and SDK zoom query the selected timestamps", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-time-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "events.zip");
+  const run = promisify(execFile),
+    errors: string[] = [];
+  const queries: { from: string; to: string }[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/ds/query")
+      queries.push(request.postDataJSON());
+  });
+  const end = Date.now() - 60000,
+    start = end - 120000;
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-extension-events", archive], {
+      windowsHide: true,
+    });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const seeded = await page.request.post(endpoint + "/api/v1/ingest", {
+      data: {
+        samples: [
+          { name: "time_fixture_value", value: 10, timestamp: start + 10000 },
+          { name: "time_fixture_value", value: 20, timestamp: end - 30000 },
+          { name: "time_fixture_value", value: 99, timestamp: end + 30000 },
+        ],
+      },
+    });
+    expect(seeded.ok(), await seeded.text()).toBeTruthy();
+    const saved = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: {
+        overwrite: true,
+        dashboard: {
+          uid: "time-dashboard",
+          title: "Time dashboard",
+          timezone: "utc",
+          time: { from: String(start), to: String(end) },
+          templating: {
+            list: [
+              {
+                name: "site",
+                type: "custom",
+                query: "node-a,node-b",
+                current: { text: "node-a", value: "node-a" },
+              },
+            ],
+          },
+          panels: [
+            {
+              id: 1,
+              title: "Time SDK panel",
+              type: "metricspanel-events-panel",
+              gridPos: { x: 0, y: 0, w: 12, h: 10 },
+              targets: [
+                { refId: "A", expr: "time_fixture_value", instant: true },
+              ],
+            },
+            {
+              id: 2,
+              title: "Time native plot",
+              type: "timeseries",
+              gridPos: { x: 12, y: 0, w: 12, h: 10 },
+              targets: [{ refId: "A", expr: "time_fixture_value" }],
+            },
+          ],
+        },
+      },
+    });
+    expect(saved.ok(), await saved.text()).toBeTruthy();
+    await page.goto(endpoint + "/d/time-dashboard/time?var-site=node-b");
+    const panel = page.getByRole("region", {
+      name: "Time SDK panel",
+      exact: true,
+    });
+    await expect(panel).toContainText("Panel value: 20");
+    await expect(panel).toContainText(`Panel window: ${start} / ${end} / utc`);
+    await expect(panel).toContainText(
+      `Panel variables: ${start} / ${end} / 120000`,
+    );
+    expect(
+      queries.some(
+        (query) => Number(query.from) === start && Number(query.to) === end,
+      ),
+    ).toBeTruthy();
+    await panel
+      .getByRole("button", { name: "SDK zoom window", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      `Panel window: ${start + 20000} / ${end - 20000} / utc`,
+    );
+    let params = new URL(await page.url()).searchParams;
+    expect(Number(params.get("from"))).toBe(start + 20000);
+    expect(Number(params.get("to"))).toBe(end - 20000);
+    expect(params.get("var-site")).toBe("node-b");
+    await page.reload();
+    await expect(panel).toContainText(
+      `Panel window: ${start + 20000} / ${end - 20000} / utc`,
+    );
+    await expect(panel).toContainText("Panel value: 20");
+    await page
+      .getByRole("button", { name: "Choose time range", exact: true })
+      .click();
+    let dialog = page.getByRole("dialog");
+    await dialog.getByLabel("From", { exact: true }).fill(String(start));
+    await dialog.getByLabel("To", { exact: true }).fill(String(end + 60000));
+    await dialog.getByLabel("Time zone", { exact: true }).fill("Asia/Shanghai");
+    await dialog
+      .getByRole("button", { name: "Apply time range", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(panel).toContainText("Panel value: 99");
+    await expect(panel).toContainText(
+      `Panel window: ${start} / ${end + 60000} / Asia/Shanghai`,
+    );
+    await page
+      .getByRole("button", { name: "Refresh metrics", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      `Panel variables: ${start} / ${end + 60000} / 180000`,
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("time-range-desktop.png"),
+      animations: "disabled",
+    });
+    const alternate = `/d/time-dashboard/time?from=${start}&to=${end}&timezone=utc&var-site=node-a`;
+    await page.evaluate(
+      (url) => history.pushState(history.state, "", url),
+      alternate,
+    );
+    await page.goBack();
+    await page.goForward();
+    await expect(
+      page.getByRole("combobox", { name: "site", exact: true }),
+    ).toHaveValue("node-a");
+    await expect(panel).toContainText(`Panel window: ${start} / ${end} / utc`);
+    await page.goto(
+      endpoint +
+        `/d/time-dashboard/time?time=${end}&time.window=10000&timezone=utc`,
+    );
+    await expect(panel).toContainText(
+      `Panel window: ${end - 5000} / ${end + 5000} / utc`,
+    );
+    await page.goto(
+      endpoint +
+        `/d/time-dashboard/time?from=${start}&to=${end + 60000}&timezone=utc`,
+    );
+    const plot = page
+      .getByRole("region", { name: "Time native plot", exact: true })
+      .locator("svg");
+    await expect(plot.locator("polyline")).toHaveCount(1);
+    const box = await plot.boundingBox();
+    if (!box) throw new Error("Native plot was not laid out");
+    await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.4, {
+      steps: 5,
+    });
+    await page.mouse.up();
+    await expect
+      .poll(async () =>
+        Number(new URL(await page.url()).searchParams.get("from")),
+      )
+      .toBeGreaterThan(start);
+    params = new URL(await page.url()).searchParams;
+    expect(Number(params.get("to"))).toBeLessThan(end + 60000);
+    await page
+      .getByRole("button", { name: "Choose time range", exact: true })
+      .click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByLabel("From", { exact: true }).fill("now-32d");
+    await dialog.getByLabel("To", { exact: true }).fill("now");
+    await dialog
+      .getByRole("button", { name: "Apply time range", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toContainText("at most 31 days");
+    await dialog.getByLabel("From", { exact: true }).fill("now-1h/h");
+    await dialog.getByLabel("To", { exact: true }).fill("now/h");
+    const hour = Math.floor(Date.now() / 3600000) * 3600000;
+    await dialog
+      .getByRole("button", { name: "Apply time range", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(panel).toContainText(
+      `Panel window: ${hour - 3600000} / ${hour + 3599999} / utc`,
+    );
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("button", { name: "选择时间范围", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toContainText("起始时间");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("time-range-mobile.png"),
+      animations: "disabled",
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    await page.request.delete(endpoint + "/api/dashboards/uid/time-dashboard");
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-events-app",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-time-e2e-")
+    )
+      throw new Error("Unsafe time test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("SDK application events refresh real queries, notify ranges and preserve sibling panel subscriptions", async ({
   page,
   endpoint,

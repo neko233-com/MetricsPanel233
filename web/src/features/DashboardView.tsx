@@ -13,7 +13,6 @@ import {
   formatValue,
   jsonBody,
   parseLabels,
-  ranges,
   aggregations,
   timeAgo,
   duration,
@@ -25,6 +24,8 @@ import {
 } from "../api";
 import { Chart } from "../components/Chart";
 import { Dialog } from "../components/Dialog";
+import type { TimeSelection } from "../grafana/time-range";
+import { TimeRangePicker } from "../components/TimeRangePicker";
 export function DashboardView({
   dashboard,
   stats,
@@ -43,8 +44,8 @@ export function DashboardView({
   targets: Target[];
   metrics: Metric[];
   tick: number;
-  range: string;
-  onRange: (v: string) => void;
+  range: TimeSelection;
+  onRange: (v: TimeSelection) => void;
   refresh: () => void;
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
@@ -67,6 +68,7 @@ export function DashboardView({
       range={range}
       tick={tick}
       mint={i === 2}
+      onRange={onRange}
       onEdit={() => setEditor(p)}
       onRemove={() => setRemoving(p)}
     />
@@ -85,17 +87,7 @@ export function DashboardView({
           </p>
         </div>
         <div className="toolbar">
-          <select
-            aria-label={tr("Time range")}
-            value={range}
-            onChange={(e) => onRange(e.target.value)}
-          >
-            {ranges.map((r) => (
-              <option key={r.value} value={r.value}>
-                {tr(r.label)}
-              </option>
-            ))}
-          </select>
+          <TimeRangePicker value={range} onChange={onRange} />
           <button
             className="icon-button outlined"
             onClick={refresh}

@@ -1,12 +1,6 @@
-import {
-  AppEvents,
-  EventBusSrv,
-  dateTime,
-  type BusEvent,
-  type TimeRange,
-} from "@grafana/data";
+import { AppEvents, EventBusSrv, type BusEvent } from "@grafana/data";
 import type * as Runtime from "@grafana/runtime";
-import { rangeMilliseconds } from "../api";
+import { resolveTimeRange, type TimeSelection } from "./time-range";
 
 export type NoticeSeverity = "success" | "warning" | "error" | "info";
 type Host = {
@@ -126,13 +120,8 @@ export function refreshWorkspace() {
   if (runtime) appEvents.publish(new runtime.RefreshEvent());
   else refresh();
 }
-export function updateWorkspaceTimeRange(range: string) {
+export function updateWorkspaceTimeRange(range: TimeSelection) {
   if (!runtime) return;
-  const end = Date.now();
-  const payload: TimeRange = {
-    from: dateTime(end - rangeMilliseconds(range)),
-    to: dateTime(end),
-    raw: { from: "now-" + range, to: "now" },
-  };
+  const payload = resolveTimeRange(range).sdk;
   appEvents.publish(new runtime.TimeRangeUpdatedEvent(payload));
 }

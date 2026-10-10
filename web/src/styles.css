@@ -2056,3 +2056,9 @@ dialog::backdrop {
   border-radius: 8px;
   max-width: calc(100vw - 48px);
 }
+.time-range-summary {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

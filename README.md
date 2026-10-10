@@ -223,6 +223,21 @@ metricspanel datasources health --id remote-prometheus
 自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和手机布局。
 契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
 
+## Dashboard 时间范围
+
+经典 JSON、V1 和 V2 resource 的 `time` / `timeSettings` 默认时间与时区会应用到实际查询。
+URL 支持 `from/to`、`time/time.window` 和 `timezone`；前者优先，中心窗口以 Unix 毫秒表示，
+切换范围保留 `var-*` 参数，重载及浏览器历史可还原窗口。
+自定义选择器支持 Unix 毫秒、ISO 日期和 SDK 日期运算（例如 `now-1h/h`、`now/d`），包含 IANA 时区及夏令时。
+每次解析共享一个 now；固定时间不会随五秒刷新向后移动，范围限于 31 天。
+
+SDK `PanelProps.onChangeTimeRange` 和原生折线图拖选都更新工作空间及 URL，并触发真实查询。
+查询 request、SDK 面板时间范围、变量查询、单位日期展示和波形捕获都使用选择的边界与时区；
+`$__from`、`$__to`、`$__range_ms` 保留精确毫秒，TemplateSrv.updateTimeRange 也已接通。
+五个时间模型测试和端到端测试覆盖固定窗口查询值、缩放、重载、时间参数、日期运算、边界错误及中英文手机布局。
+单面板 `timeFrom/timeShift` 覆盖、自动刷新配置及其他未实现的时间交互仍需补齐。
+参考 [Grafana 时间 URL 契约](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/)。
+
 ## Grafana 应用事件
 
 `getAppEvents()` 现在返回共享的官方 SDK `EventBusSrv`，支持 typed `publish/getStream/subscribe`、

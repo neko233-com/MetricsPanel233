@@ -11,6 +11,20 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Browser time": "浏览器时区",
+  "Custom time range": "自定义时间范围",
+  "Choose time range": "选择时间范围",
+  "Apply time range": "应用时间范围",
+  From: "起始时间",
+  To: "结束时间",
+  "Time zone": "时区",
+  "Use date math, ISO dates or Unix milliseconds. Maximum range: 31 days.":
+    "支持日期运算、ISO 日期或 Unix 毫秒。最大范围为 31 天。",
+  "Invalid time zone": "无效的时区",
+  "Invalid time range": "无效的时间范围",
+  "Invalid time window": "无效的时间窗口",
+  "Time range must be positive and at most 31 days":
+    "时间范围必须为正且不超过 31 天",
   "Plugin actions": "插件操作",
   "Panel actions": "面板操作",
   "Extension failed": "扩展执行失败",

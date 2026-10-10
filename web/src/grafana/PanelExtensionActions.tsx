@@ -3,13 +3,12 @@ import { MoreHorizontal } from "lucide-react";
 import {
   LoadingState,
   PluginExtensionPoints,
-  dateTime,
   type DataFrame,
   type PluginExtensionPanelContext,
 } from "@grafana/data";
 import { type Panel, type InterpolationValues } from "../api";
 import { t } from "../i18n";
-import { rangeMilliseconds } from "../api";
+import { resolveTimeRange, type TimeSelection } from "./time-range";
 import { ExtensionLink } from "./ExtensionHost";
 import { useExtensionLinks } from "./extensions";
 
@@ -23,20 +22,20 @@ export function PanelExtensionActions({
 }: {
   panel: Panel;
   values: InterpolationValues;
-  range: string;
+  range: TimeSelection;
   dashboard: PluginExtensionPanelContext["dashboard"];
   frames: DataFrame[];
   state?: LoadingState;
 }) {
   const [open, setOpen] = useState(false);
   const context = useMemo<PluginExtensionPanelContext>(() => {
-    const end = Date.now();
+    const resolved = resolveTimeRange(range);
     return {
       id: panel.config?.id || 0,
       title: panel.title,
       pluginId: panel.config?.type || panel.visualization || "timeseries",
-      timeRange: { from: "now-" + range, to: "now" },
-      timeZone: "browser",
+      timeRange: resolved.sdk.raw,
+      timeZone: resolved.timezone,
       dashboard,
       targets: (panel.config?.targets || []).map((target, index) => ({
         ...target,
@@ -55,11 +54,7 @@ export function PanelExtensionActions({
       data: {
         state,
         series: frames,
-        timeRange: {
-          from: dateTime(end - rangeMilliseconds(range)),
-          to: dateTime(end),
-          raw: { from: "now-" + range, to: "now" },
-        },
+        timeRange: resolved.sdk,
       },
     };
   }, [panel, values, range, dashboard, frames, state]);

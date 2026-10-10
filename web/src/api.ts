@@ -1,4 +1,5 @@
 import { getLocale, t } from "./i18n";
+import { resolveTimeRange, type TimeSelection } from "./grafana/time-range";
 export type Labels = Record<string, string>;
 export type Metric = { name: string; series_count: number };
 export type Point = { timestamp: number; value: number };
@@ -101,7 +102,9 @@ export async function api<T>(
 ): Promise<T> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
   const response = await fetch(
-    path.startsWith("/prometheus/")||path.startsWith("/api/") ? path : `/api/v1${path}`,
+    path.startsWith("/prometheus/") || path.startsWith("/api/")
+      ? path
+      : `/api/v1${path}`,
     {
       ...options,
       headers: {
@@ -186,18 +189,18 @@ export function download(name: string, data: unknown) {
   URL.revokeObjectURL(url);
 }
 
-export function rangeMilliseconds(range: string): number {
-  const match = /^(\d+)(m|h|s)$/.exec(range);
-  return match
-    ? Number(match[1]) * ({ m: 60000, h: 3600000, s: 1000 }[match[2]] || 60000)
-    : 1800000;
+export function rangeMilliseconds(range: TimeSelection): number {
+  const { start, end } = resolveTimeRange(range);
+  return end - start;
 }
 export function interpolate(
   expr: string,
   variables: InterpolationValues,
-  range: string,
+  range: TimeSelection,
 ): string {
-  const seconds = Math.ceil(rangeMilliseconds(range) / 1000);
+  const { start, end } = resolveTimeRange(range);
+  const milliseconds = end - start,
+    seconds = milliseconds / 1000;
   const interval = Math.max(5, Math.ceil(seconds / 120)),
     rateInterval = Math.max(60, interval * 4);
   const values = {
@@ -205,11 +208,11 @@ export function interpolate(
     __interval: `${interval}s`,
     __interval_ms: String(interval * 1000),
     __rate_interval: `${rateInterval}s`,
-    __range: `${seconds}s`,
+    __range: Number.isInteger(seconds) ? `${seconds}s` : `${milliseconds}ms`,
     __range_s: String(seconds),
-    __range_ms: String(seconds * 1000),
-    __from: String(Date.now() - rangeMilliseconds(range)),
-    __to: String(Date.now()),
+    __range_ms: String(milliseconds),
+    __from: String(start),
+    __to: String(end),
   };
   return expr.replace(
     /\$\{([a-zA-Z_][\w]*)(?::([\w]+))?\}|\$([a-zA-Z_][\w]*)|\[\[([a-zA-Z_][\w]*)(?::([\w]+))?\]\]/g,
@@ -268,7 +271,7 @@ export type InterpolationValues = Record<
 >;
 export async function queryPanel(
   panel: Panel,
-  range: string,
+  range: TimeSelection,
   signal: AbortSignal,
 ): Promise<QueryResult> {
   const expressions = panel.expressions?.length
@@ -276,14 +279,13 @@ export async function queryPanel(
     : panel.expr
       ? [panel.expr]
       : [];
+  const { start, end } = resolveTimeRange(range);
   if (!expressions.length)
     return api<QueryResult>(
-      `/query?${new URLSearchParams({ metric: panel.metric, range, aggregation: panel.aggregation, labels: JSON.stringify(panel.labels || {}) })}`,
+      `/query?${new URLSearchParams({ metric: panel.metric, start: String(start), end: String(end), aggregation: panel.aggregation, labels: JSON.stringify(panel.labels || {}) })}`,
       { signal },
     );
-  const end = Date.now(),
-    start = end - rangeMilliseconds(range),
-    step = Math.max(1, Math.ceil((end - start) / 120000));
+  const step = Math.max(1, Math.ceil((end - start) / 120000));
   const results = await Promise.all(
     expressions.map((expr) =>
       api<{

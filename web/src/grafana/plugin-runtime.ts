@@ -20,6 +20,7 @@ import {
 } from "./extensions";
 import { api, interpolate, type InterpolationValues } from "../api";
 import { getLocale } from "../i18n";
+import { rawSelection, type TimeSelection } from "./time-range";
 import type {
   BackendSrv,
   BackendSrvRequest,
@@ -58,7 +59,7 @@ const datasourceCache = new Map<
 >();
 let initialized: Promise<Runtime> | undefined;
 let variableValues: InterpolationValues = {},
-  variableRange = "30m";
+  variableRange: TimeSelection = "30m";
 let sources: DataSourceSettings[] = [];
 
 async function fetchResponse(
@@ -329,7 +330,13 @@ async function init(): Promise<Runtime> {
         return interpolate(text, values, variableRange);
       },
       containsTemplate: (text = "") => /\$(?:\w|\{)/.test(text),
-      updateTimeRange: () => {},
+      updateTimeRange: (range) => {
+        variableRange = {
+          from: range.from.valueOf(),
+          to: range.to.valueOf(),
+          timezone: rawSelection(variableRange).timezone,
+        };
+      },
     });
     await import("systemjs/dist/system.js");
     await import("systemjs/dist/extras/amd.js");
@@ -455,7 +462,10 @@ async function reloadSources() {
     jsonData: ds.jsonData || {},
   }));
 }
-export function setPluginVariables(values: InterpolationValues, range: string) {
+export function setPluginVariables(
+  values: InterpolationValues,
+  range: TimeSelection,
+) {
   variableValues = values;
   variableRange = range;
 }
@@ -542,11 +552,11 @@ class LocalPrometheus extends Data.DataSourceApi {
         const values = { ...variableValues };
         for (const [name, entry] of Object.entries(request.scopedVars || {}))
           if (entry) values[name] = entry.value;
-        const rawFrom = request.range.raw.from;
-        const range =
-          typeof rawFrom === "string" && rawFrom.startsWith("now-")
-            ? rawFrom.slice(4)
-            : variableRange;
+        const range: TimeSelection = {
+          from: request.range.from.valueOf(),
+          to: request.range.to.valueOf(),
+          timezone: request.timezone,
+        };
         return adapter.query({
           ...request,
           targets: request.targets.map((target) => {

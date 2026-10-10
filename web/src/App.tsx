@@ -50,6 +50,13 @@ import {
   updateWorkspaceTimeRange,
   type NoticeSeverity,
 } from "./grafana/app-events";
+import {
+  rangeFromURL,
+  rangeFromDashboard,
+  resolveTimeRange,
+  writeRangeURL,
+  type TimeSelection,
+} from "./grafana/time-range";
 const AppPluginView = lazy(() => import("./grafana/AppPluginView"));
 const ExtensionHost = lazy(() => import("./grafana/ExtensionHost"));
 type View =
@@ -73,6 +80,14 @@ const navigation = [
 ] as const;
 export default function App() {
   const routeLoaded = useRef(false);
+  const [initialRange] = useState(() => {
+    try {
+      return { value: rangeFromURL() || "30m", error: "" };
+    } catch (error) {
+      return { value: "30m", error: message(error) };
+    }
+  });
+  const [rangeError, setRangeError] = useState(initialRange.error);
   const [locale, updateLocale] = useState<Locale>(getLocale());
   const languageButton = (
     <button
@@ -111,7 +126,7 @@ export default function App() {
     [stats, setStats] = useState<Stats | null>(null);
   const [hasExtensions, setHasExtensions] = useState(false);
   const [tick, setTick] = useState(0),
-    [range, setRange] = useState("30m"),
+    [range, setRange] = useState<TimeSelection>(initialRange.value),
     [auth, setAuth] = useState(false),
     [token, setToken] = useState(""),
     [connectionError, setConnectionError] = useState(""),
@@ -188,10 +203,20 @@ export default function App() {
       }),
     [load],
   );
-  const changeRange = useCallback((next: string) => {
-    setRange(next);
-    updateWorkspaceTimeRange(next);
-  }, []);
+  const changeRange = useCallback(
+    (next: TimeSelection) => {
+      try {
+        resolveTimeRange(next);
+        setRange(next);
+        setRangeError("");
+        writeRangeURL(next);
+        updateWorkspaceTimeRange(next);
+      } catch (error) {
+        notify(tr(message(error)), true);
+      }
+    },
+    [notify],
+  );
   useEffect(() => {
     void load();
     const timer = setInterval(() => {
@@ -217,12 +242,55 @@ export default function App() {
     if (dashboard) {
       setDashboardID(dashboard.id);
       setView("dashboard");
+      try {
+        const next =
+          rangeFromURL(
+            new URLSearchParams(location.search),
+            rangeFromDashboard(dashboard.grafana) || "30m",
+          ) ||
+          rangeFromDashboard(dashboard.grafana) ||
+          "30m";
+        setRange(next);
+        setRangeError("");
+      } catch (error) {
+        setRangeError(message(error));
+      }
     }
+  }, [dashboards]);
+  useEffect(() => {
+    const restore = () => {
+      const uid = /^\/d\/([^/]+)/.exec(location.pathname)?.[1];
+      const dashboard = uid
+        ? dashboards.find(
+            (item) => dashboardUID(item) === decodeURIComponent(uid),
+          )
+        : undefined;
+      try {
+        const fallback = rangeFromDashboard(dashboard?.grafana) || "30m";
+        const next =
+          rangeFromURL(new URLSearchParams(location.search), fallback) ||
+          fallback;
+        setRange(next);
+        setRangeError("");
+        updateWorkspaceTimeRange(next);
+      } catch (error) {
+        setRangeError(message(error));
+      }
+      if (dashboard) {
+        setDashboardID(dashboard.id);
+        setView("dashboard");
+      } else if (/^\/a\//.test(location.pathname)) setView("app");
+      else if (navigation.some((item) => item.id === location.hash.slice(1)))
+        setView(location.hash.slice(1) as View);
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
   }, [dashboards]);
   function navigate(next: View) {
     setView(next);
     setSidebarOpen(false);
-    if (next !== "dashboard") history.replaceState({}, "", `/#${next}`);
+    if (next !== "dashboard")
+      history.replaceState({}, "", `/${location.search}#${next}`);
   }
   const current = dashboards.find(
     (d) => d.id === (view === "overview" ? "system" : dashboardID),
@@ -367,6 +435,11 @@ export default function App() {
           </div>
         </header>
         <main>
+          {rangeError && (
+            <p className="form-error" role="alert">
+              {tr(rangeError)}
+            </p>
+          )}
           {connectionError && (
             <div className="connection-error" role="alert">
               <span>
@@ -426,6 +499,14 @@ export default function App() {
                   "",
                   `/d/${encodeURIComponent(dashboardUID(d))}/${encodeURIComponent(d.name)}`,
                 );
+                try {
+                  const next = rangeFromDashboard(d.grafana) || "30m";
+                  setRange(next);
+                  setRangeError("");
+                  updateWorkspaceTimeRange(next);
+                } catch (error) {
+                  setRangeError(message(error));
+                }
                 navigate("dashboard");
               }}
             />
