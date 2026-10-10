@@ -73,6 +73,15 @@ func TestNativeHTTPProtocolsAndAtomicFailures(t *testing.T) {
 		require.Len(t, out, 2)
 		assert.Equal(t, out[0].Name, out[1].Name)
 		assert.NotEqual(t, out[0].Labels["attribute"], out[1].Labels["attribute"])
+		value, err = decodeJSON([]byte(`{"a_b":{"c":233},"a":{"b_c":234},"literal/slash":{"~tilde":235}}`))
+		require.NoError(t, err)
+		out = nil
+		require.NoError(t, flattenMetrics(model.Target{Kind: "spark"}, value, "", nil, &out, 0))
+		require.Len(t, out, 3)
+		assert.Equal(t, out[0].Name, out[1].Name)
+		assert.Equal(t, "/a/b_c", out[0].Labels["attribute"])
+		assert.Equal(t, "/a_b/c", out[1].Labels["attribute"])
+		assert.Equal(t, "/literal~1slash/~0tilde", out[2].Labels["attribute"])
 	})
 	t.Run("failed Jolokia is not healthy", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

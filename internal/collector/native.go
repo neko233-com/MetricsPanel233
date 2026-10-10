@@ -350,7 +350,9 @@ func flattenMetrics(t model.Target, value any, prefix string, labels map[string]
 			if key == "timestamp" || key == "status" || key == "name" || key == "modelerType" {
 				continue
 			}
-			if err := flattenMetrics(t, value[key], prefix+"_"+key, labels, out, depth+1); err != nil {
+			// JSON Pointer retains object boundaries and literal slash/tilde keys.
+			segment := strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
+			if err := flattenMetrics(t, value[key], prefix+"/"+segment, labels, out, depth+1); err != nil {
 				return err
 			}
 		}
@@ -362,7 +364,7 @@ func flattenMetrics(t model.Target, value any, prefix string, labels map[string]
 			for key, value := range labels {
 				extra[key] = value
 			}
-			*out = append(*out, nativeSample(t, metricKey(t.Kind+"_"+strings.TrimPrefix(prefix, "_")), number, extra))
+			*out = append(*out, nativeSample(t, metricKey(t.Kind+"_"+strings.TrimPrefix(prefix, "/")), number, extra))
 		}
 	}
 	return nil
