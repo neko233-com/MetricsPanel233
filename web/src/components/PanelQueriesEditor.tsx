@@ -1,14 +1,8 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from "react";
-import { BrowserRouter } from "react-router";
+import { useEffect, useRef, useState } from "react";
 import {
   CoreApp,
-  createTheme,
-  DataSourcePluginContextProvider,
   LoadingState,
-  ThemeContext,
   type DataQuery,
-  type DataSourceApi,
-  type DataSourceInstanceSettings,
   type PanelData,
 } from "@grafana/data";
 import type { Subscription } from "rxjs";
@@ -28,10 +22,9 @@ import {
 } from "../grafana/engine";
 import { Subject } from "rxjs";
 import {
-  getPluginDatasource,
-  sdkRuntime,
-  setPluginVariables,
-} from "../grafana/plugin-runtime";
+  DatasourceQueryEditor,
+  useDatasourceEditor,
+} from "./DatasourceQueryEditor";
 import {
   panelWithQueries,
   validatePanelQueries,
@@ -41,26 +34,6 @@ import { resolveTimeRange, type TimeSelection } from "../grafana/time-range";
 import { Dialog } from "./Dialog";
 
 type Draft = { key: number; originalRef?: string; query: GrafanaTarget };
-type Source = { uid: string; name: string; type: string };
-const theme = createTheme({ colors: { mode: "dark" } });
-class EditorBoundary extends Component<
-  { children: ReactNode },
-  { error: string }
-> {
-  state = { error: "" };
-  static getDerivedStateFromError(error: unknown) {
-    return { error: message(error) };
-  }
-  render() {
-    return this.state.error ? (
-      <p role="alert" className="form-error">
-        {this.state.error}
-      </p>
-    ) : (
-      this.props.children
-    );
-  }
-}
 function nextReference(queries: GrafanaTarget[]) {
   const refs = new Set(queries.map((query) => query.refId));
   for (let n = 0; ; n++) {
@@ -108,12 +81,6 @@ export function PanelQueriesEditor({
     allDrafts[panelID]?.[0]?.key,
   );
   const [dirty, setDirty] = useState<Set<string>>(() => new Set());
-  const [sources, setSources] = useState<Source[]>([]);
-  const [loaded, setLoaded] = useState<{
-    datasource: DataSourceApi;
-    settings: DataSourceInstanceSettings;
-  } | null>(null);
-  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
@@ -131,7 +98,12 @@ export function PanelQueriesEditor({
   const uid =
     interpolate(rawUID, values, range) ||
     (typeof ref === "object" && ref?.type === "__expr__" ? "__expr__" : "");
-  const Editor = loaded?.datasource.components?.QueryEditor;
+  const { sources, loaded, loadError } = useDatasourceEditor(
+    uid,
+    Boolean(query),
+    values,
+    range,
+  );
   const resolved = resolveTimeRange(range);
   const panelData: PanelData | undefined = preview
     ? {
@@ -180,60 +152,14 @@ export function PanelQueriesEditor({
     setValidJSON(true);
     setError("");
   };
-  useEffect(() => {
-    let active = true;
-    void sdkRuntime()
-      .then(async (runtime) => {
-        await runtime.getDataSourceSrv().reload();
-        if (active)
-          setSources([
-            ...runtime
-              .getDataSourceSrv()
-              .getList({ all: true })
-              .filter((source) => source.type !== "__expr__"),
-            { uid: "__expr__", name: "Expression", type: "__expr__" },
-          ]);
-      })
-      .catch((error) => {
-        if (active) setLoadError(message(error));
-      });
-    return () => {
-      active = false;
+  const valuesKey = JSON.stringify(values),
+    rangeKey = JSON.stringify(range);
+  useEffect(
+    () => () => {
       subscription.current?.unsubscribe();
-    };
-  }, []);
-  const valuesKey = JSON.stringify(values);
-  const rangeKey = JSON.stringify(range);
-  useEffect(() => {
-    let active = true;
-    setLoaded(null);
-    setLoadError("");
-    if (!query) return;
-    setPluginVariables(values, range);
-    void getPluginDatasource(
-      uid,
-      Object.fromEntries(
-        Object.entries(values).map(([name, value]) => [
-          name,
-          { value, text: value },
-        ]),
-      ),
-    )
-      .then(async (datasource) => {
-        const runtime = await sdkRuntime();
-        const settings = runtime
-          .getDataSourceSrv()
-          .getInstanceSettings(datasource.uid);
-        if (!settings) throw new Error("Datasource settings not found");
-        if (active) setLoaded({ datasource, settings });
-      })
-      .catch((error) => {
-        if (active) setLoadError(message(error));
-      });
-    return () => {
-      active = false;
-    };
-  }, [uid, Boolean(query), valuesKey, rangeKey]);
+    },
+    [],
+  );
   useEffect(() => {
     subscription.current?.unsubscribe();
     subscription.current = null;
@@ -487,98 +413,19 @@ export function PanelQueriesEditor({
                       {loadError}
                     </p>
                   ) : loaded ? (
-                    Editor ? (
-                      <EditorBoundary
-                        key={`${loaded.datasource.uid}-${selected}`}
-                      >
-                        <ThemeContext.Provider value={theme}>
-                          <BrowserRouter>
-                            <DataSourcePluginContextProvider
-                              instanceSettings={loaded.settings}
-                            >
-                              <Editor
-                                datasource={loaded.datasource}
-                                query={query as DataQuery}
-                                queries={queries as DataQuery[]}
-                                range={resolved.sdk}
-                                data={panelData}
-                                app={CoreApp.PanelEditor}
-                                onChange={(next) =>
-                                  change({
-                                    ...query,
-                                    ...next,
-                                    datasource:
-                                      next.datasource === null
-                                        ? undefined
-                                        : next.datasource || query.datasource,
-                                  })
-                                }
-                                onRunQuery={run}
-                                onAddQuery={(next) =>
-                                  add(false, {
-                                    ...next,
-                                    datasource: next.datasource || {
-                                      uid: loaded.datasource.uid,
-                                      type: loaded.datasource.type,
-                                    },
-                                  })
-                                }
-                              />
-                            </DataSourcePluginContextProvider>
-                          </BrowserRouter>
-                        </ThemeContext.Provider>
-                      </EditorBoundary>
-                    ) : loaded.datasource.type === "prometheus" ? (
-                      <>
-                        <label>
-                          {t("PromQL expression")}
-                          <textarea
-                            rows={3}
-                            className="mono"
-                            aria-label={t("PromQL expression")}
-                            value={query.expr || ""}
-                            disabled={!validJSON}
-                            onChange={(event) =>
-                              patch({ expr: event.target.value })
-                            }
-                          />
-                        </label>
-                        <div className="form-row">
-                          <label>
-                            {t("Legend")}
-                            <input
-                              aria-label={t("Legend")}
-                              value={query.legendFormat || ""}
-                              onChange={(event) =>
-                                patch({ legendFormat: event.target.value })
-                              }
-                            />
-                          </label>
-                          <label>
-                            {t("Query mode")}
-                            <select
-                              aria-label={t("Query mode")}
-                              value={query.instant ? "instant" : "range"}
-                              onChange={(event) =>
-                                patch({
-                                  instant: event.target.value === "instant",
-                                  range: event.target.value === "range",
-                                })
-                              }
-                            >
-                              <option value="instant">{t("Instant")}</option>
-                              <option value="range">{t("Range")}</option>
-                            </select>
-                          </label>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="subtle">
-                        {t(
-                          "This datasource has no query editor. Use advanced JSON.",
-                        )}
-                      </p>
-                    )
+                    <DatasourceQueryEditor
+                      loaded={loaded}
+                      query={query}
+                      queries={queries}
+                      range={resolved.sdk}
+                      data={panelData}
+                      app={CoreApp.PanelEditor}
+                      editorKey={selected || 0}
+                      disabled={!validJSON}
+                      onChange={(next) => change(next)}
+                      onRunQuery={run}
+                      onAddQuery={(next) => add(false, next)}
+                    />
                   ) : (
                     <p role="status">{t("Loading datasource…")}</p>
                   )}

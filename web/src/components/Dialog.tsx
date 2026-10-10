@@ -28,7 +28,10 @@ export function Dialog({
       ref={ref}
       aria-label={title}
       style={style}
-      onCancel={onClose}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
       onClick={(e) => {
         if (e.target === ref.current) {
           const rect = ref.current!.getBoundingClientRect();

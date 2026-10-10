@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Bell,
   ChevronDown,
@@ -20,6 +20,15 @@ import {
 } from "../api";
 import { Dialog } from "../components/Dialog";
 import { getLocale, t } from "../i18n";
+import {
+  validateAlertEditorGraph,
+  type AlertQueryGraph,
+} from "../grafana/alert-editor";
+const AlertGraphEditor = lazy(() =>
+  import("../components/AlertGraphEditor").then((module) => ({
+    default: module.AlertGraphEditor,
+  })),
+);
 
 type Instance = {
   key: string;
@@ -640,10 +649,36 @@ function AlertEditor({
     ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  let graph: AlertQueryGraph | null = null;
+  let graphError = "";
+  if (execution === "grafana") {
+    try {
+      const parsed = JSON.parse(graphJSON);
+      if (
+        !parsed ||
+        !Array.isArray(parsed.data) ||
+        parsed.data.some(
+          (node: any) =>
+            !node ||
+            typeof node.refId !== "string" ||
+            !node.model ||
+            typeof node.model !== "object" ||
+            Array.isArray(node.model),
+        )
+      )
+        throw new Error("Each alert query needs a datasource and model");
+      graph = parsed;
+    } catch (error) {
+      graphError = t(message(error));
+    }
+  }
   return (
     <Dialog
       title={t(original ? "Edit alert rule" : "Create alert")}
-      onClose={onClose}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      style={execution === "grafana" ? { width: 1080 } : undefined}
     >
       <form
         onSubmit={async (e) => {
@@ -651,6 +686,8 @@ function AlertEditor({
           setBusy(true);
           setError("");
           try {
+            if (execution === "grafana")
+              validateAlertEditorGraph(JSON.parse(graphJSON));
             const { runtime: _, ...config } = original || ({} as RuleView);
             const payload = {
               ...config,
@@ -711,18 +748,41 @@ function AlertEditor({
           </select>
         </label>
         {execution === "grafana" ? (
-          <label>
-            {t("Queries and condition (Grafana JSON)")}
-            <textarea
-              aria-label={t("Queries and condition (Grafana JSON)")}
-              className="mono"
-              rows={12}
-              required
-              maxLength={524288}
-              value={graphJSON}
-              onChange={(event) => setGraphJSON(event.target.value)}
-            />
-          </label>
+          <>
+            {graph ? (
+              <Suspense
+                fallback={<p role="status">{t("Loading datasource…")}</p>}
+              >
+                <AlertGraphEditor
+                  graph={graph}
+                  disabled={busy}
+                  onChange={(value) =>
+                    setGraphJSON(JSON.stringify(value, null, 2))
+                  }
+                />
+              </Suspense>
+            ) : (
+              <p role="alert" className="form-error">
+                {graphError}
+              </p>
+            )}
+            <details open={!graph} className="alert-extra">
+              <summary>{t("Advanced alert graph JSON")}</summary>
+              <label>
+                {t("Queries and condition (Grafana JSON)")}
+                <textarea
+                  aria-label={t("Queries and condition (Grafana JSON)")}
+                  className="mono"
+                  rows={12}
+                  required
+                  maxLength={524288}
+                  value={graphJSON}
+                  disabled={busy}
+                  onChange={(event) => setGraphJSON(event.target.value)}
+                />
+              </label>
+            </details>
+          </>
         ) : (
           <>
             <label>

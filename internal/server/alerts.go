@@ -24,6 +24,7 @@ func ruleError(w http.ResponseWriter, err error) {
 	}
 }
 func (s *Server) alertRoutes(api *http.ServeMux) {
+	api.HandleFunc("POST /api/v1/alerts/preview", s.previewAlertGraph)
 	api.HandleFunc("GET /api/v1/alerts/rules", func(w http.ResponseWriter, r *http.Request) {
 		rules, err := s.Store.AlertRules(r.Context())
 		if err != nil {

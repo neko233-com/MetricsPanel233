@@ -2200,7 +2200,7 @@ dialog::backdrop {
 .query-result-frame .table-scroll { max-height: 240px; overflow: auto; }
 @media (max-width: 600px) {
   .expression-evaluator { grid-template-columns: 1fr; gap: 0; }
-  .panel-query-editor .form-row { flex-direction: column; gap: 0; }
+  .panel-query-editor .form-row, .alert-graph-editor .form-row { flex-direction: column; gap: 0; }
 }
 @media (max-width: 700px) {
   .panel-time-info {

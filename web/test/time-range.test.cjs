@@ -37,6 +37,23 @@ const {
   panelComparison,
 } = exportsObject;
 const now = Date.parse("2026-10-10T12:34:56.789Z");
+test("alert instant windows preserve zero-span SDK context without relaxing dashboard or inverted ranges", () => {
+  const instant = resolveTimeRange({
+    from: now,
+    to: now,
+    timezone: "utc",
+    allowInstant: true,
+  });
+  assert.equal(instant.sdk.from.valueOf(), now);
+  assert.equal(instant.sdk.to.valueOf(), now);
+  assert.equal(instant.start, instant.end);
+  assert.throws(() =>
+    resolveTimeRange({ from: now, to: now, timezone: "utc" }),
+  );
+  assert.throws(() =>
+    resolveTimeRange({ from: now, to: now - 1, allowInstant: true }),
+  );
+});
 test("serialized timeCompare wins over the early alias, including explicit disable", () => {
   const standard = resolvePanelTimeRange("1h", { timeCompare: "1d" }, now);
   assert.equal(standard.comparison, "1d");

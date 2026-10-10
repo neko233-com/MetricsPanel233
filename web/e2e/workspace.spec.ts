@@ -87,6 +87,518 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Alert visual query graph runs SDK callbacks and read-only previews, saves losslessly and cancels backend work", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  page.setDefaultNavigationTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-alert-editors-e2e-"),
+  );
+  const run = promisify(execFile),
+    fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    );
+  const sourceUID = "alert-editor-sdk",
+    issues: string[] = [];
+  let uid = "";
+  let stage = "package SDK fixture";
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type()))
+      issues.push(entry.text() + " / " + entry.location().url);
+  });
+  const graph: any = {
+    condition: "C",
+    opaque: { template: "retain" },
+    data: [
+      {
+        refId: "A",
+        datasourceUid: "prometheus",
+        relativeTimeRange: { from: 120, to: 5, opaque: true },
+        queryType: "custom",
+        model: { expr: "vector(233)", instant: true, opaque: "native" },
+      },
+      {
+        refId: "B",
+        datasourceUid: sourceUID,
+        relativeTimeRange: { from: 90, to: 7 },
+        model: { value: 2, requireAlert: true, opaque: "SDK" },
+        opaque: { node: true },
+      },
+      {
+        refId: "D",
+        datasourceUid: "__expr__",
+        model: { type: "math", expression: "$A * $B", opaque: "expression" },
+      },
+      {
+        refId: "C",
+        datasourceUid: "__expr__",
+        model: {
+          type: "classic_conditions",
+          conditions: [
+            {
+              query: { params: ["D", "keep"] },
+              reducer: { type: "avg" },
+              evaluator: { type: "gt", params: [400] },
+              opaque: true,
+            },
+          ],
+        },
+      },
+    ],
+  };
+  const rules = async () =>
+    (await page.request.get(endpoint + "/api/v1/alerts/rules")).json();
+  const history = async () =>
+    (await page.request.get(endpoint + "/api/v1/alerts/history")).json();
+  const stats = async () =>
+    (
+      await page.request.get(
+        endpoint +
+          `/api/datasources/uid/${sourceUID}/resources/annotation-stats`,
+      )
+    ).json();
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    const archive = path.join(temp, "sdk.zip");
+    await run(fixture, ["--package", archive], { windowsHide: true });
+    stage = "install SDK fixture";
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const ds = await page.request.post(endpoint + "/api/datasources", {
+      data: {
+        uid: sourceUID,
+        name: "Alert editor SDK",
+        type: "metricspanel-sdk-datasource",
+        secureJsonData: { apiKey: "test-secret-233" },
+      },
+    });
+    expect(ds.ok(), await ds.text()).toBeTruthy();
+    const beforeRules = await rules(),
+      beforeHistory = await history();
+    stage = "open alert editor";
+    await page.goto(endpoint + "/#alerts");
+    await page
+      .getByRole("button", { name: "Create alert", exact: true })
+      .first()
+      .click();
+    let dialog = page.getByRole("dialog", {
+      name: "Create alert",
+      exact: true,
+    });
+    await dialog
+      .getByLabel("Rule name", { exact: true })
+      .fill("Visual alert SDK");
+    await dialog
+      .getByLabel("Query mode", { exact: true })
+      .selectOption("grafana");
+    await dialog
+      .getByText("Advanced alert graph JSON", { exact: true })
+      .click();
+    const raw = dialog.getByLabel("Queries and condition (Grafana JSON)", {
+      exact: true,
+    });
+    await raw.fill(JSON.stringify(graph, null, 2));
+    await dialog.getByLabel("Evaluate every (s)").fill("86400");
+    const nav = dialog.getByRole("navigation", {
+      name: "Alert query list",
+      exact: true,
+    });
+    const choose = async (ref: string) => {
+      await nav
+        .getByRole("button")
+        .filter({
+          hasText: new RegExp(
+            "^" + ref + "(?:__expr__|metricspanel|" + sourceUID + ")$",
+          ),
+        })
+        .click();
+      await expect(
+        dialog.getByLabel("Query reference", { exact: true }),
+      ).toHaveValue(ref);
+    };
+    stage = "edit SDK query";
+    await choose("B");
+    await expect(dialog.getByLabel("SDK metrics query editor")).toContainText(
+      "alert-editor-sdk / unified-alerting / B / 4",
+    );
+    await dialog.getByLabel("SDK numeric value", { exact: true }).fill("3");
+    graph.data[1].model.value = 3;
+    stage = "preview SDK graph";
+    const previewResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/v1/alerts/preview"),
+    );
+    await dialog
+      .getByRole("button", { name: "Run SDK metric query", exact: true })
+      .click();
+    const response = await previewResponse;
+    expect(response.ok(), await response.text()).toBeTruthy();
+    const preview = await response.json();
+    expect(preview.condition_values).toEqual([
+      { labels: {}, value: 1, missing: false, satisfied: true },
+    ]);
+    expect(JSON.stringify(preview.results.D)).toContain("699");
+    expect(preview.results.B.frames[0].data.values[0][0]).toBe(
+      preview.at - 7000,
+    );
+    await expect(
+      dialog.getByRole("region", { name: "Alert query preview", exact: true }),
+    ).toContainText("True");
+    expect(await rules()).toEqual(beforeRules);
+    expect(await history()).toEqual(beforeHistory);
+    stage = "add reorder and edit graph";
+    await dialog
+      .getByRole("button", { name: "Add SDK metric query", exact: true })
+      .click();
+    await expect(
+      dialog.getByLabel("Query reference", { exact: true }),
+    ).toHaveValue("E");
+    await dialog
+      .getByRole("button", { name: "Move query up", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", { name: "Remove query", exact: true })
+      .click();
+    await choose("D");
+    await dialog
+      .getByLabel("Math expression", { exact: true })
+      .fill("$A * $B + 1");
+    graph.data[2].model.expression = "$A * $B + 1";
+    await choose("A");
+    await dialog.getByLabel("Lookback seconds", { exact: true }).fill("180");
+    graph.data[0].relativeTimeRange.from = 180;
+    await choose("C");
+    await dialog
+      .getByLabel("Condition comparison Value", { exact: true })
+      .fill("500");
+    graph.data[3].model.conditions[0].evaluator.params = [500];
+    await dialog
+      .getByRole("button", { name: "Preview alert queries", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", { name: "Alert query preview", exact: true }),
+    ).toContainText("700");
+    expect(JSON.parse(await raw.inputValue())).toEqual(graph);
+    await page.screenshot({
+      path: testInfo.outputPath("alert-editor-en-desktop.png"),
+      animations: "disabled",
+    });
+    stage = "save and evaluate graph";
+    const savedResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/v1/alerts/rules"),
+    );
+    await dialog
+      .getByRole("button", { name: "Save rule", exact: true })
+      .click();
+    const saved = await (await savedResponse).json();
+    uid = saved.uid;
+    expect(saved.grafana).toEqual(graph);
+    expect(saved.execution).toBe("grafana");
+    const evaluated = await page.request.post(
+      endpoint + "/api/v1/alerts/rules/" + uid + "/evaluate",
+    );
+    expect(evaluated.ok(), await evaluated.text()).toBeTruthy();
+    const view = await evaluated.json();
+    expect(view.runtime.instances[0].state).toBe("Firing");
+    expect(JSON.stringify(view.runtime.instances[0].matches)).toContain("700");
+    await page.reload();
+    // Freeze the real scheduler so preview immutability includes runtime/history,
+    // rather than racing the legitimate evaluation due immediately after an edit.
+    await page
+      .getByRole("button", { name: "Pause Visual alert SDK", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", {
+        name: "Resume Visual alert SDK",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Edit Visual alert SDK", exact: true })
+      .click();
+    dialog = page.getByRole("dialog", { name: "Edit alert rule", exact: true });
+    await dialog
+      .getByRole("navigation", { name: "Alert query list", exact: true })
+      .getByRole("button")
+      .filter({ hasText: "B" + sourceUID })
+      .click();
+    await dialog.getByLabel("SDK numeric value", { exact: true }).fill("4");
+    graph.data[1].model.value = 4;
+    await dialog
+      .getByRole("button", { name: "Save rule", exact: true })
+      .click();
+    await expect(dialog).not.toBeVisible();
+    const updated = (await rules()).find((rule: any) => rule.uid === uid);
+    expect(updated.grafana).toEqual(graph);
+    expect(updated.paused).toBe(true);
+    stage = "Chinese mobile editor";
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("button", { name: "编辑 Visual alert SDK", exact: true })
+      .click();
+    dialog = page.getByRole("dialog", { name: "编辑告警规则", exact: true });
+    await dialog
+      .getByRole("navigation", { name: "告警查询列表", exact: true })
+      .getByRole("button")
+      .filter({ hasText: "C__expr__" })
+      .click();
+    await dialog
+      .getByRole("button", { name: "预览告警查询", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", { name: "告警查询预览", exact: true }),
+    ).toContainText("真");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await dialog.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("alert-editor-zh-mobile.png"),
+      animations: "disabled",
+    });
+    await dialog
+      .getByRole("button", { name: "关闭对话框", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await page
+      .getByRole("button", { name: "Create alert", exact: true })
+      .first()
+      .click();
+    dialog = page.getByRole("dialog", { name: "Create alert", exact: true });
+    await dialog
+      .getByLabel("Query mode", { exact: true })
+      .selectOption("grafana");
+    await dialog
+      .getByText("Advanced alert graph JSON", { exact: true })
+      .click();
+    stage = "cancel backend previews";
+    const delayed = {
+      condition: "B",
+      data: [
+        {
+          refId: "B",
+          datasourceUid: sourceUID,
+          relativeTimeRange: { from: 60, to: 0 },
+          model: {
+            annotation: true,
+            annotationDelayMS: 5000,
+            requireAlert: true,
+          },
+        },
+      ],
+    };
+    await dialog
+      .getByLabel("Queries and condition (Grafana JSON)", { exact: true })
+      .fill(JSON.stringify(delayed));
+    const snapshot = await rules(),
+      hist = await history(),
+      cancelled = (await stats()).cancelled;
+    for (const action of ["Stop query", "Close dialog"]) {
+      await dialog
+        .getByRole("button", { name: "Preview alert queries", exact: true })
+        .click();
+      await expect.poll(async () => (await stats()).active).toBe(1);
+      await dialog.getByRole("button", { name: action, exact: true }).click();
+      await expect.poll(async () => (await stats()).active).toBe(0);
+    }
+    expect((await stats()).cancelled).toBe(cancelled + 2);
+    expect(await rules()).toEqual(snapshot);
+    expect(await history()).toEqual(hist);
+    stage = "preview SQL recordings, source errors and no data";
+    await page
+      .getByRole("button", { name: "Create alert", exact: true })
+      .first()
+      .click();
+    dialog = page.getByRole("dialog", { name: "Create alert", exact: true });
+    await dialog
+      .getByLabel("Query mode", { exact: true })
+      .selectOption("grafana");
+    await dialog
+      .getByText("Advanced alert graph JSON", { exact: true })
+      .click();
+    const draftJSON = dialog.getByLabel(
+      "Queries and condition (Grafana JSON)",
+      { exact: true },
+    );
+    const sql = {
+      condition: "Q",
+      record: {
+        from: "Q",
+        metric: "preview_never_recorded",
+        target_datasource_uid: "metricspanel",
+      },
+      data: [
+        {
+          refId: "B",
+          datasourceUid: sourceUID,
+          relativeTimeRange: { from: 60, to: 5 },
+          model: { value: 233, sqlTable: true, requireAlert: true },
+        },
+        {
+          refId: "Q",
+          datasourceUid: "__expr__",
+          model: {
+            type: "sql",
+            expression: "SELECT host, value * 2 AS result FROM B",
+            format: "table",
+            opaque: true,
+          },
+        },
+      ],
+    };
+    await draftJSON.fill(JSON.stringify(sql));
+    await dialog
+      .getByRole("button", { name: "Preview alert queries", exact: true })
+      .click();
+    let previewRegion = dialog.getByRole("region", {
+      name: "Alert query preview",
+      exact: true,
+    });
+    await expect(previewRegion).toContainText("466");
+    await expect(previewRegion).toContainText("True");
+    expect(JSON.parse(await draftJSON.inputValue())).toEqual(sql);
+    const metrics = await (
+      await page.request.get(endpoint + "/api/v1/metrics")
+    ).json();
+    expect(JSON.stringify(metrics)).not.toContain("preview_never_recorded");
+    await draftJSON.fill(
+      JSON.stringify({
+        condition: "B",
+        data: [
+          {
+            refId: "B",
+            datasourceUid: sourceUID,
+            model: { fail: true, requireAlert: true },
+          },
+        ],
+      }),
+    );
+    await dialog
+      .getByRole("button", { name: "Preview alert queries", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "fixture query failed",
+    );
+    await draftJSON.fill(
+      JSON.stringify({
+        condition: "A",
+        data: [
+          {
+            refId: "A",
+            datasourceUid: "metricspanel",
+            relativeTimeRange: { from: 60, to: 0 },
+            model: { expr: "preview_missing_metric_233", instant: true },
+          },
+        ],
+      }),
+    );
+    await dialog
+      .getByRole("button", { name: "Preview alert queries", exact: true })
+      .click();
+    await expect(previewRegion).toContainText("No data");
+    await draftJSON.fill(
+      JSON.stringify({
+        condition: "A",
+        data: [
+          {
+            refId: "A",
+            datasourceUid: "metricspanel",
+            relativeTimeRange: { from: 1, to: 5 },
+            model: { expr: "vector(233)", instant: true },
+          },
+        ],
+      }),
+    );
+    let invalidPreviewRequests = 0;
+    const countInvalid = (request: any) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/api/v1/alerts/preview")
+      )
+        invalidPreviewRequests++;
+    };
+    page.on("request", countInvalid);
+    await dialog
+      .getByRole("button", { name: "Preview alert queries", exact: true })
+      .click();
+    await expect(
+      dialog
+        .getByRole("alert")
+        .filter({ hasText: "Alert query range must be 0 to 31 days" }),
+    ).toContainText("Alert query range must be 0 to 31 days");
+    expect(invalidPreviewRequests).toBe(0);
+    page.off("request", countInvalid);
+    await dialog
+      .getByRole("button", { name: "Close dialog", exact: true })
+      .click();
+    expect(await rules()).toEqual(snapshot);
+    expect(await history()).toEqual(hist);
+    expect(issues).toEqual([]);
+  } catch (error) {
+    console.log("Alert editor failure stage: " + stage);
+    console.log("Alert editor browser issues: " + JSON.stringify(issues));
+    if (!page.isClosed())
+      await page
+        .screenshot({ path: testInfo.outputPath("failure.png"), timeout: 5000 })
+        .catch(() => {});
+    throw error;
+  } finally {
+    const cleanup = async (route: string) => {
+      const response = await fetch(endpoint + route, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok && response.status !== 404)
+        throw new Error("cleanup HTTP " + response.status);
+    };
+    if (uid) await cleanup("/api/v1/alerts/rules/" + uid);
+    await cleanup("/api/datasources/uid/" + sourceUID);
+    await cleanup("/api/v1/plugins/metricspanel-sdk-datasource");
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-alert-editors-e2e-")
+    )
+      throw new Error(
+        "Refusing cleanup outside the alert editor test directory",
+      );
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("Panel query editors execute all expression operations, SDK callbacks and lossless Classic V1 V2 saves", async ({
   page,
   endpoint,
@@ -6566,6 +7078,7 @@ test("Grafana alert graphs execute compound conditions and retain graphs through
     await page
       .getByLabel("Query mode", { exact: true })
       .selectOption("grafana");
+    await page.getByText("Advanced alert graph JSON", { exact: true }).click();
     await page
       .getByLabel("Queries and condition (Grafana JSON)", { exact: true })
       .fill(JSON.stringify(graph, null, 2));

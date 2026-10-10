@@ -66,7 +66,7 @@ Usage: metricspanel <command> [flags]
   dashboards   list | save | export | delete
   annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
-  alerts       list | get | save | import-grafana | evaluate | history | delete | group-get | group-save | group-delete
+  alerts       list | get | save | import-grafana | preview | evaluate | history | delete | group-get | group-save | group-delete
   plugins      list | get | install | catalog | enable | disable | delete
                settings | configure (Grafana application settings)
   datasources  list | get | save | query | health | delete
@@ -121,6 +121,7 @@ func run(args []string) error {
 	dashboardRevision := f.Int64("revision", 0, "expected updated_at for an atomic native dashboard save")
 	alertFolder := f.String("folder-uid", "", "alert rule group folder UID")
 	alertGroup := f.String("group", "", "alert rule group name")
+	alertPreviewAt := f.Int64("at", 0, "alert preview timestamp: Unix milliseconds (0 uses server time)")
 	disableProvenance := f.Bool("disable-provenance", false, "allow editing Grafana-provisioned rules")
 	name := f.String("name", "", "collector name or annotation tag search")
 	targetURL := f.String("url", "", "exporter /metrics URL")
@@ -152,6 +153,9 @@ func run(args []string) error {
 	}
 	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || action != "save")) {
 		return errors.New("--revision must be positive and is only supported by dashboards save")
+	}
+	if *alertPreviewAt < 0 || *alertPreviewAt > 253402300799999 || (*alertPreviewAt != 0 && (command != "alerts" || action != "preview")) {
+		return errors.New("--at must be 0 to 253402300799999 and is only supported by alerts preview")
 	}
 	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision}
 	request := func(method, path string, payload any) error {
@@ -369,6 +373,8 @@ func run(args []string) error {
 		}
 	case "alerts":
 		switch action {
+		case "preview":
+			return previewAlertCLI(client, *file, *alertPreviewAt)
 		case "group-get", "group-save", "group-delete":
 			if *alertFolder == "" || *alertGroup == "" {
 				return errors.New("--folder-uid and --group are required")
@@ -441,7 +447,7 @@ func run(args []string) error {
 			}
 			return request(method, path, payload)
 		default:
-			return errors.New("alerts requires list, get, save, import-grafana, evaluate, history, delete, group-get, group-save or group-delete")
+			return errors.New("alerts requires list, get, save, import-grafana, preview, evaluate, history, delete, group-get, group-save or group-delete")
 		}
 	case "patterns":
 		switch action {
@@ -831,7 +837,8 @@ func schema() any {
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/patterns/{id}")
 	result["commands"] = append(result["commands"].([]string), "alerts list", "alerts get --id UID", "alerts save --file FILE|- [--id UID] (update requires version)", "alerts import-grafana --file FILE|- [--id UID]", "alerts evaluate --id UID", "alerts history [--id UID --limit 100]", "alerts delete --id UID")
 	routes["GET"] = append(routes["GET"], "/api/v1/alerts/rules", "/api/v1/alerts/rules/{uid}", "/api/v1/alerts/history", "/prometheus/api/v1/rules", "/prometheus/api/v1/alerts", "/api/v1/provisioning/alert-rules")
-	routes["POST"] = append(routes["POST"], "/api/v1/alerts/rules", "/api/v1/alerts/rules/{uid}/evaluate", "/api/v1/provisioning/alert-rules")
+	routes["POST"] = append(routes["POST"], "/api/v1/alerts/rules", "/api/v1/alerts/rules/{uid}/evaluate", "/api/v1/provisioning/alert-rules", "/api/v1/alerts/preview")
+	result["commands"] = append(result["commands"].([]string), "alerts preview --file FILE|- [--at UNIX_MS] (read-only graph or native rule; partial errors retain frames and exit 1)")
 	routes["PUT"] = append(routes["PUT"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
 	result["alerting"] = map[string]any{"conditions": []string{"presence (returned samples fire, including zero)", "nonzero (boolean expressions)"}, "states": []string{"Normal", "Pending", "Firing", "Recovering", "NoData", "Error"}, "durability": "SQLite WAL control-plane state, timers and last 100000 transitions survive restarts", "limits": map[string]int{"rules": 1000, "instances_per_query": 1000, "concurrent_evaluations": 4}, "notifications": "external notification delivery is not yet implemented"}
@@ -843,7 +850,8 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "alerts group-get --folder-uid UID --group NAME", "alerts group-save --folder-uid UID --group NAME --file FILE|- [--disable-provenance]", "alerts group-delete --folder-uid UID --group NAME")
 	result["alert_groups"] = map[string]any{"contract": "Grafana provisioning GET/PUT/DELETE; URL folder/name override payload; interval 5–86400 seconds; at most 1000 total rules", "replacement": "all rules replace atomically; omitted/null rules only update interval; explicit [] clears group; removed rules retain transition history and annotations", "state": "identical PUT and GET/PUT preserve versions and runtime; interval/order/provenance/move changes retain pending timers; evaluation changes reset state", "ordering": "array order survives restart; moving a UID normalizes its source group", "concurrency": "single-rule mutations serialized with group writes; every affected UID gate acquired together; any active affected evaluation returns HTTP 409 before writing", "provenance": "X-Disable-Provenance header or CLI --disable-provenance sets all rules editable; provenance is metadata and does not restrict native edits", "agent": "examples/alerts/grafana-group.json; use returned UIDs for idempotent reconciliation; group-delete returns JSON null for HTTP 204", "pending": []string{"folder and organization permission management", "App Platform rule APIs", "group provisioning file-format export"}}
-	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions", "SQL over backend frames"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese query mode and Grafana JSON editor; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"external notifications and Alertmanager", "complete visual query editors"}}
+	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions", "SQL over backend frames"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese visual graph, backend SDK QueryEditor with UnifiedAlerting context, six expression operations, per-query windows, reorder/delete, raw JSON and lossless opaque models; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"external notifications and Alertmanager", "remaining Grafana core datasource editors"}}
+	result["alert_preview"] = map[string]any{"api": "POST /api/v1/alerts/preview with grafana graph and optional at Unix milliseconds; 0 uses server time", "output": "per-RefID SDK frames/errors, condition_values with labels/value/missing/satisfied and optional condition_error; NaN/Inf use null value plus value_text", "capacity": "shares four evaluation slots with scheduler; queued/active requests cancel, maximum 20 seconds", "state": "no rule identity, persistence, history, timer advance, annotations, notifications or recording writes; recovery thresholds use fresh dimensions", "agent": "alerts preview --file FILE|- [--at UNIX_MS]; native grafana rule or provisioning graph; JSON frames retained and exit 1 on partial errors"}
 	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
 	result["commands"] = append(result["commands"].([]string), "plugins list", "plugins get --id ID", "plugins install --file PACKAGE.zip", "plugins catalog --id ID --plugin-version EXACT", "plugins enable --id ID", "plugins disable --id ID", "plugins delete --id PACKAGE_ID", "datasources list", "datasources get --id UID", "datasources save --file FILE|- [--id UID] (update requires version)", "datasources health --id UID", "datasources delete --id UID")
 	routes["GET"] = append(routes["GET"], "/api/v1/plugins", "/api/v1/plugins/{id}", "/api/plugins", "/api/plugins/{id}/settings", "/api/datasources", "/api/datasources/uid/{uid}", "/api/datasources/uid/{uid}/health", "/public/plugins/{id}/{asset}")

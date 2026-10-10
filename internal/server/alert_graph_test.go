@@ -3,13 +3,16 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
@@ -58,6 +61,45 @@ func TestAlertGraphRealSDKHeadersPersistenceAndNativeEdits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "grafana", view.Execution)
 	assert.Empty(t, view.Expr)
+	for range 2 {
+		payload, err := json.Marshal(map[string]any{"grafana": view.Grafana, "at": int64(1600000)})
+		require.NoError(t, err)
+		w := call(h, "POST", "/api/v1/alerts/preview", string(payload), token, "")
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var preview alerting.GraphPreview
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &preview))
+		require.Empty(t, preview.Error)
+		require.Len(t, preview.Values, 1)
+		assert.Equal(t, 1.0, *preview.Values[0].Value)
+		assert.True(t, *preview.Values[0].Satisfied)
+		assert.Contains(t, preview.Results, "B")
+		unchanged, err := s.AlertRule(ctx, view.UID)
+		require.NoError(t, err)
+		assert.Equal(t, view, unchanged)
+	}
+	// HTTP cancellation reaches the real SDK gRPC request and frees capacity.
+	delayCtx, stopPreview := context.WithCancel(ctx)
+	delayRequest := httptest.NewRequest("POST", "/api/v1/alerts/preview", strings.NewReader(`{"grafana":{"condition":"B","data":[{"refId":"B","datasourceUid":"alert-sdk","model":{"value":233,"requireAlert":true,"annotation":true,"annotationDelayMS":5000}}]}}`)).WithContext(delayCtx)
+	delayRequest.Header.Set("Authorization", "Bearer "+token)
+	delayRequest.Header.Set("Content-Type", "application/json")
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(httptest.NewRecorder(), delayRequest); close(done) }()
+	t.Cleanup(stopPreview)
+	stats := func() map[string]int64 {
+		w := call(h, "GET", "/api/datasources/uid/alert-sdk/resources/annotation-stats", "", token, "")
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var values map[string]int64
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &values))
+		return values
+	}
+	require.Eventually(t, func() bool { return stats()["active"] == 1 }, 5*time.Second, 10*time.Millisecond)
+	stopPreview()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("preview HTTP handler did not cancel")
+	}
+	require.Eventually(t, func() bool { v := stats(); return v["active"] == 0 && v["cancelled"] == 1 }, 5*time.Second, 10*time.Millisecond)
 	at := time.Now().Truncate(time.Millisecond)
 	first, err := app.Alerts.Evaluate(ctx, view.UID, at)
 	require.NoError(t, err)

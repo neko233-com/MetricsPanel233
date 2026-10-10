@@ -322,7 +322,7 @@ SQL 面板支持固定偏移与前一时段比较。两次后端请求分别使�
 
 导入模板的「面板查询」入口支持可视化编辑 Math、Reduce（严格／丢弃／替换非数值）、Resample、Threshold（反转与自定义恢复阈值）、有序 Classic conditions 和 SQL（table／alerting 格式）。已安装数据源使用公开 SDK `QueryEditor`，接收插件上下文、时间窗口、查询列表和按 RefID 的响应数据；修改、运行、添加查询回调均连接实际查询图。可调整顺序、隐藏显示、参与比较，并用高级 JSON 保留插件扩展字段。预览支持实时流，停止、修改查询和关闭编辑器会取消订阅。
 
-保存同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板和未知字段。原生 PUT 可携带 `If-Match: updated_at`；SQLite 控制库原子检查版本，过期或已删除对象返回 409，不会覆盖新修改。Agent 使用 `dashboards export --id ID --format native` 获取版本，再执行 `dashboards save --id ID --file FILE --revision UPDATED_AT`。省略版本的旧调用仍可用；版本单调递增。完整告警图可视化编辑器与其余 Grafana 核心数据源编辑器仍待补齐。Testify、真实 SDK 浏览器用例、中文／英文手机布局和两轮 Docker 测试验证执行、保存与重启行为。
+保存同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板和未知字段。原生 PUT 可携带 `If-Match: updated_at`；SQLite 控制库原子检查版本，过期或已删除对象返回 409，不会覆盖新修改。Agent 使用 `dashboards export --id ID --format native` 获取版本，再执行 `dashboards save --id ID --file FILE --revision UPDATED_AT`。省略版本的旧调用仍可用；版本单调递增。其余 Grafana 核心数据源编辑器仍待补齐。Testify、真实 SDK 浏览器用例、中文／英文手机布局和两轮 Docker 测试验证执行、保存与重启行为。
 
 The imported-template **Panel queries** workspace edits all six supported expression operations, including recovery thresholds and ordered classic conditions. Installed datasource SDK editors receive real context, range, query list and per-reference results; change/run/add callbacks execute the actual query graph. Live previews are cancelled on stop, edits and close. Saves update both runtime queries and the original Classic/V1/V2 resource while retaining opaque envelopes and other panels. Native saves support atomic `If-Match: updated_at`; agents can use `dashboards save --revision UPDATED_AT` with a native export. Stale or deleted dashboards return 409. Full alert-graph visual editing and remaining core datasource editors are still pending.
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
@@ -441,6 +441,8 @@ Docker 测试追加 4 个并发写入端：SQLite 10 万样本、ClickHouse 100 
 
 ## 持久化告警与记录规则
 
+告警查询图编辑器的「预览告警查询」通过 `/api/v1/alerts/preview` 返回真实 SDK 查询帧、标签、条件真假和错误。预览使用独立的新维度判断恢复阈值，不保存规则、不推进计时或写入记录样本；与调度器共享四个执行槽和 20 秒限时，停止、修改查询或关闭窗口会取消请求。Agent 使用 `metricspanel alerts preview --file examples/alerts/graph-memory.json --at 1791640000000`；省略 `--at` 使用当前时间。文件可为原生规则或 provisioning 查询图；部分错误仍输出 JSON 帧，退出码为 1。
+
 网页「告警」支持创建、编辑、暂停、手动执行和查看每个标签实例的状态 / 历史。
 后台每条规则独立调度，最多四条并发查询；规则、等待触发 / 恢复计时和最近 100000 条状态变化写入 SQLite WAL 控制数据库。
 无论指标使用 SQLite 还是 ClickHouse，重启应用后计时继续。修改规则会重置实例，并记录恢复事件；原生更新需要携带 GET 返回的 `version`。
@@ -467,7 +469,7 @@ Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET / PUT 
 
 条件须返回按标签区分的单数值帧；null 应用对应实例的无数据策略，数据源整体 NoData 优先于健康条件。Grafana 的非零 NaN / Inf 仍触发告警，数值以 `value_text` 保存，避免 JSON 编码失败；记录规则拒绝非有限数值，避免部分写入。经典条件匹配详情持久化在 `runtime.instances[].matches`，每帧最多 1 MiB。计时、状态、匹配详情和原始图在重启后保留。
 
-网页告警编辑器提供中文 / 英文查询模式与 Grafana JSON 编辑。`metricspanel alerts save --file examples/alerts/graph-memory.json` 可直接创建原生图规则；`alerts import-grafana` 接收标准 provisioning JSON。CLI 可直接读取并更新含 `runtime` 的 GET 结果，必须保留当前版本。切换为原生 PromQL 会清除旧图；已有未设置 `execution=grafana` 的规则继续原来的 PromQL 执行路径。
+网页告警编辑器提供中文 / 英文可视化查询图：数据源 SDK QueryEditor、全部六种表达式、条件选择、各查询时间范围、增删排序，以及高级 JSON；插件模型、未知字段和规则元数据在编辑后保留。`metricspanel alerts save --file examples/alerts/graph-memory.json` 可直接创建原生图规则；`alerts import-grafana` 接收标准 provisioning JSON。CLI 可直接读取并更新含 `runtime` 的 GET 结果，必须保留当前版本。切换为原生 PromQL 会清除旧图；已有未设置 `execution=grafana` 的规则继续原来的 PromQL 执行路径。
 
 规则组 PUT 在一个 SQLite 控制面事务内替换全部规则、调度、状态、历史和注解；省略或传入 null 的 `rules` 仅更新间隔，显式 `rules: []` 清空规则组。URL 中的文件夹 / 组名覆盖请求体。完全相同的 PUT 或 GET / PUT 往返不增加版本、不重置状态；只调整间隔、顺序、来源标记或移动规则时保留计时。查询或判断语义变化才重置状态。请求数组顺序持久化，移动 UID 后整理来源组的顺序。涉及正在评估的规则时整组返回 409，避免记录规则在修改期间写入过期结果。规则组间隔为 5–86400 秒，总规则数最多 1000。
 
@@ -490,7 +492,7 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
 
-未知数据源、非法节点和循环依赖在保存前拒绝；外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+未知数据源、非法节点和循环依赖在保存前拒绝；外部通知 / Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

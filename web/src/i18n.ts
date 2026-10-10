@@ -665,6 +665,35 @@ Object.assign(zh, {
     "每个查询需要 1 至 100 字符的引用",
   "Query references must be unique": "查询引用不能重复",
   "Panel no longer exists": "面板已不存在",
+  "Advanced alert graph JSON": "高级告警查询图 JSON",
+  "Data query mode": "数据查询模式",
+  "Update SQL table names after renaming input queries.":
+    "重命名输入查询后，请更新 SQL 中对应的表名。",
+  "Recording input": "记录输入",
+  "Condition query": "条件查询",
+  "Choose a condition query": "请选择条件查询",
+  "Alert query list": "告警查询列表",
+  "Lookback seconds": "回溯秒数",
+  "End offset seconds": "结束偏移秒数",
+  "Query options": "查询选项",
+  "Query interval (ms)": "查询间隔（毫秒）",
+  "Maximum data points": "最大数据点数",
+  "Preview alert queries": "预览告警查询",
+  "Preview runs queries without saving, advancing alert timers or writing recordings.":
+    "预览执行查询，不保存规则、不推进告警计时，也不写入记录指标。",
+  "Alert query preview": "告警查询预览",
+  "Condition result": "条件结果",
+  True: "真",
+  False: "假",
+  "Alert graph needs 1 to 32 queries": "告警查询图需要 1 至 32 个查询",
+  "Alert query references must be unique and contain 1 to 100 bytes":
+    "告警查询引用必须唯一，并占用 1 至 100 字节",
+  "Each alert query needs a datasource and model":
+    "每个告警查询需要数据源和模型",
+  "Alert query range must be 0 to 31 days with from greater than or equal to to":
+    "查询范围应在 0 至 31 天内，回溯时间不能小于结束偏移",
+  "Choose an existing query as the alert condition":
+    "请选择已有查询作为告警条件",
   "Cannot identify a unique source panel": "无法确定唯一的原始面板",
 });
 export function t(text: string): string {

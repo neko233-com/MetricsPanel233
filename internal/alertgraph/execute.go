@@ -31,6 +31,16 @@ func Execute(ctx context.Context, p *Plan, at time.Time, source expressions.Sour
 }
 
 func ExecuteWithLoaded(ctx context.Context, p *Plan, at time.Time, source expressions.SourceQuery, loaded []string) ([]Value, error) {
+	response, err := QueryFrames(ctx, p, at, source, loaded)
+	if err != nil {
+		return nil, err
+	}
+	return EvaluateResponse(ctx, p, response)
+}
+
+// QueryFrames executes each graph node once without changing alert state or writing recordings.
+// A nil loaded list evaluates recovery thresholds as fresh dimensions.
+func QueryFrames(ctx context.Context, p *Plan, at time.Time, source expressions.SourceQuery, loaded []string) (*backend.QueryDataResponse, error) {
 	if source == nil {
 		source = func(context.Context, string, []backend.DataQuery) (backend.Responses, string, error) {
 			return nil, "", errors.New("alert backend datasource is not configured")
@@ -49,7 +59,11 @@ func ExecuteWithLoaded(ctx context.Context, p *Plan, at time.Time, source expres
 			}
 		}
 	}
-	response := expressions.Execute(ctx, groups, source)
+	return expressions.Execute(ctx, groups, source), nil
+}
+
+// EvaluateResponse applies the scheduled evaluator's condition contract to existing frames.
+func EvaluateResponse(ctx context.Context, p *Plan, response *backend.QueryDataResponse) ([]Value, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

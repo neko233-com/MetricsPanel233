@@ -9,7 +9,12 @@ import {
 
 export type TimeSelection =
   | string
-  | { from: string | number; to: string | number; timezone?: string };
+  | {
+      from: string | number;
+      to: string | number;
+      timezone?: string;
+      allowInstant?: boolean;
+    };
 export const MAX_RANGE_MS = 31 * 86400000;
 export function rawSelection(value: TimeSelection) {
   return typeof value === "string"
@@ -18,6 +23,7 @@ export function rawSelection(value: TimeSelection) {
 }
 export function resolveTimeRange(value: TimeSelection, now = Date.now()) {
   const raw = rawSelection(value);
+  const allowInstant = typeof value !== "string" && value.allowInstant === true;
   const timezone = raw.timezone === "UTC" ? "utc" : raw.timezone;
   if (timezone !== "browser" && timezone !== "utc") {
     try {
@@ -47,7 +53,12 @@ export function resolveTimeRange(value: TimeSelection, now = Date.now()) {
     throw new Error("Invalid time range");
   const start = from.valueOf(),
     end = to.valueOf();
-  if (start < 0 || end <= start || end - start > MAX_RANGE_MS)
+  if (
+    start < 0 ||
+    end < start ||
+    (end === start && !allowInstant) ||
+    end - start > MAX_RANGE_MS
+  )
     throw new Error("Time range must be positive and at most 31 days");
   const sdk: TimeRange = {
     from,
@@ -313,11 +324,9 @@ export function refreshFromDashboard(grafana: unknown): string {
 export function refreshOptionsFromDashboard(grafana: unknown): string[] {
   const spec = dashboardSpec(grafana);
   const settings = spec?.timeSettings as
-    | { autoRefreshIntervals?: unknown }
-    | undefined;
+    { autoRefreshIntervals?: unknown } | undefined;
   const timepicker = spec?.timepicker as
-    | { refresh_intervals?: unknown }
-    | undefined;
+    { refresh_intervals?: unknown } | undefined;
   const values =
     settings?.autoRefreshIntervals ?? timepicker?.refresh_intervals;
   return Array.isArray(values)
