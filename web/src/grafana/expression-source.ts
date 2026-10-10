@@ -13,11 +13,27 @@ import { defer, switchMap, map } from "rxjs";
 import { grafanaMeta } from "./grafana-meta";
 import { expressionRef, isExpressionRef } from "./expression-ref";
 import { restoreSQLDisplayNames } from "./sql-frames";
+import { ExpressionQueryEditor } from "./ExpressionQueryEditor";
 
 export type ExpressionQuery = DataQuery & {
+  [key: string]: any;
   type?: string;
   expression?: string;
   window?: string;
+  reducer?: string;
+  downsampler?: string;
+  upsampler?: string;
+  format?: string;
+  invert?: boolean;
+  settings?: { [key: string]: any; mode?: string; replaceWithValue?: number };
+  conditions?: Array<{
+    [key: string]: any;
+    evaluator?: { [key: string]: any; type?: string; params?: number[] };
+    unloadEvaluator?: { [key: string]: any; type?: string; params?: number[] };
+    query?: { [key: string]: any; params?: string[] };
+    reducer?: { [key: string]: any; type?: string };
+    operator?: { [key: string]: any; type?: string };
+  }>;
 };
 export const expressionSettings: DataSourceInstanceSettings = {
   id: -100,
@@ -38,6 +54,7 @@ export const expressionSettings: DataSourceInstanceSettings = {
 export class ExpressionSource extends DataSourceWithBackend<ExpressionQuery> {
   constructor(public instanceSettings: DataSourceInstanceSettings) {
     super(instanceSettings);
+    this.components = { QueryEditor: ExpressionQueryEditor };
   }
   getDefaultQuery() {
     return { type: "math", expression: "", datasource: expressionRef };

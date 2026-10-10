@@ -31,7 +31,7 @@ const plugin=new data.AppPlugin().setRootPage(Root).addConfigPage({id:'configura
 
 // This external plugin intentionally uses only the public Grafana SDK imports.
 // It exercises BackendSrv.chunked, including schema-once DataFrame appends.
-const datasourceModule = `System.register(["@grafana/data","@grafana/runtime","rxjs"],function(_export){let data,runtime,rx;return{setters:[m=>data=m,m=>runtime=m,m=>rx=m],execute:function(){
+const datasourceModule = `System.register(["@grafana/data","@grafana/runtime","rxjs","react"],function(_export){let data,runtime,rx,React;return{setters:[m=>data=m,m=>runtime=m,m=>rx=m,m=>React=m],execute:function(){
 class Fixture extends runtime.DataSourceWithBackend {
 constructor(settings){super(settings);this.uid=settings.uid}
 query(request){
@@ -52,7 +52,12 @@ const listener=runtime.getBackendSrv().chunked({url:'/apis/'+this.type+'.datasou
 return()=>listener.unsubscribe()
 })
 }}
-_export('plugin',new data.DataSourcePlugin(Fixture))
+function QueryEditor(props){const settings=data.usePluginContext().instanceSettings;return React.createElement('div',{'aria-label':'SDK metrics query editor'},
+React.createElement('p',null,'SDK editor context: '+settings.uid+' / '+props.app+' / '+props.query.refId+' / '+(props.queries?.length||0)),
+React.createElement('label',null,'SDK numeric value',React.createElement('input',{type:'number',value:props.query.value??233,onChange:e=>props.onChange({...props.query,value:Number(e.target.value)})})),
+React.createElement('button',{type:'button',onClick:props.onRunQuery},'Run SDK metric query'),
+React.createElement('button',{type:'button',disabled:!props.onAddQuery,onClick:()=>props.onAddQuery?.({...props.query,value:2})},'Add SDK metric query'))}
+_export('plugin',new data.DataSourcePlugin(Fixture).setQueryEditor(QueryEditor))
 }}})`
 
 var liveStarted, liveActive, liveCancelled, staticQueries atomic.Int64

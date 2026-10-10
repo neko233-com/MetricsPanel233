@@ -118,6 +118,7 @@ func run(args []string) error {
 	file := f.String("file", "-", "JSON file; - reads stdin")
 	format := f.String("format", "native", "dashboard export format: native or grafana (original source)")
 	id := f.String("id", "", "resource ID")
+	dashboardRevision := f.Int64("revision", 0, "expected updated_at for an atomic native dashboard save")
 	alertFolder := f.String("folder-uid", "", "alert rule group folder UID")
 	alertGroup := f.String("group", "", "alert rule group name")
 	disableProvenance := f.Bool("disable-provenance", false, "allow editing Grafana-provisioned rules")
@@ -149,7 +150,10 @@ func run(args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
 	}
-	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance}
+	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || action != "save")) {
+		return errors.New("--revision must be positive and is only supported by dashboards save")
+	}
+	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision}
 	request := func(method, path string, payload any) error {
 		result, err := client.call(method, path, payload)
 		if err != nil {
@@ -549,6 +553,9 @@ func run(args []string) error {
 				return err
 			}
 			if raw["title"] != nil || raw["dashboard"] != nil || raw["spec"] != nil {
+				if *dashboardRevision != 0 {
+					return errors.New("--revision requires a native dashboard export with an ID")
+				}
 				return request("POST", "/api/v1/import/grafana", json.RawMessage(data))
 			}
 			var d model.Dashboard
@@ -563,6 +570,9 @@ func run(args []string) error {
 			}
 			if d.ID != "" {
 				return request("PUT", "/api/v1/dashboards/"+url.PathEscape(d.ID), d)
+			}
+			if *dashboardRevision != 0 {
+				return errors.New("--revision requires a dashboard ID")
 			}
 			return request("POST", "/api/v1/dashboards", d)
 		case "export":
@@ -617,6 +627,7 @@ func readFile(path string) ([]byte, error) {
 type apiClient struct {
 	endpoint, token   string
 	disableProvenance bool
+	dashboardRevision int64
 }
 
 func (c apiClient) uploadPlugin(data []byte) (json.RawMessage, error) {
@@ -669,6 +680,9 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 	}
 	if c.disableProvenance {
 		req.Header.Set("X-Disable-Provenance", "true")
+	}
+	if c.dashboardRevision > 0 && method == "PUT" && strings.HasPrefix(path, "/api/v1/dashboards/") {
+		req.Header.Set("If-Match", strconv.FormatInt(c.dashboardRevision, 10))
 	}
 	timeout := 20 * time.Second
 	if path == "/api/v1/plugins/catalog" {
@@ -869,8 +883,10 @@ func schema() any {
 		"agent":              "datasources query --id __expr__ --file FILE|- [--stream]; JSON and NDJSON preserve results and exit nonzero for partial errors",
 		"storage":            "no input mutation or ingestion; official SDK frames retain null/NaN/Inf",
 		"limits":             map[string]int{"queries": 32, "joined_items": 10000, "working_points": 1000000, "math_tokens": 2048, "parse_steps": 1024, "syntax_depth": 64, "work_steps": 2000000, "seconds": 20, "response_MiB": 32},
-		"pending":            []string{"full expression query editor", "remaining Grafana core services"},
+		"editor":             "SDK QueryEditor component with math, reduce modes, resample, threshold/recovery/invert, ordered classic conditions and SQL formats; English/Chinese panel query workspace",
+		"pending":            []string{"remaining Grafana core services"},
 	}
+	result["dashboard_queries"] = map[string]any{"editor": "Panel queries on imported templates; installed SDK QueryEditor, onChange/onRunQuery/onAddQuery, shared plugin context, range and per-RefID response data", "save": "classic/V1/V2 runtime queries and original resource update together; opaque query envelopes and untouched panels retained", "preview": "real query graph and Live streams; explicit stop, query edits and dialog close cancel subscriptions", "concurrency": "native PUT /api/v1/dashboards/{id} accepts If-Match=updated_at; atomic stale/deleted conflict HTTP 409; monotonically increasing revisions", "agent": "dashboards export --id ID --format native; dashboards save --id ID --file FILE --revision UPDATED_AT", "limit": 32}
 	result["sql_expressions"] = map[string]any{"engine": "Grafana 13.2.3 embedded Go MySQL engine; isolated read-only tables", "model": "type=sql, expression=SELECT query, optional format=alerting", "input": "backend RefIDs are tables; numeric/time-series wide/multi frames become full-long __value__/__metric_name__/optional __display_name__ and label columns; ordinary tables retain all primitive/JSON columns", "query": "JOIN, CTE, subqueries, windows and the pinned Grafana function allowlist; session variables, writes and file operations rejected", "graph": "one terminal SQL expression; only backend queries as inputs; expressions cannot consume SQL results", "alerting": "one numeric column and unique string-label combinations; NULL string labels omitted; alert/record evaluation forces transient alerting format without altering saved models", "limits": map[string]int{"query_bytes": 10000, "input_cells": 100000, "output_cells": 100000, "seconds": 10}, "overflow": "input fails; output truncates at a complete row with a warning notice", "agent": "datasources query --id __expr__ --file examples/queries/sql-metrics.json [--stream]; alerts save --file examples/alerts/graph-sql-memory.json"}
 	result["sql_expressions"].(map[string]any)["comparisons"] = "separate current/historical requests retain original RefIDs and SQL text; only returned frames receive -compare and timeCompare metadata; native plots align timestamps for display"
 	result["sql_expressions"].(map[string]any)["frontend"] = "SQL uses actual dashboard scoped variables, including variables named after input RefIDs; uniform __display_name__ values restore __value__ field aliases without modifying cached inputs; mixed aliases remain per-row"

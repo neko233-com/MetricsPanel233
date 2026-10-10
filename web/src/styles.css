@@ -2187,6 +2187,21 @@ dialog::backdrop {
   height: 28px;
   padding: 3px;
 }
+.query-editor-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.query-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+.query-actions .checkbox-label { margin: 0; }
+.expression-condition { min-width: 0; padding: 12px; margin: 16px 0; border: 1px solid var(--border); border-radius: 6px; }
+.expression-condition legend { padding: 0 5px; color: var(--muted); }
+.expression-evaluator { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: 12px; }
+.expression-query-editor textarea { width: 100%; }
+.query-preview-data { overflow: auto; max-height: 260px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.query-result-frame { margin: 12px 0; min-width: 0; }
+.query-result-frame h4 { margin: 8px 0; font-size: 13px; color: var(--muted); }
+.query-result-frame .table-scroll { max-height: 240px; overflow: auto; }
+@media (max-width: 600px) {
+  .expression-evaluator { grid-template-columns: 1fr; gap: 0; }
+  .panel-query-editor .form-row { flex-direction: column; gap: 0; }
+}
 @media (max-width: 700px) {
   .panel-time-info {
     padding: 0 13px;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/neko233-com/MetricsPanel233/internal/model"
@@ -108,6 +109,17 @@ func (s *Store) Dashboards(ctx context.Context) ([]model.Dashboard, error) {
 	return out, rows.Err()
 }
 func (s *Store) SaveDashboard(ctx context.Context, d model.Dashboard) (model.Dashboard, error) {
+	return s.saveDashboard(ctx, d, nil)
+}
+
+var ErrDashboardConflict = errors.New("Dashboard changed. Close and reopen this editor.")
+
+// SaveDashboardAtRevision atomically refuses stale edits, including deleted dashboards.
+func (s *Store) SaveDashboardAtRevision(ctx context.Context, d model.Dashboard, revision int64) (model.Dashboard, error) {
+	return s.saveDashboard(ctx, d, &revision)
+}
+
+func (s *Store) saveDashboard(ctx context.Context, d model.Dashboard, revision *int64) (model.Dashboard, error) {
 	if err := d.Validate(); err != nil {
 		return d, err
 	}
@@ -124,7 +136,14 @@ func (s *Store) SaveDashboard(ctx context.Context, d model.Dashboard) (model.Das
 	if err != nil {
 		return d, err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO dashboards(id,name,panels,updated_at,extras) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,panels=excluded.panels,updated_at=excluded.updated_at,extras=excluded.extras`, d.ID, d.Name, string(panels), d.UpdatedAt, string(extras))
+	if revision != nil {
+		err = s.DB.QueryRowContext(ctx, `UPDATE dashboards SET name=?,panels=?,updated_at=MAX(?,updated_at+1),extras=? WHERE id=? AND updated_at=? RETURNING updated_at`, d.Name, string(panels), d.UpdatedAt, string(extras), d.ID, *revision).Scan(&d.UpdatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return d, ErrDashboardConflict
+		}
+	} else {
+		err = s.DB.QueryRowContext(ctx, `INSERT INTO dashboards(id,name,panels,updated_at,extras) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,panels=excluded.panels,updated_at=MAX(excluded.updated_at,dashboards.updated_at+1),extras=excluded.extras RETURNING updated_at`, d.ID, d.Name, string(panels), d.UpdatedAt, string(extras)).Scan(&d.UpdatedAt)
+	}
 	return d, err
 }
 func (s *Store) DeleteDashboard(ctx context.Context, id string) error {

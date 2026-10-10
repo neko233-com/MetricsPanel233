@@ -394,8 +394,27 @@ func (s *Server) saveDashboard(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	v, err := s.Store.SaveDashboard(r.Context(), d)
+	var v model.Dashboard
+	var err error
+	if match := r.Header.Get("If-Match"); match != "" {
+		text := strings.TrimSpace(match)
+		if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
+			text = text[1 : len(text)-1]
+		}
+		revision, parseErr := strconv.ParseInt(text, 10, 64)
+		if parseErr != nil || revision <= 0 {
+			fail(w, 400, errors.New("If-Match must contain a positive dashboard revision"))
+			return
+		}
+		v, err = s.Store.SaveDashboardAtRevision(r.Context(), d, revision)
+	} else {
+		v, err = s.Store.SaveDashboard(r.Context(), d)
+	}
 	if err != nil {
+		if errors.Is(err, store.ErrDashboardConflict) {
+			fail(w, 409, err)
+			return
+		}
 		fail(w, 500, err)
 		return
 	}

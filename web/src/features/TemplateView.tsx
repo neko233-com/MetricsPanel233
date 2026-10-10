@@ -7,7 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, RefreshCw, Pencil } from "lucide-react";
 import {
   download,
   message,
@@ -33,6 +33,11 @@ const PanelExtensionActions = lazy(() =>
   })),
 );
 const GrafanaPanel = lazy(() => import("../grafana/GrafanaPanel"));
+const PanelQueriesEditor = lazy(() =>
+  import("../components/PanelQueriesEditor").then((module) => ({
+    default: module.PanelQueriesEditor,
+  })),
+);
 function selectedVariables(
   variables: Dashboard["variables"],
   params: URLSearchParams,
@@ -175,6 +180,7 @@ export function TemplateView({
   reload: () => Promise<void>;
 }) {
   const variables = dashboard.variables || [];
+  const [editingQueries, setEditingQueries] = useState(false);
   const [values, setValues] = useState<VariableValues>(() =>
     selectedVariables(variables, new URLSearchParams(location.search)),
   );
@@ -281,6 +287,10 @@ export function TemplateView({
           <p>{t("Grafana template")} · PromQL</p>
         </div>
         <div className="toolbar">
+          <button onClick={() => setEditingQueries(true)}>
+            <Pencil size={17} />
+            {t("Panel queries")}
+          </button>
           <AnnotationQueriesButton
             dashboard={dashboard}
             values={effective}
@@ -392,6 +402,17 @@ export function TemplateView({
           ))}
         </Suspense>
       </div>
+      {editingQueries ? (
+        <Suspense fallback={<p role="status">{t("Loading…")}</p>}>
+          <PanelQueriesEditor
+            dashboard={dashboard}
+            values={effective}
+            range={range}
+            reload={reload}
+            onClose={() => setEditingQueries(false)}
+          />
+        </Suspense>
+      ) : null}
     </>
   );
 }

@@ -87,6 +87,587 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Panel query editors execute all expression operations, SDK callbacks and lossless Classic V1 V2 saves", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-query-editors-e2e-"),
+  );
+  const run = promisify(execFile),
+    fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    );
+  const ids: string[] = [],
+    issues: string[] = [],
+    writes: any[] = [];
+  let expectedConflictURL = "";
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (
+      entry.type() === "error" &&
+      entry.text() ===
+        "Failed to load resource: the server responded with a status of 409 (Conflict)" &&
+      entry.location().url === expectedConflictURL
+    )
+      return;
+    if (["warning", "error"].includes(entry.type()))
+      issues.push(entry.text() + " / " + entry.location().url);
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      new URL(request.url()).pathname.startsWith("/api/v1/dashboards/")
+    )
+      writes.push({
+        revision: request.headers()["if-match"],
+        body: request.postDataJSON(),
+      });
+  });
+  const sourceRef = {
+      uid: "query-editor-sdk",
+      type: "metricspanel-sdk-datasource",
+    },
+    expressionRef = { uid: "__expr__", type: "__expr__" };
+  const targets = [
+    {
+      refId: "A",
+      datasource: sourceRef,
+      value: 233,
+      hide: true,
+      opaque: { input: "keep" },
+    },
+    {
+      refId: "B",
+      datasource: expressionRef,
+      type: "math",
+      expression: "$A * 2",
+      opaque: { expression: "keep" },
+    },
+  ];
+  const end = Math.floor(Date.now() / 1000) * 1000;
+  const classic: any = {
+    uid: "query-editor-classic",
+    title: "Query editor",
+    refresh: "",
+    time: { from: String(end - 20000), to: String(end) },
+    opaque: { template: true },
+    panels: [
+      {
+        id: 7,
+        title: "Editable result",
+        type: "table",
+        gridPos: { x: 0, y: 0, w: 12, h: 10 },
+        targets,
+        opaque: { panel: "keep" },
+        fieldConfig: { defaults: {}, overrides: [] },
+      },
+      {
+        id: 8,
+        title: "Stable sibling",
+        type: "stat",
+        gridPos: { x: 12, y: 0, w: 12, h: 10 },
+        targets: [{ refId: "Z", expr: "vector(77)", instant: true }],
+        opaque: "unchanged",
+      },
+      {
+        id: 9,
+        title: "Streaming preview",
+        type: "table",
+        gridPos: { x: 0, y: 80, w: 12, h: 8 },
+        targets: [{ refId: "S", datasource: sourceRef, directLive: true }],
+      },
+    ],
+  };
+  const getDashboard = async (uid: string) => {
+    const items = await (
+      await page.request.get(endpoint + "/api/v1/dashboards")
+    ).json();
+    return items.find(
+      (item: any) =>
+        (item.grafana?.uid ||
+          item.grafana?.metadata?.name ||
+          item.grafana?.spec?.uid) === uid,
+    );
+  };
+  const open = async (source: any, uid: string) => {
+    const result = await page.request.post(
+      endpoint + "/api/v1/import/grafana",
+      { data: source },
+    );
+    expect(result.ok(), await result.text()).toBeTruthy();
+    const saved = await result.json();
+    ids.push(saved.dashboard.id);
+    await page.goto(endpoint + "/d/" + uid + "/queries");
+    await expect(
+      page.getByRole("heading", { name: "Query editor", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Panel queries", exact: true })
+      .click();
+    return page.getByRole("dialog", { name: "Panel queries", exact: true });
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    const archive = path.join(temp, "sdk.zip");
+    await run(fixture, ["--package", archive], { windowsHide: true });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const source = await page.request.post(endpoint + "/api/datasources", {
+      data: {
+        uid: sourceRef.uid,
+        name: "Query editor SDK",
+        type: sourceRef.type,
+        secureJsonData: { apiKey: "test-secret-233" },
+      },
+    });
+    expect(source.ok(), await source.text()).toBeTruthy();
+    let dialog = await open(classic, classic.uid);
+    const choose = async (ref: string) =>
+      dialog
+        .getByRole("navigation", { name: "Panel query list" })
+        .getByRole("button", { name: new RegExp("^" + ref) })
+        .click();
+    const preview = async (expected: number) => {
+      await dialog
+        .getByRole("button", { name: "Run query", exact: true })
+        .click();
+      await expect
+        .poll(async () => {
+          const text = await dialog
+            .locator(".query-preview-data")
+            .textContent();
+          if (!text) return false;
+          return JSON.parse(text).some((frame: any) =>
+            frame.fields.some((field: any) => field.values.includes(expected)),
+          );
+        })
+        .toBeTruthy();
+      await expect(dialog.getByRole("alert")).toHaveCount(0);
+      await expect(
+        dialog.getByRole("button", { name: "Run query", exact: true }),
+      ).toBeVisible();
+      await expect(dialog.locator(".query-result-frame")).toContainText(
+        String(expected),
+      );
+    };
+    await expect(
+      dialog.getByText(
+        "SDK editor context: query-editor-sdk / panel-editor / A / 2",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await dialog.getByLabel("SDK numeric value", { exact: true }).fill("300");
+    await dialog.getByRole("button", { name: "Run SDK metric query" }).click();
+    await expect(dialog.locator(".query-preview-data")).toContainText("600");
+    await dialog.getByRole("button", { name: "Add SDK metric query" }).click();
+    await expect(dialog.getByLabel("Query reference")).toHaveValue("C");
+    await expect(dialog.getByLabel("SDK numeric value")).toHaveValue("2");
+    await dialog.getByRole("button", { name: "Remove query" }).click();
+    await choose("B");
+    await expect(dialog.getByLabel("Math expression")).toHaveValue("$A * 2");
+    await preview(600);
+    await dialog
+      .getByLabel("Operation", { exact: true })
+      .selectOption("reduce");
+    await dialog.getByLabel("Mode", { exact: true }).selectOption("replaceNN");
+    await dialog.getByLabel("Replacement value", { exact: true }).fill("7");
+    await preview(300);
+    await dialog
+      .getByLabel("Operation", { exact: true })
+      .selectOption("resample");
+    await dialog.getByLabel("Resample interval", { exact: true }).fill("10s");
+    await dialog.getByLabel("Downsample", { exact: true }).selectOption("last");
+    await dialog
+      .getByLabel("Upsample", { exact: true })
+      .selectOption("backfilling");
+    await preview(300);
+    await dialog
+      .getByLabel("Operation", { exact: true })
+      .selectOption("threshold");
+    await dialog
+      .getByLabel("Threshold comparison Value", { exact: true })
+      .fill("200");
+    await dialog
+      .getByLabel("Custom recovery threshold", { exact: true })
+      .check();
+    await dialog
+      .getByLabel("Recovery comparison Value", { exact: true })
+      .fill("100");
+    await preview(1);
+    await dialog
+      .getByLabel("Custom recovery threshold", { exact: true })
+      .uncheck();
+    await dialog.getByLabel("Invert result", { exact: true }).check();
+    await preview(0);
+    await dialog
+      .getByLabel("Operation", { exact: true })
+      .selectOption("classic_conditions");
+    await dialog
+      .getByLabel("Condition comparison Value", { exact: true })
+      .fill("200");
+    await preview(1);
+    await dialog
+      .getByRole("button", { name: "Add condition", exact: true })
+      .click();
+    const conditions = dialog.locator(".expression-condition");
+    await conditions
+      .nth(1)
+      .getByLabel("Condition comparison", { exact: true })
+      .selectOption("lt");
+    await conditions
+      .nth(1)
+      .getByLabel("Condition comparison Value", { exact: true })
+      .fill("100");
+    await preview(0);
+    await conditions
+      .nth(1)
+      .getByLabel("Join conditions", { exact: true })
+      .selectOption("or");
+    await preview(1);
+    await conditions
+      .nth(1)
+      .getByLabel("Join conditions", { exact: true })
+      .selectOption("and");
+    await conditions
+      .nth(1)
+      .getByLabel("Condition comparison", { exact: true })
+      .selectOption("no_value");
+    await preview(0);
+    await conditions
+      .nth(1)
+      .getByRole("button", { name: "Move condition up" })
+      .click();
+    await conditions
+      .nth(0)
+      .getByRole("button", { name: "Remove condition" })
+      .click();
+    await expect(conditions).toHaveCount(1);
+    await dialog.getByLabel("Operation", { exact: true }).selectOption("sql");
+    await dialog
+      .getByLabel("SQL query", { exact: true })
+      .fill("SELECT __value__ * 3 AS total FROM A");
+    await preview(900);
+    await dialog
+      .getByLabel("Result format", { exact: true })
+      .selectOption("alerting");
+    await preview(900);
+    await dialog
+      .getByLabel("Result format", { exact: true })
+      .selectOption("table");
+    await dialog.getByLabel("Query reference", { exact: true }).fill("A");
+    await dialog
+      .getByRole("button", { name: "Run query", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Query references must be unique",
+    );
+    await dialog
+      .getByLabel("Query reference", { exact: true })
+      .fill("named result");
+    await dialog.getByText("Advanced query JSON", { exact: true }).click();
+    const raw = dialog.getByLabel("Query JSON", { exact: true });
+    const query = JSON.parse(await raw.inputValue());
+    query.opaque.extra = "preserved";
+    await raw.fill("{");
+    await expect(
+      dialog.getByRole("button", { name: "Save queries", exact: true }),
+    ).toBeDisabled();
+    await raw.fill(JSON.stringify(query));
+    await preview(900);
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    expect(await page.title()).toContain("MetricsPanel233");
+    await dialog.getByText("Advanced query JSON", { exact: true }).click();
+    await dialog.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await page.screenshot({
+      path: testInfo.outputPath("query-editor-desktop.png"),
+      animations: "disabled",
+    });
+    await dialog
+      .getByRole("button", { name: "Save queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Editable result", exact: true }),
+    ).toContainText("900");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "面板查询", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "面板查询", exact: true });
+    await dialog
+      .getByRole("navigation", { name: "面板查询列表" })
+      .getByRole("button", { name: /^named result/ })
+      .click();
+    await expect(dialog.getByLabel("操作", { exact: true })).toHaveValue("sql");
+    await expect(dialog).toContainText("保存查询");
+    expect(
+      await dialog.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("query-editor-mobile.png"),
+      animations: "disabled",
+    });
+    await dialog.getByLabel("参与比较", { exact: true }).uncheck();
+    await dialog.getByRole("button", { name: "保存查询", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Editable result", exact: true }),
+    ).toContainText("900");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    let saved = await getDashboard(classic.uid);
+    const expectedClassic = structuredClone(classic);
+    expectedClassic.panels[0].targets = writes[1].body.panels.find(
+      (panel: any) => panel.config.id === 7,
+    ).config.targets;
+    expect(saved.grafana).toEqual(expectedClassic);
+    expect(writes[0].revision).toMatch(/^\d+$/);
+    expect(
+      saved.panels.find((panel: any) => panel.config.id === 7).config
+        .targets[1],
+    ).toMatchObject({
+      refId: "named result",
+      type: "sql",
+      expression: "SELECT __value__ * 3 AS total FROM A",
+      opaque: { expression: "keep", extra: "preserved" },
+    });
+    const v1: any = {
+      apiVersion: "dashboard.grafana.app/v1beta1",
+      kind: "Dashboard",
+      metadata: { name: "query-editor-v1", opaque: true },
+      spec: { ...structuredClone(classic), uid: "query-editor-v1" },
+    };
+    const v2: any = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      kind: "Dashboard",
+      metadata: { name: "query-editor-v2", opaque: true },
+      spec: {
+        title: "Query editor",
+        timeSettings: {
+          from: String(end - 20000),
+          to: String(end),
+          autoRefresh: "",
+        },
+        elements: {
+          editable: {
+            kind: "Panel",
+            spec: {
+              id: 7,
+              title: "Editable result",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  queries: targets.map((target: any, i: number) => {
+                    const { datasource, refId, hide, ...spec } = target;
+                    return {
+                      kind: "PanelQuery",
+                      opaque: { order: i },
+                      spec: {
+                        refId,
+                        hidden: !!hide,
+                        opaque: "query envelope",
+                        query: {
+                          kind: "DataQuery",
+                          group: datasource.type,
+                          datasource: {
+                            name: datasource.uid,
+                            opaque: "datasource",
+                          },
+                          version: "v233",
+                          spec,
+                        },
+                      },
+                    };
+                  }),
+                  transformations: [],
+                  queryOptions: { opaque: true },
+                },
+              },
+              vizConfig: {
+                kind: "VizConfig",
+                group: "table",
+                spec: {
+                  options: {},
+                  fieldConfig: { defaults: {}, overrides: [] },
+                  opaque: true,
+                },
+              },
+            },
+          },
+        },
+        layout: {
+          kind: "GridLayout",
+          spec: {
+            items: [
+              {
+                kind: "GridLayoutItem",
+                spec: {
+                  x: 0,
+                  y: 0,
+                  width: 12,
+                  height: 10,
+                  element: { kind: "ElementReference", name: "editable" },
+                },
+              },
+            ],
+          },
+        },
+        opaque: "keep",
+      },
+    };
+    for (const resource of [v1, v2]) {
+      const uid = resource.metadata.name;
+      dialog = await open(resource, uid);
+      await dialog.getByLabel("SDK numeric value", { exact: true }).fill("300");
+      await choose("B");
+      await dialog
+        .getByLabel("Math expression", { exact: true })
+        .fill("$A * 4");
+      if (uid.endsWith("v2"))
+        await dialog
+          .getByLabel("Query reference", { exact: true })
+          .fill("result");
+      await preview(1200);
+      await dialog
+        .getByRole("button", { name: "Save queries", exact: true })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Editable result", exact: true }),
+      ).toContainText("1200");
+      saved = await getDashboard(uid);
+      const expected = structuredClone(resource);
+      if (uid.endsWith("v1")) {
+        expected.spec.panels[0].targets[0].value = 300;
+        expected.spec.panels[0].targets[1].expression = "$A * 4";
+      } else {
+        const resources =
+          expected.spec.elements.editable.spec.data.spec.queries;
+        resources[0].spec.query.spec.value = 300;
+        resources[1].spec.query.spec.expression = "$A * 4";
+        resources[1].spec.refId = "result";
+      }
+      expect(saved.grafana).toEqual(expected);
+    }
+    await page
+      .getByRole("button", { name: "Panel queries", exact: true })
+      .click();
+    dialog = page.getByRole("dialog", { name: "Panel queries", exact: true });
+    await choose("result");
+    await dialog.getByLabel("Math expression").fill("$A * 5");
+    const concurrent = structuredClone(saved);
+    concurrent.grafana.metadata.externalRevision = 1;
+    expect(
+      (
+        await page.request.put(endpoint + "/api/v1/dashboards/" + saved.id, {
+          data: concurrent,
+        })
+      ).ok(),
+    ).toBeTruthy();
+    expectedConflictURL = endpoint + "/api/v1/dashboards/" + saved.id;
+    const conflict = page.waitForResponse(
+      (response) =>
+        response.url() === expectedConflictURL && response.status() === 409,
+    );
+    await dialog
+      .getByRole("button", { name: "Save queries", exact: true })
+      .click();
+    expect((await conflict).status()).toBe(409);
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Dashboard changed. Close and reopen this editor.",
+    );
+    expectedConflictURL = "";
+    const persisted = await getDashboard("query-editor-v2");
+    expect(persisted.grafana.metadata.externalRevision).toBe(1);
+    expect(
+      persisted.grafana.spec.elements.editable.spec.data.spec.queries[1].spec
+        .query.spec.expression,
+    ).toBe("$A * 4");
+    await dialog
+      .getByRole("button", { name: "Close dialog", exact: true })
+      .click();
+    await page.goto(endpoint + "/d/" + classic.uid + "/queries");
+    await page
+      .getByRole("button", { name: "Panel queries", exact: true })
+      .click();
+    dialog = page.getByRole("dialog", { name: "Panel queries", exact: true });
+    await dialog
+      .getByLabel("Panel", { exact: true })
+      .selectOption({ label: "Streaming preview" });
+    const streamStats = async () =>
+      (
+        await (
+          await page.request.get(
+            endpoint +
+              "/api/datasources/uid/query-editor-sdk/resources/stream-stats",
+          )
+        ).json()
+      ).active;
+    await expect.poll(streamStats).toBe(0);
+    await dialog
+      .getByRole("button", { name: "Run SDK metric query", exact: true })
+      .click();
+    await expect.poll(streamStats).toBe(1);
+    await expect(dialog.locator(".query-preview-data")).toContainText('"S"');
+    await dialog
+      .getByRole("button", { name: "Stop query", exact: true })
+      .click();
+    await expect.poll(streamStats).toBe(0);
+    await dialog
+      .getByRole("button", { name: "Run SDK metric query", exact: true })
+      .click();
+    await expect.poll(streamStats).toBe(1);
+    await dialog
+      .getByRole("button", { name: "Close dialog", exact: true })
+      .click();
+    await expect.poll(streamStats).toBe(0);
+    expect(issues).toEqual([]);
+  } finally {
+    if (!page.isClosed())
+      await page.goto(endpoint + "/#overview").catch(() => {});
+    for (const id of ids)
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + id);
+    await page.request.delete(
+      endpoint + "/api/datasources/uid/query-editor-sdk",
+    );
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-sdk-datasource",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-query-editors-e2e-")
+    )
+      throw new Error(
+        "Refusing cleanup outside the query editor test directory",
+      );
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("SQL comparisons isolate real backend windows, preserve variables and aliases across Classic V1 V2", async ({
   page,
   endpoint,
@@ -279,11 +860,11 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
                 timestamp: start - day + 10000,
               },
 
-            {
-              name: "sql_compare_fixture",
-              value: 5,
-              timestamp: start - day - 60000,
-            },
+              {
+                name: "sql_compare_fixture",
+                value: 5,
+                timestamp: start - day - 60000,
+              },
               {
                 name: "sql_compare_fixture",
                 value: 15,

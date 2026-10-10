@@ -398,7 +398,14 @@ export function watchFrames(
                           },
                         };
                       })
-                    : response.data,
+                    : response.data.map((input) => {
+                        const frame = toDataFrame(input);
+                        // A direct SDK Live stream can omit RefID; a single target
+                        // identifies it unambiguously for query-editor data and refreshes.
+                        return !frame.refId && targets.length === 1
+                          ? { ...frame, refId: targets[0].refId! }
+                          : frame;
+                      }),
                   panelRange: primary,
                 }) as RangedResponse,
             ),

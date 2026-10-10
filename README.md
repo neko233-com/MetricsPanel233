@@ -320,7 +320,11 @@ Agent 可运行 `metricspanel datasources query --id __expr__ --file examples/qu
 
 SQL 面板支持固定偏移与前一时段比较。两次后端请求分别使用当前／历史窗口，在请求内保留原始 RefID 和 SQL，返回后添加 `-compare` 与 `timeCompare` 元数据，因此 CTE、别名、引号内文本不需改写。原生曲线对齐显示时间，SDK 帧保留历史时间。SQL 使用真实面板变量与时间宏，允许变量和输入 RefID 同名；统一的 `__display_name__` 恢复数值列显示名，混合名称继续保留逐行数据，不修改缓存帧。原始时间输入支持显式 `DATETIME(6)` 精度转换；MySQL 默认 `TIMESTAMP` 输出精度为秒。示例为 `examples/grafana-sql-comparison.json`。
 
-完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+导入模板的「面板查询」入口支持可视化编辑 Math、Reduce（严格／丢弃／替换非数值）、Resample、Threshold（反转与自定义恢复阈值）、有序 Classic conditions 和 SQL（table／alerting 格式）。已安装数据源使用公开 SDK `QueryEditor`，接收插件上下文、时间窗口、查询列表和按 RefID 的响应数据；修改、运行、添加查询回调均连接实际查询图。可调整顺序、隐藏显示、参与比较，并用高级 JSON 保留插件扩展字段。预览支持实时流，停止、修改查询和关闭编辑器会取消订阅。
+
+保存同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板和未知字段。原生 PUT 可携带 `If-Match: updated_at`；SQLite 控制库原子检查版本，过期或已删除对象返回 409，不会覆盖新修改。Agent 使用 `dashboards export --id ID --format native` 获取版本，再执行 `dashboards save --id ID --file FILE --revision UPDATED_AT`。省略版本的旧调用仍可用；版本单调递增。完整告警图可视化编辑器与其余 Grafana 核心数据源编辑器仍待补齐。Testify、真实 SDK 浏览器用例、中文／英文手机布局和两轮 Docker 测试验证执行、保存与重启行为。
+
+The imported-template **Panel queries** workspace edits all six supported expression operations, including recovery thresholds and ordered classic conditions. Installed datasource SDK editors receive real context, range, query list and per-reference results; change/run/add callbacks execute the actual query graph. Live previews are cancelled on stop, edits and close. Saves update both runtime queries and the original Classic/V1/V2 resource while retaining opaque envelopes and other panels. Native saves support atomic `If-Match: updated_at`; agents can use `dashboards save --revision UPDATED_AT` with a native export. Stale or deleted dashboards return 409. Full alert-graph visual editing and remaining core datasource editors are still pending.
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
