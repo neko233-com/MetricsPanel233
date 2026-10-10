@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	queriesAPI "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana-plugin-sdk-go/genproto/pluginv2"
+	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -81,7 +83,7 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 		seen := map[string]bool{}
 		visible := input.Queries[:0]
 		for _, query := range input.Queries {
-			if query.Hide {
+			if query.Hide && ds.Type != "__expr__" {
 				continue
 			}
 			if query.RefID == "" || len(query.RefID) > 100 || seen[query.RefID] {
@@ -89,7 +91,7 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 				return
 			}
 			seen[query.RefID] = true
-			if query.Datasource != nil && (query.Datasource.UID != "" && query.Datasource.UID != ds.UID || query.Datasource.Type != "" && query.Datasource.Type != ds.Type) || query.DatasourceID != 0 && query.DatasourceID != ds.ID {
+			if ds.Type != "__expr__" && (query.Datasource != nil && (query.Datasource.UID != "" && query.Datasource.UID != ds.UID || query.Datasource.Type != "" && query.Datasource.Type != ds.Type) || query.DatasourceID != 0 && query.DatasourceID != ds.ID) {
 				fail(w, 400, errors.New("query datasource must match the connection"))
 				return
 			}
@@ -110,6 +112,54 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 			visible = append(visible, query)
 		}
 		input.Queries = visible
+		if ds.Type == "__expr__" {
+			// SDK's converter is deliberately single-source. Split the expression
+			// request before conversion and freeze the shared relative range once.
+			if input.From != "" {
+				rangeValue := gtime.NewTimeRange(input.From, input.To)
+				from, err := rangeValue.ParseFrom()
+				if err != nil {
+					fail(w, 400, err)
+					return
+				}
+				to, err := rangeValue.ParseTo()
+				if err != nil {
+					fail(w, 400, err)
+					return
+				}
+				input.From, input.To = strconv.FormatInt(from.UnixMilli(), 10), strconv.FormatInt(to.UnixMilli(), 10)
+			}
+			grouped := map[string][]queriesAPI.DataQuery{}
+			for _, query := range input.Queries {
+				uid := "__expr__"
+				if query.Datasource != nil && query.Datasource.UID != "" {
+					uid = query.Datasource.UID
+				}
+				if expressions.IsSource(uid) {
+					uid = "__expr__"
+					if query.Datasource != nil {
+						ref := *query.Datasource
+						ref.UID = uid
+						ref.Type = uid
+						query.Datasource = &ref
+					}
+				}
+				grouped[uid] = append(grouped[uid], query)
+			}
+			groups := map[string][]backend.DataQuery{}
+			for uid, group := range grouped {
+				request := input
+				request.Queries = group
+				queries, _, err := queriesAPI.ToDataSourceQueries(request)
+				if err != nil {
+					fail(w, 400, err)
+					return
+				}
+				groups[uid] = queries
+			}
+			s.writeQueryGroups(w, r, groups)
+			return
+		}
 		queries, _, err := queriesAPI.ToDataSourceQueries(input)
 		if err != nil {
 			fail(w, 400, err)

@@ -142,11 +142,7 @@ func (s *Server) queryPrometheusSource(ctx context.Context, ds model.DataSource,
 					return nil, err
 				}
 				times = append(times, time.UnixMilli(int64(seconds*1000)))
-				if math.IsNaN(value) || math.IsInf(value, 0) {
-					values = append(values, nil)
-				} else {
-					values = append(values, &value)
-				}
+				values = append(values, &value)
 			}
 			field := data.NewField("Value", item.Metric, values)
 			if target.Legend != "" && target.Legend != "__auto" {
@@ -159,6 +155,7 @@ func (s *Server) queryPrometheusSource(ctx context.Context, ds model.DataSource,
 			}
 			frame := data.NewFrame("", data.NewField("Time", nil, times), field)
 			frame.RefID = q.RefID
+			frame.Meta = &data.FrameMeta{Custom: map[string]string{"resultType": result.Data.ResultType}}
 			frames = append(frames, frame)
 		}
 	}

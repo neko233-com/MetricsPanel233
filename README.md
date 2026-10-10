@@ -127,7 +127,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
-但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、
+但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL / 经典条件 / 状态恢复阈值、
 部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
@@ -274,7 +274,7 @@ Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。
 宿主初始化官方日志注册表，并同步 SDK 的数据源设置缓存和插件加载器；数据源服务重新加载时，设置增删改会同步新版与旧版服务。
-缓存启动接口属于固定版本 SDK 的 core 实现，发布包未公开其入口；Vite 使用两个仅供宿主调用的 13.2.3 路径别名，升级 SDK 时必须重新验证这些接口。
+缓存与 expression 启动接口属于固定版本 SDK 的 core 实现，发布包未公开其入口；Vite 使用三个仅供宿主调用的 13.2.3 路径别名，升级 SDK 时必须重新验证这些接口。
 
 ## 内置 Grafana 数据源
 
@@ -291,6 +291,25 @@ Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化
 将上述 JSON 保存为文件后，运行 `metricspanel datasources query --id grafana --file query.json`，加 `--stream` 输出 NDJSON。前端 SDK 回调仍由浏览器执行；Grafana scopes 注释查询暂未实现，会明确报错。
 
 旧版 `DataSourceSrv.registerRuntimeDataSource` 与公开 `@grafana/runtime/unstable` 注册入口共享运行时实例，重载设置后仍可发现，重复 UID 明确拒绝。此类临时实例随浏览器会话结束，不作为持久采集器。真实 SDK 浏览器用例验证发现、变量、注册、混合帧和流取消；Testify 与两轮 SQLite/ClickHouse Docker 测试验证 agent 输出及重启行为。
+
+## 服务端 expression 查询
+
+只读 expression 实例使用 UID / 类型 `__expr__`，兼容旧 ID `-100` 和名称 `Expression`，不作为可安装数据源显示。两代 SDK 共享同一个实例；经典、V1、V2 模板和未知字段保留。隐藏输入参与计算但不会渲染，跨数据源请求合并为后端依赖图。
+
+支持 Math、Reduce、Resample、Threshold。Math 包含文档运算符及 13 个函数，引用写作 `$A` 或 `${query name}`；幂按 Grafana 13.2.3 解析器左结合，一元运算优先于幂。标签按相等、子集或无标签广播匹配，序列仅计算共同时间戳；各只有一个且标签不匹配时，结果去掉标签。相同标签键使用索引，测试覆盖 10,000 组维度。
+
+Reduce 支持 sum / mean / min / max / count / last / median，以及严格、dropNN、replaceNN 模式。Resample 支持 sum / mean / min / max / last 降采样和 pad / backfilling / fillna 填充；从窗口起点推进，包含可到达的结束点。Threshold 支持比较和包含／不包含边界的范围检查，保留数字、序列和空值类型。
+
+```json
+{"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
+```
+
+保存为文件后运行 `metricspanel datasources query --id __expr__ --file expression.json`；`--stream` 输出计算完成后的官方 NDJSON 帧。两种模式都保留成功结果，部分失败时返回非零退出码。依赖图无须按 RefID 排序；循环、缺失引用、非法节点报告具体引用，独立成功分支仍可用。计算不依赖浏览器，不修改输入，不写入存储。
+
+输入为宽时间序列、单数值列加字符串维度的数字表、Prometheus instant vector；null / NaN / Inf 使用官方 DataFrame JSON 保留。比较窗口重命名表达式依赖并保持历史时间戳。每请求最多 32 个查询、10,000 个匹配项、1,000,000 个工作点（输入和中间结果合计）、20 秒及 32 MiB 响应。
+
+SQL、classic_conditions、状态恢复阈值和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
 

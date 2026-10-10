@@ -13,6 +13,7 @@ import { registerOptionEditors } from "./option-editors";
 import { createLiveService } from "./live-runtime";
 import { grafanaMeta } from "./grafana-meta";
 import { filterSourceSettings, resolveSourceSettings } from "./source-settings";
+import { isExpressionRef } from "./expression-ref";
 import { installAppEvents } from "./app-events";
 import {
   installExtensionServices,
@@ -323,6 +324,8 @@ async function init(): Promise<Runtime> {
       sourceSettings,
       sourceLoader,
       { LocalGrafana },
+      { ExpressionSource, expressionSettings },
+      expressionCore,
     ] = await Promise.all([
       import("@grafana/runtime"),
       import("@grafana/ui"),
@@ -330,12 +333,16 @@ async function init(): Promise<Runtime> {
       import("metricspanel/sdk-source-settings"),
       import("metricspanel/sdk-source-loader"),
       import("./grafana-source"),
+      import("./expression-source"),
+      import("metricspanel/sdk-expression-source"),
     ]);
     if (!loggersInitialized) {
       logging.initializeLoggersRegistry();
       loggersInitialized = true;
     }
     sourceSettingsCore = sourceSettings;
+    const expressionSource = new ExpressionSource(expressionSettings);
+    expressionCore.setExpressionDataSourceInstance(expressionSource);
     sourceLoader.setDataSourcePluginImporter(async (meta) => {
       if (meta.id === "prometheus")
         return new Data.DataSourcePlugin(
@@ -404,6 +411,7 @@ async function init(): Promise<Runtime> {
       entry: import("@grafana/runtime").RuntimeDataSourceRegistration,
     ) => {
       if (
+        isExpressionRef(entry.dataSource.uid) ||
         sources.some((source) => source.uid === entry.dataSource.uid) ||
         runtimeSources.has(entry.dataSource.uid)
       )
@@ -452,6 +460,7 @@ async function init(): Promise<Runtime> {
     });
     const service: DataSourceSrv = {
       get: async (ref, scoped) => {
+        if (isExpressionRef(ref)) return expressionSource;
         const known = resolveSourceSettings(
           [
             ...sources,
@@ -540,6 +549,7 @@ async function init(): Promise<Runtime> {
         return listed;
       },
       getInstanceSettings: (ref, scoped) => {
+        if (isExpressionRef(ref)) return expressionSettings;
         return resolveSourceSettings(
           [
             ...sources,
@@ -726,6 +736,27 @@ class LocalPrometheus extends Data.DataSourceApi {
         });
       }),
     );
+  }
+  interpolateVariablesInQueries(
+    queries: Data.DataQuery[],
+    scoped?: Data.ScopedVars,
+  ) {
+    const values = { ...variableValues };
+    for (const [name, entry] of Object.entries(scoped || {}))
+      if (entry) values[name] = entry.value;
+    return queries.map((target) => {
+      const query = target as Data.DataQuery & {
+        expr?: string;
+        legendFormat?: string;
+      };
+      return {
+        ...query,
+        expr: interpolate(query.expr || "", values, variableRange),
+        legendFormat: query.legendFormat
+          ? interpolate(query.legendFormat, values, variableRange)
+          : undefined,
+      };
+    });
   }
   async testDatasource() {
     await api(`/api/datasources/uid/${encodeURIComponent(this.uid)}/health`);

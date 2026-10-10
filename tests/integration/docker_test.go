@@ -86,6 +86,19 @@ func (e environment) verifyBuiltinGrafana(address string) {
 	assert.Equal(e.t, 3, result.Responses["R"].Frames[0].Rows())
 	assert.Equal(e.t, float64(233), result.Responses["R"].Frames[0].Fields[1].At(2))
 }
+func (e environment) verifyExpressionGraph(address string) {
+	var result backend.QueryDataResponse
+	payload := map[string]any{"from": strconv.FormatInt(time.Now().Add(-time.Minute).UnixMilli(), 10), "to": strconv.FormatInt(time.Now().UnixMilli(), 10), "queries": []any{
+		map[string]any{"refId": "C", "type": "math", "expression": "$A * $D", "datasource": map[string]string{"uid": "__expr__"}},
+		map[string]any{"refId": "A", "hide": true, "expr": "mysql_up", "instant": true, "datasource": map[string]string{"uid": "metricspanel"}},
+		map[string]any{"refId": "B", "hide": true, "value": 2, "datasource": map[string]string{"uid": "docker-sdk"}},
+		map[string]any{"refId": "D", "hide": true, "type": "reduce", "expression": "B", "reducer": "mean", "datasource": map[string]string{"uid": "__expr__"}},
+	}}
+	require.NoError(e.t, json.Unmarshal(e.must(address, "POST", "/api/ds/query", payload), &result))
+	require.NoError(e.t, result.Responses["C"].Error)
+	require.NotEmpty(e.t, result.Responses["C"].Frames)
+	assert.Equal(e.t, float64(2), *result.Responses["C"].Frames[0].Fields[0].At(0).(*float64))
+}
 func (e environment) composeInput(input string, args ...string) (string, error) {
 	command := exec.Command("docker", append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
 	command.Dir = e.root
@@ -536,6 +549,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "mysql_up"); return ok && v == 1 }, 30*time.Second, 500*time.Millisecond, "real MySQL exporter did not report mysql_up=1")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_http_requests_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go exporter not scraped")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
+			e.verifyExpressionGraph(address)
 			// Duplicate writes replace a sample, including across a full restart.
 			ts := time.Now().UnixMilli()
 			for _, v := range []float64{233, 234} {
@@ -605,6 +619,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
 			e.verifyBuiltinGrafana(address)
 			e.verifySDKPlugin(address, backend.service)
+			e.verifyExpressionGraph(address)
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false

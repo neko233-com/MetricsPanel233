@@ -86,6 +86,427 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Expression graphs execute hidden multi-source inputs, preserve templates and resolve both SDK services", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+      path.join(os.tmpdir(), "metricspanel233-expression-e2e-"),
+    ),
+    run = promisify(execFile);
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    sourceZip = path.join(temp, "source.zip"),
+    probeZip = path.join(temp, "probe.zip");
+  const ids: string[] = [],
+    issues: string[] = [],
+    requests: any[] = [];
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type())) issues.push(entry.text());
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/api/ds/query")
+    ) {
+      try {
+        requests.push(request.postDataJSON());
+      } catch {}
+    }
+  });
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, timeout: 60000 },
+    );
+    await run(fixture, ["--package", sourceZip], { cwd: repoRoot });
+    await run(fixture, ["--package-extension-core", probeZip], {
+      cwd: repoRoot,
+    });
+    for (const file of [sourceZip, probeZip]) {
+      const installed = await page.request.post(
+        endpoint + "/api/v1/plugins/install",
+        {
+          data: await readFile(file),
+          headers: { "Content-Type": "application/zip" },
+        },
+      );
+      expect(installed.ok(), await installed.text()).toBeTruthy();
+    }
+    expect(
+      (
+        await page.request.post(endpoint + "/api/datasources", {
+          data: {
+            uid: "expression-sdk",
+            name: "Expression SDK",
+            type: "metricspanel-sdk-datasource",
+            secureJsonData: { apiKey: "test-secret-233" },
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const graph = [
+      {
+        refId: "C",
+        datasource: { uid: "__expr__", type: "__expr__" },
+        type: "math",
+        expression: "$A * $D",
+        unknown: 233,
+      },
+      {
+        refId: "A",
+        hide: true,
+        datasource: { uid: "$source", type: "prometheus" },
+        expr: "vector($base)",
+        instant: true,
+      },
+      {
+        refId: "B",
+        hide: true,
+        datasource: {
+          uid: "expression-sdk",
+          type: "metricspanel-sdk-datasource",
+        },
+        value: 2,
+      },
+      {
+        refId: "D",
+        hide: true,
+        datasource: { uid: "-100", type: "__expr__" },
+        type: "reduce",
+        expression: "B",
+        reducer: "mean",
+      },
+    ];
+    const classic: any = {
+      uid: "expression-classic",
+      title: "Expression template",
+      time: { from: "1970-01-01T00:00:01Z", to: "1970-01-01T00:00:04Z" },
+      timezone: "utc",
+      refresh: "",
+      templating: {
+        list: [
+          {
+            name: "base",
+            type: "constant",
+            query: "233",
+            current: { value: "233" },
+          },
+          {
+            name: "source",
+            type: "datasource",
+            query: "prometheus",
+            current: { value: "metricspanel" },
+          },
+        ],
+      },
+      panels: [
+        {
+          id: 1,
+          title: "Expression total",
+          type: "stat",
+          targets: graph,
+          timeCompare: "1s",
+          gridPos: { x: 0, y: 0, w: 12, h: 8 },
+        },
+        {
+          id: 2,
+          title: "Expression threshold",
+          type: "stat",
+          targets: [
+            ...graph.map((q) => ({ ...q, hide: true })),
+            {
+              refId: "T",
+              datasource: { uid: "__expr__" },
+              type: "threshold",
+              expression: "C",
+              conditions: [{ evaluator: { type: "gt", params: [400] } }],
+            },
+          ],
+          gridPos: { x: 12, y: 0, w: 12, h: 8 },
+        },
+        {
+          id: 3,
+          title: "Expression resample",
+          type: "table",
+          targets: [
+            {
+              refId: "A",
+              hide: true,
+              datasource: { uid: "grafana" },
+              queryType: "randomWalk",
+              startValue: 1,
+              spread: 0,
+            },
+            {
+              refId: "R",
+              datasource: { uid: "__expr__" },
+              type: "resample",
+              expression: "A",
+              window: "1s",
+              downsampler: "mean",
+              upsampler: "pad",
+            },
+          ],
+          gridPos: { x: 0, y: 8, w: 12, h: 8 },
+        },
+        {
+          id: 4,
+          title: "Expression SDK",
+          type: "metricspanel-core-app",
+          targets: [],
+          gridPos: { x: 12, y: 8, w: 12, h: 12 },
+        },
+      ],
+    };
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: classic },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const all = await (
+      await page.request.get(endpoint + "/api/v1/dashboards")
+    ).json();
+    ids.push(all.find((d: any) => d.grafana?.uid === classic.uid).id);
+    await page.goto(endpoint + "/d/expression-classic/expression");
+    const total = page.getByRole("region", {
+      name: "Expression total",
+      exact: true,
+    });
+    await expect(total).toContainText("466");
+    await expect(total).not.toContainText("233");
+    await expect(
+      page.getByRole("region", { name: "Expression threshold", exact: true }),
+    ).toContainText("1");
+    await expect(
+      page
+        .getByRole("region", { name: "Expression resample", exact: true })
+        .locator("tbody tr"),
+    ).toHaveCount(4);
+    await expect
+      .poll(() =>
+        requests.some((request) =>
+          request.queries?.some(
+            (q: any) =>
+              q.refId === "C-compare" &&
+              q.expression.includes("A-compare") &&
+              q.expression.includes("D-compare"),
+          ),
+        ),
+      )
+      .toBe(true);
+    expect(
+      requests.some(
+        (request) =>
+          request.queries?.some(
+            (q: any) => q.refId === "A" && q.hide && q.expr === "vector(233)",
+          ) &&
+          request.queries.some(
+            (q: any) =>
+              q.refId === "B" && q.datasource.uid === "expression-sdk",
+          ),
+      ),
+    ).toBe(true);
+    const probe = page.getByRole("region", {
+      name: "Core SDK probe",
+      exact: true,
+    });
+    await probe
+      .getByRole("button", { name: "Inspect expression SDK", exact: true })
+      .click();
+    const readProbe = async () =>
+      JSON.parse(
+        (await probe.getByText(/^Core discovery:/).innerText()).replace(
+          "Core discovery: ",
+          "",
+        ),
+      );
+    await expect
+      .poll(async () => {
+        try {
+          return (await readProbe()).expression;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
+    const sdk = await readProbe();
+    expect(sdk.same).toBe(true);
+    expect(sdk.uid).toBe("__expr__");
+    expect(sdk.readOnly).toBe(true);
+    expect(sdk.reserved).toBe(true);
+    expect(sdk.newQuery.datasource.uid).toBe("__expr__");
+    expect(sdk.frames).toEqual([{ refId: "C", value: 466 }]);
+    expect(sdk.error).toBe("Bad");
+    await page.screenshot({
+      path: testInfo.outputPath("expressions-desktop.png"),
+      animations: "disabled",
+    });
+    const v1 = {
+      apiVersion: "dashboard.grafana.app/v1beta1",
+      metadata: { name: "expression-v1", unknown: 233 },
+      spec: {
+        ...classic,
+        uid: undefined,
+        title: "Expression V1",
+        panels: [{ ...classic.panels[0], timeCompare: "" }],
+      },
+    };
+    const v2 = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      metadata: { name: "expression-v2", unknown: 233 },
+      spec: {
+        title: "Expression V2",
+        timeSettings: {
+          from: classic.time.from,
+          to: classic.time.to,
+          timezone: "utc",
+          autoRefresh: "",
+        },
+        elements: {
+          total: {
+            kind: "Panel",
+            spec: {
+              id: 1,
+              title: "Expression V2 total",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  queries: [
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "A",
+                        hidden: true,
+                        query: {
+                          kind: "DataQuery",
+                          group: "prometheus",
+                          spec: {
+                            expr: "vector(233)",
+                            instant: true,
+                            datasource: { uid: "metricspanel" },
+                          },
+                        },
+                      },
+                    },
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "C",
+                        query: {
+                          kind: "DataQuery",
+                          group: "__expr__",
+                          spec: {
+                            type: "math",
+                            expression: "$A*2",
+                            unknown: 233,
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              vizConfig: {
+                kind: "VizConfig",
+                group: "stat",
+                spec: {
+                  options: {},
+                  fieldConfig: { defaults: {}, overrides: [] },
+                },
+              },
+            },
+          },
+        },
+        layout: {
+          kind: "GridLayout",
+          spec: {
+            items: [
+              {
+                kind: "GridLayoutItem",
+                spec: {
+                  x: 0,
+                  y: 0,
+                  width: 24,
+                  height: 8,
+                  element: { kind: "ElementReference", name: "total" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    for (const [resource, uid, label] of [
+      [v1, "expression-v1", "Expression total"],
+      [v2, "expression-v2", "Expression V2 total"],
+    ] as const) {
+      const imported = await page.request.post(
+        endpoint + "/api/v1/import/grafana",
+        { data: resource },
+      );
+      expect(imported.ok(), await imported.text()).toBeTruthy();
+      const saved = (await imported.json()).dashboard;
+      ids.push(saved.id);
+      const persisted = (
+        await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+      ).find((dashboard: any) => dashboard.id === saved.id);
+      expect(persisted.grafana).toEqual(JSON.parse(JSON.stringify(resource)));
+      await page.goto(endpoint + "/d/" + uid + "/expression");
+      await expect(
+        page.getByRole("region", { name: label, exact: true }),
+      ).toContainText("466");
+    }
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("expressions-mobile.png"),
+      animations: "disabled",
+    });
+    expect(issues).toEqual([]);
+  } finally {
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-expression-e2e-")
+    )
+      throw new Error("Unsafe expression fixture cleanup");
+    try {
+      await page.goto("about:blank", { timeout: 5000 }).catch(() => {});
+      for (const id of ids)
+        await fetch(endpoint + "/api/v1/dashboards/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+      await fetch(endpoint + "/api/datasources/uid/expression-sdk", {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10000),
+      });
+      for (const id of ["metricspanel-core-app", "metricspanel-sdk-datasource"])
+        await fetch(endpoint + "/api/v1/plugins/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+    } finally {
+      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }
+});
+
 test("Builtin Grafana queries render real SDK frames, discover both service generations and cancel measurements", async ({
   page,
   endpoint,

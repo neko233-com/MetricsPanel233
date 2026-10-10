@@ -61,7 +61,27 @@ func (c apiClient) queryDatasource(ctx context.Context, uid string, input []byte
 			return errors.New("server returned invalid or oversized query JSON")
 		}
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(json.RawMessage(body))
+		if err := encoder.Encode(json.RawMessage(body)); err != nil {
+			return err
+		}
+		var result struct {
+			Results map[string]struct {
+				Error string `json:"error"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return err
+		}
+		failures := 0
+		for _, query := range result.Results {
+			if query.Error != "" {
+				failures++
+			}
+		}
+		if failures > 0 {
+			return fmt.Errorf("%d datasource queries failed; see error records on stdout", failures)
+		}
+		return nil
 	}
 	if strings.Split(response.Header.Get("Content-Type"), ";")[0] != "text/jsonl" {
 		return errors.New("server did not return Grafana text/jsonl")

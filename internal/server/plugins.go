@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
@@ -225,6 +226,9 @@ func builtinDataSource() model.DataSource {
 	return model.DataSource{ID: 1, UID: "metricspanel", OrgID: 1, Name: "MetricsPanel233", Type: "prometheus", Access: "proxy", URL: "/prometheus", IsDefault: true, ReadOnly: true, JSONData: json.RawMessage(`{"httpMethod":"POST","timeInterval":"5s"}`), SecureJSONFields: map[string]bool{}, Version: 1}
 }
 func (s *Server) dataSource(ctx context.Context, uid string) (model.DataSource, error) {
+	if expressions.IsSource(uid) {
+		return builtinExpressionSource(), nil
+	}
 	if uid == "metricspanel" {
 		return builtinDataSource(), nil
 	}
@@ -257,7 +261,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 		writeJSON(w, 200, ds)
 	})
 	save := func(w http.ResponseWriter, r *http.Request) {
-		if uid := r.PathValue("uid"); uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
+		if uid := r.PathValue("uid"); expressions.IsSource(uid) || uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
 			fail(w, 400, errors.New("built-in datasource is read-only"))
 			return
 		}
@@ -300,7 +304,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 	api.HandleFunc("POST /api/datasources", save)
 	api.HandleFunc("PUT /api/datasources/uid/{uid}", save)
 	api.HandleFunc("DELETE /api/datasources/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
-		if uid := r.PathValue("uid"); uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
+		if uid := r.PathValue("uid"); expressions.IsSource(uid) || uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
 			fail(w, 400, errors.New("built-in datasource cannot be deleted"))
 			return
 		}
@@ -317,7 +321,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			resourceError(w, err)
 			return
 		}
-		if ds.UID == "metricspanel" || ds.Type == "grafana" {
+		if ds.UID == "metricspanel" || ds.Type == "grafana" || ds.Type == "__expr__" {
 			if err := s.Store.Health(r.Context()); err != nil {
 				fail(w, 503, err)
 				return
@@ -517,6 +521,18 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := map[string][]backend.DataQuery{}
 	seen := map[string]bool{}
+	hasExpressions := false
+	for _, raw := range input.Queries {
+		var q struct {
+			Datasource struct {
+				UID  string `json:"uid"`
+				Type string `json:"type"`
+			} `json:"datasource"`
+		}
+		if json.Unmarshal(raw, &q) == nil && (expressions.IsSource(q.Datasource.UID) || expressions.IsSource(q.Datasource.Type)) {
+			hasExpressions = true
+		}
+	}
 	for _, raw := range input.Queries {
 		var query struct {
 			RefID      string `json:"refId"`
@@ -533,8 +549,11 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err)
 			return
 		}
-		if query.Hide {
+		if query.Hide && !hasExpressions {
 			continue
+		}
+		if expressions.IsSource(query.Datasource.UID) || expressions.IsSource(query.Datasource.Type) {
+			query.Datasource.UID = "__expr__"
 		}
 		if query.RefID == "" || len(query.RefID) > 100 || seen[query.RefID] || query.Datasource.UID == "" {
 			fail(w, 400, errors.New("queries need unique refId and datasource UID"))
@@ -566,6 +585,12 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 	s.writeQueryGroups(w, r, groups)
 }
 func (s *Server) writeQueryGroups(w http.ResponseWriter, r *http.Request, groups map[string][]backend.DataQuery) {
+	for uid := range groups {
+		if expressions.IsSource(uid) {
+			s.writeExpressionGroups(w, r, groups)
+			return
+		}
+	}
 	if requestsChunks(r.Header.Get("Accept")) {
 		s.streamQueryGroups(w, r, groups)
 		return

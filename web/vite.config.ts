@@ -6,8 +6,14 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     // Core boot exports are omitted from the published SDK package exports.
-    // These two host-only aliases track the pinned 13.2.3 SDK, not plugin imports.
+    // Host-only aliases track the pinned 13.2.3 SDK, not plugin imports.
     alias: {
+      "metricspanel/sdk-expression-source": fileURLToPath(
+        new URL(
+          "./node_modules/@grafana/runtime/dist/esm/services/dataSource/expressionDs.mjs",
+          import.meta.url,
+        ),
+      ),
       "metricspanel/sdk-source-settings": fileURLToPath(
         new URL(
           "./node_modules/@grafana/runtime/dist/esm/services/dataSource/settings.mjs",

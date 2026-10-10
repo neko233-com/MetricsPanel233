@@ -25,6 +25,13 @@ const registered=async()=>{try{
  let duplicate=false;try{runtime.getDataSourceSrv().registerRuntimeDataSource({dataSource:one})}catch{duplicate=true}
  setResult(JSON.stringify({runtime:good,duplicate}));
 }catch(error){setResult('ERROR '+error.message)}};
+const expression=async()=>{try{
+ const source=await unstable.getDataSourceInstance('__expr__'),legacy=await runtime.getDataSourceSrv().get('-100'),named=await runtime.getDataSourceSrv().get('Expression');
+ const settings=await unstable.getDataSourceInstanceSettings({type:'__expr__'}),range={from:data.dateTime(1000),to:data.dateTime(4000),raw:{from:'1000',to:'4000'}};
+ const result=await rx.firstValueFrom(source.query({requestId:'expression-probe',range,rangeRaw:range.raw,intervalMs:1000,targets:[{refId:'A',hide:true,expr:'vector(233)',instant:true,datasource:{uid:'metricspanel'}},{refId:'C',type:'math',expression:'$A*2',datasource:{uid:'__expr__'}},{refId:'Bad',type:'math',expression:'$Missing',datasource:{uid:'__expr__'}}]}));
+ let reserved=false;try{class Shadow extends runtime.RuntimeDataSource{constructor(){super('metricspanel-core-app','__expr__')}query(){return rx.of({data:[]})}}runtime.getDataSourceSrv().registerRuntimeDataSource({dataSource:new Shadow()})}catch{reserved=true}
+ setResult(JSON.stringify({expression:true,same:source===legacy&&source===named,uid:settings.uid,readOnly:settings.readOnly,reserved,newQuery:source.newQuery({expression:'$A+1'}),state:result.state,error:result.error?.refId,frames:result.data.map(frame=>({refId:frame.refId,value:frame.fields.find(field=>field.type==='number')?.values[0]}))}));
+}catch(error){setResult('ERROR '+error.message)}};
 const live=async()=>{try{
  subscription.current?.unsubscribe();
  const source=await unstable.getDataSourceInstance('grafana'),range={from:data.dateTime(Date.now()-60000),to:data.dateTime(),raw:{from:'now-1m',to:'now'}};
@@ -33,7 +40,7 @@ const live=async()=>{try{
  chunks.set(result.key,result);setFrames(JSON.stringify(Object.fromEntries(Array.from(chunks,([key,result])=>[key,{state:result.state,error:result.error?.message,frames:result.data.map(frame=>({refId:frame.refId,length:frame.length,fields:frame.fields.map(f=>f.name),value:frame.fields.find(f=>f.type==='number')?.values[frame.length-1]}))}]))));
 },error:error=>setFrames('ERROR '+error.message)});
 }catch(error){setFrames('ERROR '+error.message)}};
-return React.createElement('section',{'aria-label':'Core SDK probe',style:{overflow:'auto',maxWidth:'100%'}},React.createElement('button',{onClick:inspect},'Inspect core source'),React.createElement('button',{onClick:registered},'Register runtime sources'),React.createElement('button',{onClick:live},'Start core measurements'),React.createElement('button',{onClick:()=>{subscription.current?.unsubscribe();subscription.current=null}},'Stop core measurements'),...['Core discovery: '+result,'Core files: '+files,'Core frames: '+frames].map((text,index)=>React.createElement('pre',{key:index,style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},text)))
+return React.createElement('section',{'aria-label':'Core SDK probe',style:{overflow:'auto',maxWidth:'100%'}},React.createElement('button',{onClick:inspect},'Inspect core source'),React.createElement('button',{onClick:registered},'Register runtime sources'),React.createElement('button',{onClick:expression},'Inspect expression SDK'),React.createElement('button',{onClick:live},'Start core measurements'),React.createElement('button',{onClick:()=>{subscription.current?.unsubscribe();subscription.current=null}},'Stop core measurements'),...['Core discovery: '+result,'Core files: '+files,'Core frames: '+frames].map((text,index)=>React.createElement('pre',{key:index,style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},text)))
 }
 _export('plugin',new data.PanelPlugin(Probe));
 }}})

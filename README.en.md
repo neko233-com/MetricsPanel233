@@ -190,7 +190,7 @@ Testify, real SDK/browser tests and two Docker restart rounds verify durability,
 See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
 Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) and [standard annotation converter](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts).
 The host initializes official loggers, synchronizes the SDK datasource settings cache and registers its plugin importer; datasource service reloads synchronize edits across both SDK generations.
-The published package omits the core boot export. Two host-only Vite aliases bind the pinned 13.2.3 core modules; these bindings must be revalidated when upgrading the SDK.
+The published package omits the cache/expression core boot exports. Three host-only Vite aliases bind the pinned 13.2.3 core modules; revalidate these bindings when upgrading the SDK.
 
 ## Builtin Grafana datasource
 
@@ -207,6 +207,25 @@ The backend and agent execute `randomWalk` and `list`, following the [Grafana 13
 Save this as `query.json` and run `metricspanel datasources query --id grafana --file query.json`; add `--stream` for NDJSON. Frontend callbacks execute in the browser. Grafana scopes annotation queries remain unsupported and return an explicit error.
 
 Legacy `DataSourceSrv.registerRuntimeDataSource` and the public `@grafana/runtime/unstable` registration share runtime instances, preserve discovery after settings reload and reject duplicate UIDs. These instances live in the browser session rather than durable collectors. Real SDK browser tests cover discovery, variables, registration, mixed frames and stream cancellation; Testify and two SQLite/ClickHouse Docker rounds verify agent output and restart behavior.
+
+## Server expression queries
+
+The read-only expression instance uses UID/type `__expr__`, legacy ID `-100` and name `Expression`, separate from installable datasource discovery. Both public SDK generations share its instance. Classic/V1/V2 templates retain envelopes and unknown fields. Hidden inputs execute without rendering; mixed sources run as one backend dependency graph.
+
+Math, Reduce, Resample and Threshold operate on actual SDK frames. Math supports `$A` / `${query name}`, documented operators and 13 functions. Grafana 13.2.3 exponentiation is left associative; unary operators bind more tightly. Labels join by equality/subset/unlabelled broadcast, and series intersect timestamps. A single unmatched item on each side joins without labels. Equal label-key sets use an indexed join, tested with 10,000 dimensions.
+
+Reduce supports sum/mean/min/max/count/last/median and strict/dropNN/replaceNN modes. Resample supports sum/mean/min/max/last downsampling and pad/backfilling/fillna upsampling, from range start through the reachable inclusive endpoint. Threshold supports comparisons and exclusive/inclusive range checks over numbers or series, retaining nulls.
+
+```json
+{"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
+```
+
+Save this as `expression.json` and run `metricspanel datasources query --id __expr__ --file expression.json`; add `--stream` for official NDJSON frames after graph computation. Both modes preserve successful results and exit nonzero for partial failures. RefIDs may arrive out of dependency order. Cycles, missing references and invalid nodes produce named errors while independent branches remain usable. Computation needs no browser, never alters inputs and never writes metrics or annotations.
+
+Inputs are wide time series, one numeric column with string dimensions, or Prometheus instant vectors. Official DataFrame JSON preserves null/NaN/Inf. Panel comparisons remap references and retain historical timestamps. Limits: 32 queries, 10,000 joined items, 1,000,000 working points across inputs/intermediates, 20 seconds and 32 MiB response per request.
+
+SQL, classic_conditions, stateful recovery thresholds and the complete expression query editor remain pending; unsupported operations return explicit errors. Testify, real SDK/browser coverage, bilingual mobile checks and two SQLite/ClickHouse restart rounds verify behavior.
+See the [expression contract](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/) and [pinned parser](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go).
 
 ## Dashboard time ranges
 

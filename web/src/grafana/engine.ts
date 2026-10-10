@@ -62,6 +62,7 @@ import {
 } from "./time-range";
 
 import { t } from "../i18n";
+import { isExpressionRef, remapExpressionInput } from "./expression-ref";
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
   [key: string]: unknown;
@@ -272,8 +273,11 @@ export function watchFrames(
   if (targets.length > 32)
     return throwError(() => new Error("A panel supports at most 32 queries"));
   const groups = new Map<string, GrafanaTarget[]>();
+  const hasExpressions = targets.some((target) =>
+    isExpressionRef(target.datasource || panel.config?.datasource),
+  );
   targets
-    .filter((target) => !target.hide)
+    .filter((target) => hasExpressions || !target.hide)
     .forEach((target, i) => {
       const ref = target.datasource || panel.config?.datasource;
       let uid = interpolate(
@@ -284,24 +288,48 @@ export function watchFrames(
       if (uid === "prometheus") uid = "metricspanel";
       if (!uid && typeof ref === "object" && ref.type === "grafana")
         uid = "grafana";
+      if (isExpressionRef(ref)) uid = "__expr__";
       if (uid === "default") uid = "";
       const existing = groups.get(uid) || [];
       existing.push({
         ...target,
         refId: target.refId || String.fromCharCode(65 + i),
+        ...(hasExpressions
+          ? {
+              datasource: {
+                uid,
+                type: typeof ref === "object" ? ref.type : undefined,
+              },
+            }
+          : {}),
       });
       groups.set(uid, existing);
     });
-  const requests = Array.from(groups, ([uid, queries]) => ({
+  const requestGroups = hasExpressions
+    ? new Map([["__expr__", Array.from(groups.values()).flat()]])
+    : groups;
+  const requests = Array.from(requestGroups, ([uid, queries]) => ({
     uid,
     queries,
     compare: false,
   }));
   if (panelComparison(panel.config || {}))
-    for (const [uid, queries] of groups) {
-      const compared = queries
-        .filter((query) => query.timeRangeCompare !== false)
-        .map((query) => ({ ...query, refId: comparisonRefId(query.refId!) }));
+    for (const [uid, queries] of requestGroups) {
+      const included = queries.filter(
+        (query) => query.timeRangeCompare !== false,
+      );
+      const references = new Map(
+        included.map((query) => [query.refId!, comparisonRefId(query.refId!)]),
+      );
+      const compared = included.map((query) => ({
+        ...query,
+        refId: comparisonRefId(query.refId!),
+        ...(hasExpressions &&
+        isExpressionRef(query.datasource) &&
+        typeof query.expression === "string"
+          ? { expression: remapExpressionInput(query.expression, references) }
+          : {}),
+      }));
       if (compared.length)
         requests.push({ uid, queries: compared, compare: true });
     }
@@ -335,7 +363,11 @@ export function watchFrames(
               targets: targets.map((query) => ({
                 ...query,
                 refId: query.refId!,
-                datasource: { uid: datasource.uid, type: datasource.type },
+                datasource: hasExpressions
+                  ? typeof query.datasource === "string"
+                    ? { uid: query.datasource }
+                    : query.datasource
+                  : { uid: datasource.uid, type: datasource.type },
               })),
               range: resolved.sdk,
               rangeRaw: resolved.sdk.raw,
