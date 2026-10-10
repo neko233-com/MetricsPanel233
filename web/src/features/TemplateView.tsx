@@ -26,6 +26,7 @@ import { LoadingState } from "@grafana/data";
 import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
 import { RefreshPicker } from "../components/RefreshPicker";
+import { AnnotationQueriesButton } from "../components/AnnotationQueriesButton";
 const PanelExtensionActions = lazy(() =>
   import("../grafana/PanelExtensionActions").then((module) => ({
     default: module.PanelExtensionActions,
@@ -161,6 +162,7 @@ export function TemplateView({
   refreshChoice,
   refreshOptions,
   onRefreshChoice,
+  reload,
 }: {
   dashboard: Dashboard;
   range: TimeSelection;
@@ -170,6 +172,7 @@ export function TemplateView({
   refreshChoice: string;
   refreshOptions: string[];
   onRefreshChoice: (value: string) => void;
+  reload: () => Promise<void>;
 }) {
   const variables = dashboard.variables || [];
   const [values, setValues] = useState<VariableValues>(() =>
@@ -269,6 +272,12 @@ export function TemplateView({
           <p>{t("Grafana template")} · PromQL</p>
         </div>
         <div className="toolbar">
+          <AnnotationQueriesButton
+            dashboard={dashboard}
+            values={effective}
+            range={range}
+            reload={reload}
+          />
           <TimeRangePicker value={range} onChange={onRange} />
           <button
             className="icon-button outlined"

@@ -30,6 +30,8 @@ import {
 export type AnnotationQueryResult = {
   events: AnnotationEvent[];
   error?: string;
+  frames?: DataFrame[];
+  state?: LoadingState;
 };
 export type AnnotationQueryContext = {
   range: TimeRange;
@@ -234,14 +236,20 @@ export function runDatasourceAnnotationQuery(
         const error =
           response.error?.message ||
           response.errors?.map((error) => error.message).join("; ");
-        if (!frames.length) return of({ events: [], error });
+        if (!frames.length)
+          return of({ events: [], error, frames, state: response.state });
         if (frames.reduce((count, frame) => count + frame.length, 0) > 10000)
           throw new Error("At most 10000 annotation frame rows");
         return processor.processEvents(prepared, frames).pipe(
           map((events) => {
             if ((events?.length || 0) > 1000)
               throw new Error("At most 1000 annotation events per query");
-            return { events: events || [], error };
+            return {
+              events: events || [],
+              error,
+              frames,
+              state: response.state,
+            };
           }),
         );
       }),

@@ -86,6 +86,650 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Annotation query editors use public SDK components, preserve template resources and save native configuration", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-annotation-editor-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "annotations.zip"),
+    run = promisify(execFile);
+  const dsUIDs = ["editor-standard", "editor-custom", "editor-legacy"],
+    dashboardUIDs = ["editor-proof", "editor-v1", "editor-v2"];
+  const errors: string[] = [],
+    consoleProblems: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (entry) => {
+    if (["error", "warning"].includes(entry.type()))
+      consoleProblems.push(entry.text());
+  });
+  const end = Date.now() - 60000,
+    start = end - 120000;
+  const mappings = {
+    time: { value: "When" },
+    timeEnd: { value: "End" },
+    text: { value: "Detail" },
+    tags: { value: "Tags" },
+    id: { value: "EventKey" },
+  };
+  const source = {
+    uid: dashboardUIDs[0],
+    title: "Annotation editor proof",
+    timezone: "utc",
+    time: { from: String(start), to: String(end) },
+    refresh: "",
+    unknownTemplate: { value: 233 },
+    templating: {
+      list: [
+        {
+          name: "service",
+          type: "custom",
+          query: "api,db",
+          current: { value: "api" },
+        },
+      ],
+    },
+    annotations: {
+      unknownContainer: "retained",
+      list: [
+        { name: "Native", builtIn: 1, enable: true },
+        {
+          name: "Standard",
+          datasource: { uid: dsUIDs[0], type: "metricspanel-sdk-datasource" },
+          target: { annotationText: "Original $service", unknownTarget: 233 },
+          mappings,
+          enable: true,
+          pluginExtension: { unknown: 233 },
+        },
+        {
+          name: "Custom",
+          datasource: { uid: dsUIDs[1], type: "metricspanel-sdk-datasource" },
+          target: {},
+          enable: true,
+        },
+        {
+          name: "Legacy",
+          datasource: dsUIDs[2],
+          query: "$service",
+          enable: true,
+        },
+      ] as any[],
+    },
+    panels: [
+      {
+        id: 2,
+        title: "Editable annotation curve",
+        type: "timeseries",
+        targets: [{ refId: "A", expr: "vector(7)" }],
+        gridPos: { x: 0, y: 0, w: 24, h: 10 },
+      },
+    ],
+  };
+  let nativeID = "",
+    noteID = 0;
+  const exported = async (uid: string) => {
+    const dashboards = await (
+      await page.request.get(endpoint + "/api/v1/dashboards")
+    ).json();
+    const saved = dashboards.find((item: any) => {
+      const raw = item.grafana;
+      return (
+        raw &&
+        (raw.metadata?.name === uid ||
+          (raw.dashboard || raw.spec || raw).uid === uid ||
+          item.id === uid)
+      );
+    });
+    expect(saved, "Original template exists in native storage").toBeTruthy();
+    return saved.grafana;
+  };
+  const open = async () => {
+    await page
+      .getByRole("button", { name: "Annotation queries", exact: true })
+      .click();
+    return page.getByRole("dialog", {
+      name: "Annotation queries",
+      exact: true,
+    });
+  };
+  const importResource = async (resource: unknown) => {
+    const response = await page.request.post(
+      endpoint + "/api/v1/import/grafana",
+      { data: resource },
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-annotations", archive], {
+      windowsHide: true,
+    });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    for (const [index, uid] of dsUIDs.entries()) {
+      const saved = await page.request.post(endpoint + "/api/datasources", {
+        data: {
+          uid,
+          name: uid,
+          type: "metricspanel-sdk-datasource",
+          jsonData: { annotationMode: ["standard", "custom", "legacy"][index] },
+          secureJsonData: { apiKey: "test-secret-233" },
+        },
+      });
+      expect(saved.ok(), await saved.text()).toBeTruthy();
+    }
+    await importResource({ dashboard: source, meta: { unknownEnvelope: 233 } });
+    await page.goto(endpoint + "/d/editor-proof/annotations");
+    expect(await page.title()).toContain("MetricsPanel233");
+    await expect(
+      page.getByRole("heading", { name: source.title, exact: true }),
+    ).toBeVisible();
+    const beforeCancel = await exported(dashboardUIDs[0]);
+    let dialog = await open();
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Standard",
+        exact: true,
+      })
+      .click();
+    await expect(dialog).toContainText("Editor datasource: editor-standard");
+    await expect(dialog).toContainText(`Editor range: ${start} / ${end}`);
+    await dialog
+      .getByLabel("SDK annotation text", { exact: true })
+      .fill("Cancelled edit");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(await exported(dashboardUIDs[0])).toEqual(beforeCancel);
+
+    dialog = await open();
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Standard",
+        exact: true,
+      })
+      .click();
+    await dialog
+      .getByLabel("SDK annotation text", { exact: true })
+      .fill("Edited $service / $__range_ms");
+    await dialog
+      .getByLabel("Query name", { exact: true })
+      .fill("Standard edited");
+    await dialog.getByText("Event field mappings", { exact: true }).click();
+    await dialog
+      .getByLabel("Mapping value text", { exact: true })
+      .fill("DETAIL");
+    await dialog
+      .getByRole("button", { name: "Run from SDK editor", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Edited api / 120000");
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Custom",
+        exact: true,
+      })
+      .click();
+    await expect(dialog).toContainText(
+      "Custom editor datasource: editor-custom",
+    );
+    await expect(
+      dialog.getByLabel("SDK annotation text", { exact: true }),
+    ).toHaveCount(0);
+    await dialog
+      .getByLabel("Custom annotation text", { exact: true })
+      .fill("Custom edited $service");
+    await dialog
+      .getByRole("button", { name: "Run from custom SDK editor", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Custom Custom edited api");
+    await expect(dialog).toContainText("Editor frames: 1");
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Legacy",
+        exact: true,
+      })
+      .click();
+    await dialog
+      .getByLabel("Legacy annotation expression", { exact: true })
+      .fill("legacy-$service");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Legacy editor-proof legacy-api");
+    await dialog
+      .getByRole("button", { name: "Save annotation queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const savedClassic = await exported(dashboardUIDs[0]);
+    const classic = savedClassic.dashboard;
+    expect(savedClassic.meta).toEqual({ unknownEnvelope: 233 });
+    expect(classic.panels).toEqual(source.panels);
+    expect(classic.templating).toEqual(source.templating);
+    expect(classic.unknownTemplate).toEqual(source.unknownTemplate);
+    expect(classic.annotations.unknownContainer).toBe("retained");
+    expect(classic.annotations.list[1].target.unknownTarget).toBe(233);
+    expect(classic.annotations.list[1].target.annotationText).toBe(
+      "Edited $service / $__range_ms",
+    );
+    expect(classic.annotations.list[2].customEditorFlag).toBe("preserved");
+    expect(classic.annotations.list[3].query).toBe("legacy-$service");
+    await page.reload();
+    const curve = page.getByRole("region", {
+      name: source.panels[0].title,
+      exact: true,
+    });
+    await expect(curve.locator(".annotation-marker")).toHaveCount(3);
+    await expect(curve.locator(".annotation-marker title")).toContainText([
+      "Edited api / 120000",
+      "Custom Custom edited api",
+      "Legacy editor-proof legacy-api",
+    ]);
+
+    dialog = await open();
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Standard edited",
+        exact: true,
+      })
+      .click();
+    await dialog.getByText("Advanced query JSON", { exact: true }).click();
+    await dialog.getByLabel("Query JSON", { exact: true }).fill("{");
+    await expect(
+      dialog.getByRole("button", {
+        name: "Save annotation queries",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    const delayed = structuredClone(classic.annotations.list[1]);
+    delayed.target.annotationDelayMS = 1500;
+    await dialog
+      .getByLabel("Query JSON", { exact: true })
+      .fill(JSON.stringify(delayed));
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    const stats = async () =>
+      await (
+        await page.request.get(
+          endpoint +
+            `/api/datasources/uid/${dsUIDs[0]}/resources/annotation-stats`,
+        )
+      ).json();
+    await expect.poll(async () => (await stats()).active).toBeGreaterThan(0);
+    const cancelled = (await stats()).cancelled;
+    await dialog
+      .getByRole("button", { name: "Stop query", exact: true })
+      .click();
+    await expect
+      .poll(async () => (await stats()).cancelled)
+      .toBeGreaterThan(cancelled);
+    const streamed = structuredClone(classic.annotations.list[1]);
+    streamed.target.annotationFrontendStream = true;
+    await dialog
+      .getByLabel("Query JSON", { exact: true })
+      .fill(JSON.stringify(streamed));
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Edited api / 120000");
+    await expect(dialog).toContainText("Editor streams: 1 / Streaming");
+    await dialog
+      .getByRole("button", { name: "Stop query", exact: true })
+      .click();
+    await expect(dialog).toContainText("Editor streams: 0 / Streaming");
+    await expect(
+      dialog.getByRole("button", { name: "Stop query", exact: true }),
+    ).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+
+    const v1 = {
+      apiVersion: "dashboard.grafana.app/v1beta1",
+      kind: "Dashboard",
+      metadata: { name: dashboardUIDs[1], unknown: 233 },
+      spec: {
+        ...source,
+        uid: dashboardUIDs[1],
+        title: "V1 annotation editor",
+        annotations: { list: [source.annotations.list[1]] },
+      },
+    };
+    const v2 = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      kind: "Dashboard",
+      metadata: { name: dashboardUIDs[2], unknown: 233 },
+      spec: {
+        title: "V2 annotation editor",
+        timeSettings: {
+          from: String(start),
+          to: String(end),
+          timezone: "utc",
+          autoRefresh: "",
+        },
+        annotations: [
+          {
+            kind: "AnnotationQuery",
+            unknownResource: 233,
+            spec: {
+              name: "V2 query",
+              enable: true,
+              iconColor: "#5ac8de",
+              unknownSpec: 233,
+              legacyOptions: { mappings, custom: "retained" },
+              query: {
+                kind: "DataQuery",
+                group: "metricspanel-sdk-datasource",
+                version: "v0",
+                datasource: { name: dsUIDs[0], unknown: 233 },
+                spec: { annotationText: "V2 original" },
+              },
+            },
+          },
+        ],
+        elements: {
+          curve: {
+            kind: "Panel",
+            spec: {
+              id: 2,
+              title: "V2 editor curve",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  queries: [
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "A",
+                        query: {
+                          kind: "DataQuery",
+                          group: "prometheus",
+                          spec: { expr: "vector(7)" },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              vizConfig: { kind: "VizConfig", group: "timeseries", spec: {} },
+            },
+          },
+        },
+      },
+    };
+    for (const [index, resource] of [v1, v2].entries()) {
+      await importResource(resource);
+      await page.goto(endpoint + `/d/${dashboardUIDs[index + 1]}/annotations`);
+      dialog = await open();
+      await dialog
+        .getByLabel("SDK annotation text", { exact: true })
+        .fill(index ? "V2 edited" : "V1 edited");
+      await dialog
+        .getByRole("button", { name: "Save annotation queries", exact: true })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      const result = await exported(dashboardUIDs[index + 1]);
+      expect(result.metadata).toEqual(resource.metadata);
+      if (index) {
+        expect(result.spec.elements).toEqual(v2.spec.elements);
+        const annotation = result.spec.annotations[0];
+        expect(annotation.unknownResource).toBe(233);
+        expect(annotation.spec.unknownSpec).toBe(233);
+        expect(annotation.spec.legacyOptions.custom).toBe("retained");
+        expect(annotation.spec.query.datasource).toEqual(
+          v2.spec.annotations[0].spec.query.datasource,
+        );
+        expect(annotation.spec.query.spec.annotationText).toBe("V2 edited");
+      } else {
+        expect(result.spec.panels).toEqual(v1.spec.panels);
+        expect(result.spec.annotations.list[0].target.annotationText).toBe(
+          "V1 edited",
+        );
+      }
+      await page.reload();
+      await expect(page.locator(".annotation-marker title")).toContainText(
+        index ? "V2 edited" : "V1 edited",
+      );
+    }
+    const native = await page.request.post(endpoint + "/api/v1/dashboards", {
+      data: {
+        name: "Native editor",
+        panels: [
+          {
+            id: "native",
+            title: "Native annotation curve",
+            metric: "metricspanel_memory_bytes",
+            aggregation: "last",
+            unit: "bytes",
+          },
+        ],
+      },
+    });
+    expect(native.ok()).toBeTruthy();
+    nativeID = (await native.json()).id;
+    const note = await page.request.post(endpoint + "/api/annotations", {
+      data: {
+        dashboardUID: nativeID,
+        time: Date.now(),
+        text: "Native tagged deployment",
+        tags: ["deploy", "prod"],
+      },
+    });
+    expect(note.ok()).toBeTruthy();
+    noteID = (await note.json()).id;
+    await page.goto(endpoint + `/#dashboards`);
+    await page
+      .getByRole("button", { name: "Native editor", exact: true })
+      .click();
+    dialog = await open();
+    await dialog
+      .getByRole("button", { name: "Add annotation query", exact: true })
+      .click();
+    await dialog.getByLabel("Query name", { exact: true }).fill("Deploy tags");
+    await dialog
+      .getByLabel("Tags (comma separated)", { exact: true })
+      .fill("deploy, prod");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Native tagged deployment");
+    await dialog
+      .getByRole("button", { name: "Add annotation query", exact: true })
+      .click();
+    await dialog
+      .getByLabel("Query name", { exact: true })
+      .fill("Prometheus events");
+    await dialog
+      .getByLabel("Annotation datasource", { exact: true })
+      .selectOption("metricspanel");
+    await dialog
+      .getByLabel("PromQL expression", { exact: true })
+      .fill("vector(12)");
+    await dialog.getByText("Event field mappings", { exact: true }).click();
+    await dialog
+      .getByLabel("Mapping source text", { exact: true })
+      .selectOption("text");
+    await dialog
+      .getByLabel("Mapping value text", { exact: true })
+      .fill("Prometheus annotation");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Prometheus annotation");
+    await dialog.getByLabel("Enabled", { exact: true }).uncheck();
+    await dialog
+      .getByRole("button", { name: "Add annotation query", exact: true })
+      .click();
+    await dialog
+      .getByLabel("Query name", { exact: true })
+      .fill("Disposable query");
+    await dialog
+      .getByRole("button", { name: "Move query up", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", { name: "Move query down", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", { name: "Delete annotation query", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Deploy tags",
+        exact: true,
+      })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await page.screenshot({
+      path: testInfo.outputPath("annotation-query-editor-desktop.png"),
+    });
+    await dialog
+      .getByRole("button", { name: "Save annotation queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const nativeSaved = (
+      await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+    ).find((item: any) => item.id === nativeID);
+    expect(nativeSaved.grafana).toBeNull();
+    expect(nativeSaved.annotations).toHaveLength(3);
+    expect(nativeSaved.annotations[1].target.tags).toEqual(["deploy", "prod"]);
+    expect(nativeSaved.annotations[2].target.expr).toBe("vector(12)");
+    expect(nativeSaved.annotations[2].enable).toBe(false);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "注释查询", exact: true }).click();
+    const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
+    await mobile
+      .getByRole("button", { name: "编辑注释查询 Deploy tags", exact: true })
+      .click();
+    await expect(
+      mobile.getByLabel("标签（逗号分隔）", { exact: true }),
+    ).toHaveValue("deploy, prod");
+    expect(
+      await mobile.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("annotation-query-editor-mobile.png"),
+    });
+    await mobile.getByRole("button", { name: "取消", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    dialog = await open();
+    await dialog
+      .getByRole("button", {
+        name: "Edit annotation query Deploy tags",
+        exact: true,
+      })
+      .click();
+    await dialog
+      .getByLabel("Query name", { exact: true })
+      .fill("Unsaved old draft");
+    const concurrent = await page.request.put(
+      endpoint + "/api/v1/dashboards/" + nativeID,
+      { data: { ...nativeSaved, name: "Concurrent native editor" } },
+    );
+    expect(concurrent.ok()).toBeTruthy();
+    await dialog
+      .getByRole("button", { name: "Save annotation queries", exact: true })
+      .click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Dashboard changed. Close and reopen this editor.",
+    );
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    const latestNative = (
+      await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+    ).find((item: any) => item.id === nativeID);
+    expect(latestNative.name).toBe("Concurrent native editor");
+    expect(latestNative.annotations).toEqual(nativeSaved.annotations);
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    expect(consoleProblems).toEqual([]);
+  } catch (error) {
+    await page
+      .screenshot({
+        path: testInfo.outputPath("annotation-query-editor-failure.png"),
+      })
+      .catch(() => {});
+    throw new Error(
+      String(error) +
+        "\n" +
+        (await page.locator("body").innerText()).slice(-5000) +
+        "\nConsole: " +
+        JSON.stringify({ errors, consoleProblems }),
+    );
+  } finally {
+    await page.goto(endpoint + "/#overview", { timeout: 5000 }).catch(() => {});
+    if (noteID)
+      await page.request.delete(endpoint + "/api/annotations/" + noteID);
+    if (nativeID)
+      await page.request.delete(endpoint + "/api/v1/dashboards/" + nativeID);
+    for (const uid of dashboardUIDs)
+      await page.request.delete(endpoint + "/api/dashboards/uid/" + uid);
+    for (const uid of dsUIDs)
+      await page.request.delete(endpoint + "/api/datasources/uid/" + uid);
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-sdk-datasource",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path
+        .basename(resolved)
+        .startsWith("metricspanel233-annotation-editor-e2e-")
+    )
+      throw new Error("Unsafe annotation editor fixture cleanup");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("Plugin annotation SDK processors and legacy queries render isolated events and cancel backend work", async ({
   page,
   endpoint,

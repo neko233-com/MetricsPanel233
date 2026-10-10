@@ -215,6 +215,7 @@ test("annotation streaming updates stay observable and release the datasource su
     ).pipe(rx.take(2), rx.toArray()),
   );
   assert.equal(updates.length, 2);
+  assert.equal(updates[1].state, data.LoadingState.Streaming);
   assert.equal(updates[0].events[0].id, "1");
   assert.equal(released, 1);
   const stalled = {

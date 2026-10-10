@@ -91,14 +91,18 @@ func (s *Store) Dashboards(ctx context.Context) ([]model.Dashboard, error) {
 			return nil, err
 		}
 		var extra struct {
-			Variables []model.Variable `json:"variables"`
-			Grafana   json.RawMessage  `json:"grafana"`
+			Variables   []model.Variable `json:"variables"`
+			Grafana     json.RawMessage  `json:"grafana"`
+			Annotations json.RawMessage  `json:"annotations"`
 		}
 		if err = json.Unmarshal([]byte(extras), &extra); err != nil {
 			return nil, err
 		}
 		d.Variables = extra.Variables
 		d.Grafana = extra.Grafana
+		if string(extra.Annotations) != "null" {
+			d.Annotations = extra.Annotations
+		}
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -112,7 +116,11 @@ func (s *Store) SaveDashboard(ctx context.Context, d model.Dashboard) (model.Das
 	if err != nil {
 		return d, err
 	}
-	extras, err := json.Marshal(map[string]any{"variables": d.Variables, "grafana": d.Grafana})
+	extra := map[string]any{"variables": d.Variables, "grafana": d.Grafana}
+	if len(d.Annotations) > 0 {
+		extra["annotations"] = d.Annotations
+	}
+	extras, err := json.Marshal(extra)
 	if err != nil {
 		return d, err
 	}

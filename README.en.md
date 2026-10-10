@@ -172,7 +172,14 @@ Streaming updates remain subscribed. Named query failures preserve other annotat
 Leaving the page cancels observable datasource work, including Go SDK HTTP/gRPC calls. Late legacy Promise results are ignored; plugins also receive an optional cancellation signal.
 IDs from different sources remain separate. External rows are read-only and are not automatically ingested into local annotations. `annotations list` reads local records; agents use `datasources query --id UID --file FILE` to inspect raw datasource frames. Frontend SDK callbacks execute in the browser.
 Testify and real browser coverage verify Go SDK frames, datasource settings after restart, classic/V1/V2 templates, mappings, colliding source IDs, isolated errors, variables and cancellation.
-Annotation query configuration editors, recurring time regions and full organization permissions remain pending.
+The dashboard toolbar's annotation query editor adds/removes, reorders, enables, colors and filters queries, and previews real results. Builtin queries select dashboard scope or AND/OR tags.
+External sources prefer `AnnotationSupport.QueryEditor`, then the plugin's ordinary `components.QueryEditor`, with official datasource context, range and preview DataFrames. `onChange`, `onAnnotationChange` and `onRunQuery` are supported.
+Prometheus offers a PromQL input. Standard mapping supports fields, constant text and skipped fields; custom event processing remains owned by its plugin. Advanced JSON edits other plugin fields.
+Prometheus annotation requests honor the datasource `jsonData.timeInterval` minimum, defaulting to 15 seconds, following the [official interval configuration](https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/).
+Cancel and preview do not persist configuration. Save checks the version present when the editor opened and reports detected concurrent edits; stop or unmount cancels subscriptions.
+Classic, V1 and V2 saves retain the original envelope and unrelated fields. Unchanged V2 query resources remain exact, with each resource's mappings and plugin extensions preserved.
+Native dashboards use an optional `annotations` array in the existing SQLite extras (32 queries, 128 KiB); CLI dashboard save/export preserves it. Omission uses builtin defaults; `[]` explicitly disables all queries. No separate migration service is required.
+Recurring time regions, legacy Angular annotation editors and full organization permissions remain pending.
 Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and mobile layout.
 See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
 Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) and [standard annotation converter](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts).

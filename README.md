@@ -256,7 +256,14 @@ SDK 面板通过公开 `PanelData.annotations` 接收官方 `arrayToDataFrame` �
 离开页面取消可订阅的数据源请求，包括 Go SDK HTTP/gRPC；旧版 Promise 的迟到结果会忽略，并向插件传递可选取消信号。
 不同数据源的事件 ID 分别保留并隔离，外部事件在编辑器中只读，不自动写入本地注释表。`annotations list` 查询本地记录；agent 可用 `datasources query --id UID --file FILE` 读取数据源原始帧，前端 SDK 回调由浏览器执行。
 Testify 和真实浏览器用例验证 Go SDK 帧、重启后的数据源设置、经典/V1/V2 模板、字段映射、同 ID 不同来源、错误隔离、变量和取消。
-注释查询配置编辑器、周期性时间区间和完整组织权限仍需补齐。
+仪表盘工具栏的“注释查询”提供增删、排序、启用、颜色、面板筛选和测试结果；内置查询可选择当前仪表盘或标签 AND/OR。
+外部数据源优先使用 `AnnotationSupport.QueryEditor`，然后使用插件普通 `components.QueryEditor`，传入官方数据源上下文、时间范围及测试 DataFrame；支持 `onChange` / `onAnnotationChange` / `onRunQuery`。
+Prometheus 提供 PromQL 输入；标准转换可配置字段、固定文本或跳过，插件自定义事件处理仍由插件负责。高级 JSON 可编辑其他插件字段。
+Prometheus 注释查询遵循数据源 `jsonData.timeInterval` 的最低步长，默认 15 秒，参考 [官方间隔配置](https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/)。
+取消和测试不会写配置；保存前检查打开时的仪表盘版本，检测到其他修改时要求重新打开。离开或停止测试会取消订阅。
+经典、V1 与 V2 保存原外壳和其他字段；未修改的 V2 查询资源原样保留，字段映射和插件附加字段跟随各自资源。
+原生仪表盘使用可选的 `annotations` 数组，存于 SQLite 控制库的现有 extras 中（最多 32 条、128 KiB），CLI 的仪表盘保存 / 导出也保留它；省略使用内置默认查询，`[]` 显式禁用全部查询。无需额外迁移服务。
+周期性时间区间、旧 Angular 注释编辑器和完整组织权限仍需补齐。
 Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。

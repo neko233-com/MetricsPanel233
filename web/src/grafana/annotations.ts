@@ -18,9 +18,13 @@ import {
 } from "./annotation-query";
 import { t } from "../i18n";
 import {
+  annotationQueries,
+  annotationSource,
+  nativeAnnotationParams,
+} from "./annotation-config";
+import {
   api,
   dashboardUID,
-  interpolate,
   message,
   type Dashboard,
   type InterpolationValues,
@@ -74,55 +78,6 @@ export function annotationStateLabel(
     translate(name === "Pending" ? "Pending alert" : name) +
     (reason ? ` (${translate(reason.slice(0, -1))})` : "")
   );
-}
-type Query = {
-  [key: string]: any;
-  enable?: boolean;
-  builtIn?: number;
-  name?: string;
-  iconColor?: string;
-  datasource?: string | { type?: string; uid?: string };
-  type?: string;
-  tags?: string[];
-  matchAny?: boolean;
-  limit?: number;
-  target?: {
-    [key: string]: any;
-    type?: string;
-    tags?: string[];
-    matchAny?: boolean;
-    limit?: number;
-  };
-  query?: {
-    group?: string;
-    datasource?: { name?: string };
-    spec?: Record<string, unknown>;
-  };
-  filter?: { ids?: number[]; exclude?: boolean };
-};
-function queries(dashboard?: Dashboard): Query[] {
-  const original = dashboard?.grafana as Record<string, any> | undefined;
-  const spec = original?.dashboard || original?.spec || original;
-  const annotations = spec?.annotations;
-  if (Array.isArray(annotations))
-    return annotations.map((item) => ({
-      ...item.spec?.legacyOptions,
-      ...item.spec,
-      target: { ...item.spec?.legacyOptions, ...item.spec?.query?.spec },
-      datasource: {
-        type: item.spec?.query?.group,
-        uid: item.spec?.query?.datasource?.name,
-      },
-    }));
-  if (Array.isArray(annotations?.list)) return annotations.list;
-  return [
-    {
-      builtIn: 1,
-      name: "Annotations & Alerts",
-      enable: true,
-      type: "dashboard",
-    },
-  ];
 }
 type Result = { events: Annotation[]; error?: string };
 const cache = new Map<string, Observable<Result>>();
@@ -229,7 +184,7 @@ export function useAnnotations(
           timezone: resolved.timezone,
         };
       const panelID = Number(panel.config?.id || 0);
-      const configured = queries(dashboard).filter(
+      const configured = annotationQueries(dashboard).filter(
         (q) =>
           q.enable !== false &&
           (!q.filter?.ids?.length ||
@@ -241,25 +196,11 @@ export function useAnnotations(
         throw new Error("At most 32 annotation queries");
       const streams = configured.map((q) => {
         const source = defer(() => {
-          const ref =
-            typeof q.datasource === "string"
-              ? interpolate(q.datasource, values, fixed)
-              : q.datasource
-                ? {
-                    ...q.datasource,
-                    uid: interpolate(q.datasource.uid || "", values, fixed),
-                  }
-                : undefined;
-          let sourceUID = typeof ref === "string" ? ref : ref?.uid || "";
-          if (sourceUID === "prometheus") sourceUID = "metricspanel";
-          if (sourceUID === "default") sourceUID = "";
-          const builtin =
-            Boolean(q.builtIn) ||
-            !ref ||
-            ["-- Grafana --", "grafana"].includes(sourceUID) ||
-            (!sourceUID &&
-              typeof ref === "object" &&
-              ["grafana", "datasource"].includes(ref.type || ""));
+          const {
+            ref,
+            uid: sourceUID,
+            native: builtin,
+          } = annotationSource(q, values, fixed);
           let stream: Observable<Result>;
           if (!builtin) {
             const key = JSON.stringify([
@@ -316,26 +257,8 @@ export function useAnnotations(
               ),
             );
           } else {
-            const target = q.target || q;
-            const params = new URLSearchParams({
-              from: String(resolved.start),
-              to: String(resolved.end),
-              limit: String(target.limit || 100),
-            });
-            if (q.builtIn || target.type === "dashboard" || !target.type)
-              params.set("dashboardUID", uid);
-            else {
-              const tags = (target.tags || []).flatMap((tag) => {
-                const exact = tag.match(/^\$\{?(\w+)\}?$/);
-                const selected = exact && values[exact[1]];
-                return Array.isArray(selected)
-                  ? selected
-                  : [interpolate(tag, values, fixed)];
-              });
-              if (!tags.length) return of({ events: [] } as Result);
-              for (const tag of tags) params.append("tags", tag);
-              params.set("matchAny", String(Boolean(target.matchAny)));
-            }
+            const params = nativeAnnotationParams(q, dashboard, values, fixed);
+            if (!params) return of({ events: [] } as Result);
             const key = `${params}:${tick}:${change}:${sessionStorage.getItem("metricspanel-token") || ""}`;
             stream = cached(key, () => nativeQuery(params));
           }

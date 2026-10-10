@@ -544,6 +544,7 @@ export default function App() {
                   onRange={changeRange}
                   tick={tick}
                   refresh={refreshWorkspace}
+                  reload={load}
                   refreshChoice={refreshChoice}
                   refreshOptions={refreshOptionsFromDashboard(current.grafana)}
                   onRefreshChoice={changeRefresh}

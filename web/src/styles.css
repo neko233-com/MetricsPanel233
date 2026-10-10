@@ -1123,6 +1123,33 @@ dialog::backdrop {
   background: #050912bb;
   backdrop-filter: blur(3px);
 }
+.annotation-query-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 24px;
+}
+.annotation-query-list { display: flex; flex-direction: column; gap: 8px; align-self: start; }
+.annotation-query-list button { text-align: left; justify-content: flex-start; overflow-wrap: anywhere; min-width: 0; }
+.annotation-query-list button[aria-current="page"] { background: #ed914826; border-color: var(--orange); }
+.annotation-query-list small { display: block; font-size: 11px; color: #a4b1c8; margin-top: 4px; }
+.annotation-query-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.annotation-query-fields, .annotation-plugin-editor { min-width: 0; }
+.annotation-plugin-editor { overflow-x: auto; margin-bottom: 18px; }
+.annotation-query-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
+.annotation-query-fields details { margin-top: 14px; }
+.annotation-query-fields summary { cursor: pointer; margin-bottom: 16px; color: #c3cee2; font-size: 13px; }
+.annotation-mapping-row { display: grid; grid-template-columns: 1fr 1.5fr; gap: 12px; }
+.annotation-query-preview { margin-top: 18px; padding: 14px; border: 1px solid #3b4659; border-radius: 6px; }
+.annotation-query-preview ul { list-style: none; padding: 0; margin: 10px 0 0; }
+.annotation-query-preview li { display: flex; gap: 14px; margin-top: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.annotation-query-preview time { flex: 0 0 auto; color: #a4b1c8; }
+.annotation-advanced textarea { font-family: var(--mono); }
+@media (max-width: 600px) {
+  .annotation-query-layout { grid-template-columns: 1fr; gap: 18px; }
+  .annotation-query-list { max-height: 160px; overflow-y: auto; }
+  .annotation-query-fields .form-row { flex-direction: column; gap: 0; }
+  .annotation-query-preview li { flex-direction: column; gap: 4px; }
+}
 .dialog-heading {
   display: flex;
   justify-content: space-between;

@@ -46,6 +46,7 @@ export type Dashboard = {
   panels: Panel[];
   updated_at: number;
   variables?: Variable[];
+  annotations?: Record<string, any>[];
   grafana?: unknown;
 };
 export function dashboardUID(dashboard: Dashboard): string {

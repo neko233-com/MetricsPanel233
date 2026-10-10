@@ -98,12 +98,13 @@ type Variable struct {
 }
 
 type Dashboard struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Panels    []Panel         `json:"panels"`
-	UpdatedAt int64           `json:"updated_at"`
-	Variables []Variable      `json:"variables,omitempty"`
-	Grafana   json.RawMessage `json:"grafana,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Panels      []Panel         `json:"panels"`
+	UpdatedAt   int64           `json:"updated_at"`
+	Variables   []Variable      `json:"variables,omitempty"`
+	Grafana     json.RawMessage `json:"grafana,omitempty"`
+	Annotations json.RawMessage `json:"annotations,omitempty"`
 }
 
 func ValidAggregation(a string) bool {
@@ -115,6 +116,17 @@ func ValidAggregation(a string) bool {
 }
 
 func (d Dashboard) Validate() error {
+	if len(d.Annotations) > 0 {
+		var queries []map[string]json.RawMessage
+		if len(d.Annotations) > 128*1024 || json.Unmarshal(d.Annotations, &queries) != nil || queries == nil || len(queries) > 32 {
+			return errors.New("annotations must be a JSON array under 128 KiB with at most 32 queries")
+		}
+		for _, query := range queries {
+			if query == nil {
+				return errors.New("annotation queries must be JSON objects")
+			}
+		}
+	}
 	if len(d.Name) == 0 || len(d.Name) > 100 {
 		return errors.New("dashboard name must contain 1–100 bytes")
 	}

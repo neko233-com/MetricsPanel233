@@ -430,6 +430,7 @@ async function init(): Promise<Runtime> {
           if (!plugin?.DataSourceClass)
             throw new Error(`Datasource class missing: ${settings.type}`);
           instance = new plugin.DataSourceClass(settings);
+          instance.components = plugin.components;
         }
         datasourceCache.set(settings.uid, { version, instance });
         return instance;
@@ -583,6 +584,13 @@ export async function sdkRuntime() {
 class LocalPrometheus extends Data.DataSourceApi {
   constructor(private settings: DataSourceSettings) {
     super(settings);
+    const options = settings.jsonData as Data.DataSourceJsonData & {
+      timeInterval?: unknown;
+    };
+    this.interval =
+      typeof options.timeInterval === "string" && options.timeInterval
+        ? options.timeInterval
+        : "15s";
   }
   query(
     request: Data.DataQueryRequest,

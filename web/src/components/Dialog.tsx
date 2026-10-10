@@ -26,6 +26,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
+      aria-label={title}
       style={style}
       onCancel={onClose}
       onClick={(e) => {

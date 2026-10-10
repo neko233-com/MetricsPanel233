@@ -27,6 +27,7 @@ import { Dialog } from "../components/Dialog";
 import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
 import { RefreshPicker } from "../components/RefreshPicker";
+import { AnnotationQueriesButton } from "../components/AnnotationQueriesButton";
 export function DashboardView({
   dashboard,
   stats,
@@ -93,6 +94,11 @@ export function DashboardView({
           </p>
         </div>
         <div className="toolbar">
+          <AnnotationQueriesButton
+            dashboard={dashboard}
+            range={range}
+            reload={reload}
+          />
           <TimeRangePicker value={range} onChange={onRange} />
           <RefreshPicker value={refreshChoice} onChange={onRefreshChoice} />
           <button
