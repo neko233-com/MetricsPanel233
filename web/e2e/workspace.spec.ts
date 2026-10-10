@@ -86,6 +86,496 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Recurring time regions render SDK frames and native bands, preserve all dashboard formats and never store generated events", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-time-regions-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "events.zip"),
+    run = promisify(execFile);
+  const ids: string[] = [],
+    errors: string[] = [],
+    consoleProblems: string[] = [],
+    annotationWrites: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (entry) => {
+    if (["error", "warning"].includes(entry.type()))
+      consoleProblems.push(entry.text());
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() !== "GET" &&
+      /\/api\/annotations(?:\/|\?|$)/.test(request.url())
+    )
+      annotationWrites.push(request.url());
+  });
+  const before = await (
+    await page.request.get(endpoint + "/api/annotations?limit=1000")
+  ).json();
+  const start = Date.parse("2026-10-05T08:00Z"),
+    end = Date.parse("2026-10-06T18:00Z");
+  const region = (name: string, timeRegion: any, extra = {}) => ({
+    name,
+    enable: true,
+    datasource: { type: "grafana", uid: "-- Grafana --" },
+    iconColor: "#ffb357",
+    target: { queryType: "timeRegions", timeRegion, unknownTarget: 233 },
+    ...extra,
+  });
+  const office = region("Office hours", {
+    from: "09:00",
+    to: "17:00",
+    timezone: "utc",
+    unknownSchedule: 233,
+  });
+  const source = {
+    uid: "regions-classic",
+    title: "Recurring regions",
+    timezone: "utc",
+    time: { from: String(start), to: String(end) },
+    refresh: "",
+    unknownTemplate: 233,
+    annotations: {
+      unknownContainer: 233,
+      list: [
+        office,
+        region(
+          "Afternoon Cron",
+          {
+            mode: "cron",
+            cronExpr: "0 13 * * MON-FRI",
+            duration: "1h",
+            timezone: "utc",
+          },
+          { filter: { ids: [2] }, iconColor: "#b794f4" },
+        ),
+        region("Broken schedule", {
+          mode: "cron",
+          cronExpr: "invalid",
+          duration: "8h",
+          timezone: "utc",
+        }),
+        region(
+          "Disabled",
+          { mode: "cron", cronExpr: "invalid", duration: "8h" },
+          { enable: false },
+        ),
+        region(
+          "Excluded",
+          { from: "09:00", to: "17:00" },
+          { filter: { ids: [99] } },
+        ),
+      ],
+    },
+    panels: [
+      {
+        id: 1,
+        title: "Regions SDK",
+        type: "metricspanel-events-panel",
+        targets: [{ refId: "A", expr: "vector(233)", instant: true }],
+        gridPos: { x: 0, y: 0, w: 12, h: 12 },
+      },
+      {
+        id: 2,
+        title: "Regions curve",
+        type: "timeseries",
+        targets: [{ refId: "A", expr: "vector(233)" }],
+        gridPos: { x: 12, y: 0, w: 12, h: 12 },
+      },
+    ],
+  };
+  const open = async () => {
+    await page
+      .getByRole("button", { name: "Annotation queries", exact: true })
+      .click();
+    return page.getByRole("dialog", {
+      name: "Annotation queries",
+      exact: true,
+    });
+  };
+  const saved = async (uid: string) =>
+    (
+      await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+    ).find(
+      (item: any) =>
+        item.grafana?.metadata?.name === uid ||
+        item.grafana?.uid === uid ||
+        item.id === uid,
+    );
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, timeout: 60000 },
+    );
+    await run(fixture, ["--package-extension-events", archive], {
+      cwd: repoRoot,
+      timeout: 15000,
+    });
+    const installed = await page.request.post(
+      endpoint + "/api/v1/plugins/install",
+      {
+        data: await readFile(archive),
+        headers: { "Content-Type": "application/zip" },
+      },
+    );
+    expect(installed.ok(), await installed.text()).toBeTruthy();
+    const imported = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: { dashboard: source },
+    });
+    expect(imported.ok(), await imported.text()).toBeTruthy();
+    ids.push((await saved(source.uid)).id);
+    await page.goto(endpoint + "/d/regions-classic/regions");
+    const sdk = page.getByRole("region", { name: "Regions SDK", exact: true }),
+      plot = page.getByRole("region", { name: "Regions curve", exact: true });
+    await expect(sdk).toContainText("Panel annotations: 2");
+    await expect(sdk).toContainText("Panel value: 233");
+    await expect(plot.locator(".annotation-marker rect")).toHaveCount(4);
+    await expect(plot).toContainText("Broken schedule:");
+    await expect(plot).not.toContainText("Disabled:");
+    await sdk.getByText("Annotation frame inspection", { exact: true }).click();
+    const frameRows = JSON.parse(
+      (await sdk.getByText(/^Annotation frames:/).innerText()).replace(
+        "Annotation frames: ",
+        "",
+      ),
+    );
+    expect(frameRows).toEqual([
+      {
+        time: Date.parse("2026-10-05T09:00Z"),
+        timeEnd: Date.parse("2026-10-05T17:00Z"),
+        text: "Office hours",
+      },
+      {
+        time: Date.parse("2026-10-06T09:00Z"),
+        timeEnd: Date.parse("2026-10-06T17:00Z"),
+        text: "Office hours",
+      },
+    ]);
+    expect(
+      await plot
+        .locator(".annotation-marker")
+        .evaluateAll((nodes) =>
+          nodes.every((node) =>
+            node
+              .getAttribute("data-annotation-key")
+              ?.startsWith("time-region:"),
+          ),
+        ),
+    ).toBeTruthy();
+    await plot
+      .getByRole("button", { name: "Annotations", exact: true })
+      .click();
+    const list = page.getByRole("dialog", { name: "Annotations", exact: true });
+    await expect(list.locator(".annotation-list > div")).toHaveCount(4);
+    await expect(
+      list.getByRole("button", { name: "Edit annotation", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      list.getByRole("button", { name: "Delete annotation", exact: true }),
+    ).toHaveCount(0);
+    await list.getByRole("button", { name: "Close", exact: true }).click();
+    let dialog = await open();
+    await expect(
+      dialog.getByLabel("Annotation scope", { exact: true }),
+    ).toHaveValue("timeRegions");
+    await expect(
+      dialog.getByLabel("Region start time", { exact: true }),
+    ).toHaveValue("09:00");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("2 events found");
+    await dialog.getByLabel("Advanced Cron", { exact: true }).check();
+    await expect(
+      dialog.getByLabel("Cron expression", { exact: true }),
+    ).toHaveValue("0 9 * * *");
+    await dialog
+      .getByLabel("Cron expression", { exact: true })
+      .fill("0 10 * * MON-FRI");
+    await dialog.getByLabel("Region duration", { exact: true }).fill("6h");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("2 events found");
+    await page.screenshot({
+      path: testInfo.outputPath("time-regions-editor-desktop.png"),
+      animations: "disabled",
+    });
+    await dialog
+      .getByRole("button", { name: "Save annotation queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const edited = (await saved(source.uid)).grafana;
+    expect(edited.panels).toEqual(source.panels);
+    expect(edited.unknownTemplate).toBe(233);
+    expect(edited.annotations.unknownContainer).toBe(233);
+    expect(edited.annotations.list[0].target.timeRegion).toMatchObject({
+      mode: "cron",
+      cronExpr: "0 10 * * MON-FRI",
+      duration: "6h",
+      unknownSchedule: 233,
+    });
+    await page.reload();
+    await expect(plot.locator(".annotation-marker rect")).toHaveCount(4);
+    await expect(sdk).toContainText("Panel value: 233");
+    await expect(plot.locator("polyline")).toHaveCount(1);
+    await expect(plot.locator(".chart-empty")).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("time-regions-chart-desktop.png"),
+      animations: "disabled",
+    });
+    // URL range changes recompute generated events, including partial overlaps.
+    await page.goto(
+      endpoint +
+        `/d/regions-classic/regions?from=${Date.parse("2026-10-05T12:00Z")}&to=${Date.parse("2026-10-05T14:00Z")}`,
+    );
+    await expect(plot.locator(".annotation-marker rect")).toHaveCount(2);
+    await expect(sdk).toContainText("Panel annotations: 1");
+    const v1 = {
+      apiVersion: "dashboard.grafana.app/v1beta1",
+      kind: "Dashboard",
+      metadata: { name: "regions-v1", unknown: 233 },
+      spec: {
+        ...source,
+        uid: "regions-v1",
+        title: "Regions V1",
+        annotations: { list: [office] },
+      },
+    };
+    const v2 = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      kind: "Dashboard",
+      metadata: { name: "regions-v2", unknown: 233 },
+      spec: {
+        title: "Regions V2",
+        timeSettings: {
+          from: String(start),
+          to: String(end),
+          timezone: "utc",
+          autoRefresh: "",
+        },
+        annotations: [
+          {
+            kind: "AnnotationQuery",
+            unknownResource: 233,
+            spec: {
+              name: "V2 regions",
+              enable: true,
+              legacyOptions: { unknownLegacy: 233 },
+              query: {
+                kind: "DataQuery",
+                group: "grafana",
+                version: "v0",
+                datasource: { name: "-- Grafana --", unknownRef: 233 },
+                spec: office.target,
+              },
+            },
+          },
+        ],
+        elements: {
+          curve: {
+            kind: "Panel",
+            spec: {
+              id: 2,
+              title: "V2 region curve",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  queries: [
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "A",
+                        query: {
+                          kind: "DataQuery",
+                          group: "prometheus",
+                          spec: { expr: "vector(233)" },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              vizConfig: { kind: "VizConfig", group: "timeseries", spec: {} },
+            },
+          },
+        },
+      },
+    };
+    for (const resource of [v1, v2]) {
+      const imported = await page.request.post(
+        endpoint + "/api/v1/import/grafana",
+        { data: resource },
+      );
+      expect(imported.ok(), await imported.text()).toBeTruthy();
+      ids.push((await imported.json()).dashboard.id);
+      await page.goto(endpoint + `/d/${resource.metadata.name}/regions`);
+      await expect(page.locator(".annotation-marker rect")).toHaveCount(2);
+      dialog = await open();
+      await dialog
+        .getByLabel("Region time zone", { exact: true })
+        .fill("Asia/Shanghai");
+      await dialog
+        .getByRole("button", { name: "Save annotation queries", exact: true })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      const raw = (await saved(resource.metadata.name)).grafana;
+      expect(raw.metadata).toEqual(resource.metadata);
+      if (resource === v2) {
+        expect(raw.spec.elements).toEqual(v2.spec.elements);
+        const q = raw.spec.annotations[0];
+        expect(q.unknownResource).toBe(233);
+        expect(q.spec.legacyOptions.unknownLegacy).toBe(233);
+        expect(q.spec.query.datasource).toEqual(
+          v2.spec.annotations[0].spec.query.datasource,
+        );
+        expect(q.spec.query.spec.timeRegion.timezone).toBe("Asia/Shanghai");
+        expect(q.spec.query.spec.unknownTarget).toBe(233);
+      } else
+        expect(raw.spec.annotations.list[0].target.timeRegion.timezone).toBe(
+          "Asia/Shanghai",
+        );
+    }
+    const native = await page.request.post(endpoint + "/api/v1/dashboards", {
+      data: {
+        name: "Native regions",
+        panels: [
+          {
+            id: "curve",
+            title: "Native region curve",
+            metric: "metricspanel_memory_bytes",
+            aggregation: "last",
+            unit: "bytes",
+          },
+        ],
+      },
+    });
+    expect(native.ok()).toBeTruthy();
+    const nativeID = (await native.json()).id;
+    ids.push(nativeID);
+    await page.goto(endpoint + "/#dashboards");
+    await page
+      .getByRole("button", { name: "Native regions", exact: true })
+      .click();
+    dialog = await open();
+    await dialog
+      .getByRole("button", { name: "Add annotation query", exact: true })
+      .click();
+    await dialog
+      .getByLabel("Query name", { exact: true })
+      .fill("Daily coverage");
+    await dialog
+      .getByLabel("Annotation scope", { exact: true })
+      .selectOption("timeRegions");
+    await dialog.getByLabel("Region time zone", { exact: true }).fill("utc");
+    await dialog.getByLabel("Start weekday", { exact: true }).selectOption("1");
+    await dialog.getByLabel("End weekday", { exact: true }).selectOption("2");
+    await dialog.getByLabel("Start weekday", { exact: true }).selectOption("");
+    await expect(dialog.getByLabel("End weekday", { exact: true })).toHaveValue(
+      "",
+    );
+    await dialog.getByLabel("Region start time", { exact: true }).fill("00:00");
+    await dialog.getByLabel("Region end time", { exact: true }).fill("23:59");
+    await dialog
+      .getByRole("button", { name: "Test annotation query", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("region", {
+        name: "Annotation query result",
+        exact: true,
+      }),
+    ).toContainText("Daily coverage");
+    await dialog
+      .getByRole("button", { name: "Save annotation queries", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    expect((await saved(nativeID)).grafana).toBeNull();
+    expect((await saved(nativeID)).annotations[1].target.timeRegion).toEqual({
+      timezone: "utc",
+      from: "00:00",
+      to: "23:59",
+    });
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "注释查询", exact: true }).click();
+    const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
+    await mobile
+      .getByRole("button", { name: "编辑注释查询 Daily coverage", exact: true })
+      .click();
+    await expect(mobile.getByLabel("注释范围", { exact: true })).toHaveValue(
+      "timeRegions",
+    );
+    await expect(
+      mobile.getByLabel("区域开始时间", { exact: true }),
+    ).toHaveValue("00:00");
+    expect(
+      await mobile.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("time-regions-editor-mobile.png"),
+      animations: "disabled",
+    });
+    await mobile
+      .getByRole("button", { name: "关闭对话框", exact: true })
+      .click();
+    expect(errors).toEqual([]);
+    expect(consoleProblems).toEqual([]);
+    expect(annotationWrites).toEqual([]);
+    expect(
+      await (
+        await page.request.get(endpoint + "/api/annotations?limit=1000")
+      ).json(),
+    ).toEqual(before);
+  } finally {
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-time-regions-e2e-")
+    )
+      throw new Error("Unsafe time region fixture cleanup");
+    try {
+      await page.goto("about:blank", { timeout: 5000 }).catch(() => {});
+      // A timed-out Playwright context can already be disposed. Cleanup still
+      // targets the owned worker service before its endpoint fixture shuts down.
+      for (const id of ids)
+        await fetch(endpoint + "/api/v1/dashboards/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+      await fetch(endpoint + "/api/v1/plugins/metricspanel-events-app", {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10000),
+      });
+    } finally {
+      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }
+});
+
 test("Annotation query editors use public SDK components, preserve template resources and save native configuration", async ({
   page,
   endpoint,
@@ -2294,7 +2784,10 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     await panel.getByText("Frame inspection", { exact: true }).click();
     const inspect = async () =>
       JSON.parse(
-        (await panel.locator("pre").innerText()).replace("Frame details: ", ""),
+        (await panel.getByText(/^Frame details:/).innerText()).replace(
+          "Frame details: ",
+          "",
+        ),
       ) as {
         refId: string;
         compare: boolean;

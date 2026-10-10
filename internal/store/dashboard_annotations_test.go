@@ -18,7 +18,7 @@ func TestNativeAnnotationQueriesSurviveRestartAndDisableDefaults(t *testing.T) {
 	s, err := store.Open(path)
 	require.NoError(t, err)
 	ctx := context.Background()
-	config := json.RawMessage(`[{"name":"Deployments","datasource":{"uid":"events","type":"test"},"target":{"refId":"Anno","unknown":{"value":233}},"mappings":{"text":{"value":"Detail"}}}]`)
+	config := json.RawMessage(`[{"name":"Deployments","datasource":{"uid":"events","type":"test"},"target":{"refId":"Anno","unknown":{"value":233}},"mappings":{"text":{"value":"Detail"}}},{"name":"Office hours","datasource":{"type":"grafana","uid":"-- Grafana --"},"target":{"queryType":"timeRegions","timeRegion":{"mode":"cron","cronExpr":"0 9 * * MON-FRI","duration":"8h","timezone":"Asia/Shanghai","unknown":233}}}]`)
 	saved, err := s.SaveDashboard(ctx, model.Dashboard{ID: "notes", Name: "Native", Panels: []model.Panel{}, Annotations: config})
 	require.NoError(t, err)
 	require.NoError(t, s.DB.Close())

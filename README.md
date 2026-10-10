@@ -263,7 +263,13 @@ Prometheus 注释查询遵循数据源 `jsonData.timeInterval` 的最低步长�
 取消和测试不会写配置；保存前检查打开时的仪表盘版本，检测到其他修改时要求重新打开。离开或停止测试会取消订阅。
 经典、V1 与 V2 保存原外壳和其他字段；未修改的 V2 查询资源原样保留，字段映射和插件附加字段跟随各自资源。
 原生仪表盘使用可选的 `annotations` 数组，存于 SQLite 控制库的现有 extras 中（最多 32 条、128 KiB），CLI 的仪表盘保存 / 导出也保留它；省略使用内置默认查询，`[]` 显式禁用全部查询。无需额外迁移服务。
-周期性时间区间、旧 Angular 注释编辑器和完整组织权限仍需补齐。
+周期时间区域使用内置数据源的 `target.queryType: "timeRegions"` 和 `target.timeRegion`，支持简单星期／时间配置和高级 Cron 配置。
+开始时间由 `browser`、`utc` 或 IANA 时区确定；缺省时区沿用浏览器，新建查询默认仪表盘时区。简单区间支持每日跨午夜、显式星期跨周和仅星期配置的结束日包含。
+使用与 Grafana 13.2.3 相同的 Croner 9.1.0，支持五／六段表达式、星期名称、`L` 和 `#`。Croner 9.1 的夏令时缺口向后归一化，重复时段执行一次；持续时长按 SDK 换算后的固定毫秒累加，不重新对齐每个结束时间的本地钟表。
+按面板实际时间窗口计算包含重叠区间，保留未裁剪的开始／结束时间，图表裁剪显示；结束恰好位于窗口起点的区域排除，开始恰好位于终点的区域包含。每个查询最多 1000 个区域，超限或无效配置显示独立查询错误。
+原生色带和 SDK 注解帧接收相同事件；生成事件只读，不写入数据库，也不会出现在 CLI `annotations list` 中。CLI 仪表盘保存／导出保留其配置。
+星期、Cron、时区和持续时长可在中英文注释编辑器修改与预览，原生／经典／V1／V2 格式和未知字段均保留；存储重启、时区／夏令时、边界与浏览器 SDK 帧由自动测试覆盖。
+旧 Angular 注释编辑器和完整组织权限仍需补齐。周期配置参考 [Grafana 注解文档](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/) 和 [13.2.3 时间区域契约](https://github.com/grafana/grafana/blob/v13.2.3/public/app/core/utils/timeRegions.ts)。
 Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。

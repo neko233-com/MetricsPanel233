@@ -18,7 +18,7 @@ import {
   type DataSourceInstanceSettings,
   type PanelData,
 } from "@grafana/data";
-import { from, map, timeout, type Subscription } from "rxjs";
+import { defer, from, map, of, timeout, type Subscription } from "rxjs";
 import {
   api,
   dashboardUID,
@@ -44,6 +44,8 @@ import {
   type AnnotationQueryResult,
 } from "../grafana/annotation-query";
 import { resolveTimeRange, type TimeSelection } from "../grafana/time-range";
+import { isTimeRegionQuery, timeRegionQuery } from "../grafana/time-regions";
+import { TimeRegionEditor } from "./TimeRegionEditor";
 import {
   getPluginDatasource,
   sdkRuntime,
@@ -309,7 +311,9 @@ export default function AnnotationQueriesEditor({
     nativeController.current = controller;
     const raw = dashboard.grafana as Record<string, any> | undefined;
     const stream = source.native
-      ? (() => {
+      ? defer(() => {
+          if (isTimeRegionQuery(config))
+            return of<AnnotationQueryResult>(timeRegionQuery(config, fixed));
           const params = nativeAnnotationParams(
             config,
             dashboard,
@@ -323,7 +327,7 @@ export default function AnnotationQueriesEditor({
                 })
               : Promise.resolve([]),
           ).pipe(map((events) => ({ events }) as AnnotationQueryResult));
-        })()
+        })
       : loaded
         ? runDatasourceAnnotationQuery(
             loaded.datasource,
@@ -370,7 +374,7 @@ export default function AnnotationQueriesEditor({
           setError(
             error?.name === "TimeoutError"
               ? t("Annotation query timed out")
-              : message(error),
+              : t(message(error)),
           );
         },
         complete: () => {
@@ -548,7 +552,7 @@ export default function AnnotationQueriesEditor({
                     }}
                   >
                     <option value="-- Grafana --">
-                      {t("Stored annotations")}
+                      {t("Builtin annotations")}
                     </option>
                     <option value="">{t("Default datasource")}</option>
                     {sources.map((entry) => (
@@ -576,59 +580,86 @@ export default function AnnotationQueriesEditor({
                       <select
                         aria-label={t("Annotation scope")}
                         value={
-                          config.builtIn
-                            ? "dashboard"
-                            : target.type || "dashboard"
+                          isTimeRegionQuery(config)
+                            ? "timeRegions"
+                            : config.builtIn
+                              ? "dashboard"
+                              : target.type || "dashboard"
                         }
                         disabled={Boolean(config.builtIn)}
                         onChange={(event) =>
-                          patchTarget({ type: event.target.value })
+                          patchTarget(
+                            event.target.value === "timeRegions"
+                              ? {
+                                  queryType: "timeRegions",
+                                  timeRegion: target.timeRegion || {
+                                    timezone: resolved.timezone,
+                                    from: "09:00",
+                                    to: "17:00",
+                                  },
+                                }
+                              : {
+                                  queryType: "annotations",
+                                  type: event.target.value,
+                                },
+                          )
                         }
                       >
                         <option value="dashboard">{t("This dashboard")}</option>
                         <option value="tags">{t("By tags")}</option>
+                        <option value="timeRegions">{t("Time regions")}</option>
                       </select>
                     </label>
-                    {!config.builtIn && target.type === "tags" && (
-                      <>
-                        <label>
-                          {t("Tags (comma separated)")}
-                          <input
-                            defaultValue={(target.tags || []).join(", ")}
-                            onChange={(event) =>
-                              patchTarget({
-                                tags: event.target.value
-                                  .split(",")
-                                  .map((tag) => tag.trim())
-                                  .filter(Boolean),
-                              })
-                            }
-                          />
-                        </label>
-                        <label className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(target.matchAny)}
-                            onChange={(event) =>
-                              patchTarget({ matchAny: event.target.checked })
-                            }
-                          />
-                          {t("Match any tag")}
-                        </label>
-                      </>
-                    )}
-                    <label>
-                      {t("Event limit")}
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={target.limit || 100}
-                        onChange={(event) =>
-                          patchTarget({ limit: Number(event.target.value) })
-                        }
+                    {isTimeRegionQuery(config) && (
+                      <TimeRegionEditor
+                        value={target.timeRegion || {}}
+                        onChange={(timeRegion) => patchTarget({ timeRegion })}
                       />
-                    </label>
+                    )}
+                    {!isTimeRegionQuery(config) &&
+                      !config.builtIn &&
+                      target.type === "tags" && (
+                        <>
+                          <label>
+                            {t("Tags (comma separated)")}
+                            <input
+                              defaultValue={(target.tags || []).join(", ")}
+                              onChange={(event) =>
+                                patchTarget({
+                                  tags: event.target.value
+                                    .split(",")
+                                    .map((tag) => tag.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(target.matchAny)}
+                              onChange={(event) =>
+                                patchTarget({ matchAny: event.target.checked })
+                              }
+                            />
+                            {t("Match any tag")}
+                          </label>
+                        </>
+                      )}
+                    {!isTimeRegionQuery(config) && (
+                      <label>
+                        {t("Event limit")}
+                        <input
+                          type="number"
+                          min={1}
+                          max={1000}
+                          value={target.limit || 100}
+                          onChange={(event) =>
+                            patchTarget({ limit: Number(event.target.value) })
+                          }
+                        />
+                      </label>
+                    )}
                   </>
                 ) : (
                   <>

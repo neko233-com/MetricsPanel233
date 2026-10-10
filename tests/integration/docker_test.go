@@ -565,11 +565,26 @@ func TestDockerEndToEnd(t *testing.T) {
 			annotation := map[string]any{"dashboardUID": "docker-mysql", "panelId": 1, "time": ts - 10000, "timeEnd": ts + 10000, "text": "MySQL deployment", "tags": []string{"docker", "mysql"}, "idempotencyKey": "mysql-deploy"}
 			firstAnnotation := e.must(address, "POST", "/api/annotations", annotation)
 			assert.JSONEq(t, string(firstAnnotation), string(e.must(address, "POST", "/api/annotations", annotation)))
+			regionConfig := json.RawMessage(`[{"name":"Office hours","datasource":{"type":"grafana","uid":"-- Grafana --"},"target":{"queryType":"timeRegions","timeRegion":{"mode":"cron","cronExpr":"0 9 * * MON-FRI","duration":"8h","timezone":"Asia/Shanghai","unknown":233}}}]`)
+			var nativeRegions model.Dashboard
+			require.NoError(t, json.Unmarshal(e.must(address, "POST", "/api/v1/dashboards", model.Dashboard{Name: "Docker time regions", Panels: []model.Panel{}, Annotations: regionConfig}), &nativeRegions))
 			_, err = e.compose("restart", backend.service)
 			require.NoError(t, err)
 			address = e.address(backend.service)
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
 			e.verifySDKPlugin(address, backend.service)
+			var regionDashboards []model.Dashboard
+			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
+			regionFound := false
+			for _, dashboard := range regionDashboards {
+				if dashboard.ID == nativeRegions.ID {
+					regionFound = true
+					assert.JSONEq(t, string(regionConfig), string(dashboard.Annotations), "restart lost native recurrence configuration")
+					assert.JSONEq(t, `null`, string(dashboard.Grafana), "native recurrence converted the dashboard format")
+				}
+			}
+			require.True(t, regionFound)
+			assert.JSONEq(t, `[]`, string(e.must(address, "GET", "/api/annotations?dashboardUID="+nativeRegions.ID, nil)), "recurrence configuration must not create stored annotations")
 			assert.JSONEq(t, string(firstAnnotation), string(e.must(address, "POST", "/api/annotations", annotation)), "restart lost annotation retry identity")
 			annotationData := e.must(address, "GET", "/api/annotations?dashboardUID=docker-mysql&tags=docker&tags=mysql", nil)
 			var storedAnnotations []model.Annotation

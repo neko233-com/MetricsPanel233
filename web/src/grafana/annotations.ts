@@ -31,6 +31,7 @@ import {
   type Panel,
 } from "../api";
 import { resolveTimeRange, type TimeSelection } from "./time-range";
+import { isTimeRegionQuery, timeRegionQuery } from "./time-regions";
 
 export type Annotation = {
   id?: number | string;
@@ -257,6 +258,10 @@ export function useAnnotations(
               ),
             );
           } else {
+            if (isTimeRegionQuery(q))
+              return cached(JSON.stringify(["time-regions", q, fixed]), () =>
+                of<Result>(timeRegionQuery(q, fixed)),
+              );
             const params = nativeAnnotationParams(q, dashboard, values, fixed);
             if (!params) return of({ events: [] } as Result);
             const key = `${params}:${tick}:${change}:${sessionStorage.getItem("metricspanel-token") || ""}`;
