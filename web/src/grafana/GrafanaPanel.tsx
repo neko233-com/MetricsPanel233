@@ -15,7 +15,11 @@ import { t } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
 import type { FrameUpdate } from "./engine";
-import type { PanelTimeRange, TimeSelection } from "./time-range";
+import {
+  panelZoomToDashboard,
+  type PanelTimeRange,
+  type TimeSelection,
+} from "./time-range";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
@@ -99,6 +103,13 @@ export default function GrafanaPanel({
   ]
     .filter(Boolean)
     .join(" · ");
+  const changePanelRange = (next: TimeSelection) => {
+    try {
+      onRange(panelZoomToDashboard(next, queryRange?.shift));
+    } catch (error) {
+      setError(message(error));
+    }
+  };
   const series = useMemo(
     () => framesAsSeries(frames, effective),
     [frames, queryRange, range],
@@ -116,7 +127,7 @@ export default function GrafanaPanel({
         result={series}
         resultError={error}
         streaming={streaming}
-        onRange={onRange}
+        onRange={changePanelRange}
         formatter={(v) => (first ? display(first, v).text : String(v))}
       />
     );
@@ -146,7 +157,7 @@ export default function GrafanaPanel({
           loading={loading}
           streaming={streaming}
           queryError={error}
-          onRange={onRange}
+          onRange={changePanelRange}
         />
       </Suspense>
     );

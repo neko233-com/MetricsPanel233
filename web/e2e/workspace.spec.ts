@@ -347,6 +347,14 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       hideTimeOverride: true,
     });
     timing.panels[1].targets[0].refId = "N";
+    timing.panels.push({
+      id: 3,
+      title: "Time empty SDK",
+      type: "metricspanel-events-panel",
+      timeFrom: "15m",
+      targets: [],
+      gridPos: { x: 0, y: 10, w: 12, h: 8 },
+    });
     expect(
       (
         await page.request.post(endpoint + "/api/dashboards/db", {
@@ -378,6 +386,20 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     await page.goto(endpoint + "/d/time-dashboard/time?var-site=node-b");
     await expect(panel).toContainText("Panel value: 123");
     await expect(panel).toContainText("Relative time: 15m · Time shift: 1h");
+    const emptyPanel = page.getByRole("region", {
+      name: "Time empty SDK",
+      exact: true,
+    });
+    await emptyPanel.scrollIntoViewIfNeeded();
+    await expect(emptyPanel).toContainText("Panel value: empty");
+    await expect(emptyPanel).toContainText("Relative time: 15m");
+    const emptyWindow = /Panel window: (\d+) \/ (\d+) \/ utc/.exec(
+      await emptyPanel.innerText(),
+    )!;
+    expect(Number(emptyWindow[2]) - Number(emptyWindow[1])).toBe(900000);
+    await expect(emptyPanel).toContainText(
+      `Panel variables: ${emptyWindow[1]} / ${emptyWindow[2]} / 900000`,
+    );
     const window = /Panel window: (\d+) \/ (\d+) \/ utc/.exec(
       await panel.innerText(),
     )!;
@@ -427,6 +449,43 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       path: testInfo.outputPath("panel-time-overrides.png"),
       animations: "disabled",
     });
+    await panel
+      .getByRole("button", { name: "SDK zoom window", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7300000} / ${before - 7220000} / utc`,
+    );
+    params = new URL(page.url()).searchParams;
+    expect(Number(params.get("from"))).toBe(before - 100000);
+    expect(Number(params.get("to"))).toBe(before - 20000);
+    expect(params.get("var-shift")).toBe("2h");
+    const shiftedPlot = page
+      .getByRole("region", { name: "Time native plot", exact: true })
+      .locator("svg");
+    await expect(shiftedPlot).toBeVisible();
+    // Constant series have a zero-height polyline, while the SVG remains draggable.
+    await expect(shiftedPlot.locator("polyline").first()).toHaveAttribute(
+      "points",
+      /\d/,
+    );
+    const shiftedBox = (await shiftedPlot.boundingBox())!;
+    await page.mouse.move(
+      shiftedBox.x + shiftedBox.width * 0.4,
+      shiftedBox.y + shiftedBox.height * 0.4,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      shiftedBox.x + shiftedBox.width * 0.7,
+      shiftedBox.y + shiftedBox.height * 0.4,
+      { steps: 5 },
+    );
+    await page.mouse.up();
+    await expect
+      .poll(() => Number(new URL(page.url()).searchParams.get("from")))
+      .toBeGreaterThan(before - 100000);
+    expect(Number(new URL(page.url()).searchParams.get("to"))).toBeLessThan(
+      before - 20000,
+    );
     await page.goto(endpoint + "/d/time-dashboard/time?var-window=bad");
     await expect(panel.getByRole("alert")).toContainText(
       "Invalid panel relative time",

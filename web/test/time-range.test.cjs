@@ -31,6 +31,7 @@ const {
   refreshFromDashboard,
   refreshOptionsFromDashboard,
   refreshMilliseconds,
+  panelZoomToDashboard,
 } = exportsObject;
 const now = Date.parse("2026-10-10T12:34:56.789Z");
 
@@ -129,6 +130,20 @@ test("panel relative windows and shifts follow Grafana's raw time contracts", ()
   assert.equal(shifted.end, fixed.to - 3600000);
   assert.equal(shifted.info.timeFrom, undefined);
   assert.equal(shifted.info.timeShift, "1h");
+  const zoomed = panelZoomToDashboard(
+    { from: shifted.start + 20000, to: shifted.end - 20000, timezone: "utc" },
+    shifted.shift,
+  );
+  assert.equal(zoomed.from, fixed.from + 20000);
+  assert.equal(zoomed.to, fixed.to - 20000);
+  assert.equal(
+    resolvePanelTimeRange(
+      "6h",
+      { timeShift: "1h", hideTimeOverride: true },
+      now,
+    ).shift,
+    "1h",
+  );
   assert.deepEqual(
     Object.keys(
       resolvePanelTimeRange(

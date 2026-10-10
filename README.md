@@ -236,6 +236,7 @@ SDK `PanelProps.onChangeTimeRange` 和原生折线图拖选都更新工作空间
 `$__from`、`$__to`、`$__range_ms` 保留精确毫秒，TemplateSrv.updateTimeRange 也已接通。
 单面板 `timeFrom` 支持日期运算和变量，仅覆盖相对仪表盘范围；`timeShift` 也适用于固定范围，按时区和日历移动，支持 `1d/d` 等舍入。
 查询快照同步到 SDK PanelProps、数据时间范围、宏、转换、图表和面板菜单；`hideTimeOverride` 隐藏时间说明。
+带偏移面板的 SDK 缩放和原生拖选会先反向换算仪表盘窗口，避免查询再次应用同一偏移。
 经典 `refresh` / V2 `timeSettings.autoRefresh` 和刷新选项会应用到定时器，导入模板缺省关闭；原生工作空间缺省 5 秒。
 刷新控件提供关闭、指定间隔和自动模式；URL `refresh` 优先于模板，空值表示关闭，切换与历史保留参数。
 刷新至少间隔 5 秒，自动模式依据窗口宽度和范围计算；隐藏页面暂停请求，恢复时补一次刷新，页面卸载清理定时器。

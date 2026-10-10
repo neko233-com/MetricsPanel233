@@ -412,7 +412,23 @@ export function watchFrames(
     ),
   );
   if (streams.length === 0)
-    return of({ frames: [], loading: false, streaming: false, error: "" });
+    return merge(of(undefined), trigger).pipe(
+      map(() => ({
+        frames: [],
+        loading: false,
+        streaming: false,
+        error: "",
+        timeRange: panelRange(),
+      })),
+      catchError((error) =>
+        of({
+          frames: [],
+          loading: false,
+          streaming: false,
+          error: message(error),
+        }),
+      ),
+    );
   return combineLatest(streams).pipe(
     auditTime(50),
     switchMap((responses) => {

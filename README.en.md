@@ -152,6 +152,7 @@ Query requests, SDK panel ranges, variable queries, date formatting and pattern 
 `$__from`, `$__to` and `$__range_ms` retain exact milliseconds, and TemplateSrv.updateTimeRange is connected.
 Panel `timeFrom` supports date math and variables and overrides relative dashboard ranges. `timeShift` also applies to fixed ranges, respects calendar/timezone shifts and accepts rounding such as `1d/d`.
 The query snapshot supplies SDK PanelProps, panel data, macros, transformations, chart bounds and panel menus. `hideTimeOverride` hides the time description.
+SDK zoom and native drag selection reverse a panel's shift before updating the dashboard, avoiding a second application of the same shift.
 Classic `refresh` / V2 `timeSettings.autoRefresh` and interval choices drive timers; imported dashboards default to off, native workspaces to five seconds.
 Controls offer off, explicit intervals and automatic mode. URL `refresh` overrides saved defaults; an empty value means off, and browser history preserves the choice.
 The minimum interval is five seconds. Automatic mode uses the range and viewport width. Hidden pages pause requests, resume catches up once, and unmount clears timers.

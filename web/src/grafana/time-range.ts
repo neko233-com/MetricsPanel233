@@ -140,6 +140,7 @@ export function rangeLabel(value: TimeSelection) {
 export type ResolvedTimeRange = ReturnType<typeof resolveTimeRange>;
 export type PanelTimeRange = ResolvedTimeRange & {
   sampledAt: number;
+  shift?: string;
   info: { timeFrom?: string; timeShift?: string };
 };
 // Matches Grafana 13.2 PanelTimeRange: relative overrides require relative parent
@@ -204,8 +205,35 @@ export function resolvePanelTimeRange(
   return {
     ...resolved,
     sampledAt: now,
+    shift: overrides.timeShift || undefined,
     info: overrides.hideTimeOverride ? {} : info,
   };
+}
+
+export function panelZoomToDashboard(
+  value: TimeSelection,
+  shift?: string,
+): TimeSelection {
+  if (!shift) return value;
+  const resolved = resolveTimeRange(value);
+  const from = dateMath.parseDateMath(
+    "+" + shift,
+    dateTime(resolved.sdk.from),
+    false,
+  );
+  const to = dateMath.parseDateMath(
+    "+" + shift,
+    dateTime(resolved.sdk.to),
+    true,
+  );
+  if (!from || !to) throw new Error("Invalid panel time shift");
+  const next = {
+    from: from.valueOf(),
+    to: to.valueOf(),
+    timezone: resolved.timezone,
+  };
+  resolveTimeRange(next);
+  return next;
 }
 
 function dashboardSpec(grafana: unknown): Record<string, unknown> | undefined {
