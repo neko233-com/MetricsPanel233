@@ -311,6 +311,126 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       path: testInfo.outputPath("time-range-mobile.png"),
       animations: "disabled",
     });
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    const timing = (
+      await (
+        await page.request.get(endpoint + "/api/dashboards/uid/time-dashboard")
+      ).json()
+    ).dashboard;
+    timing.time = { from: "now-6h", to: "now" };
+    timing.refresh = "";
+    timing.templating.list.push(
+      {
+        name: "window",
+        type: "custom",
+        query: "15m,30m,bad",
+        current: { value: "15m" },
+      },
+      {
+        name: "shift",
+        type: "custom",
+        query: "1h,2h",
+        current: { value: "1h" },
+      },
+    );
+    Object.assign(timing.panels[0], {
+      timeFrom: "$window",
+      timeShift: "$shift",
+    });
+    Object.assign(timing.panels[1], {
+      timeFrom: "30m",
+      timeShift: "2h",
+      hideTimeOverride: true,
+    });
+    timing.panels[1].targets[0].refId = "N";
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: timing, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const before = Date.now();
+    expect(
+      (
+        await page.request.post(endpoint + "/api/v1/ingest", {
+          data: {
+            samples: [
+              {
+                name: "time_fixture_value",
+                value: 123,
+                timestamp: before - 62 * 60000,
+              },
+              {
+                name: "time_fixture_value",
+                value: 449,
+                timestamp: before - 122 * 60000,
+              },
+            ],
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await page.goto(endpoint + "/d/time-dashboard/time?var-site=node-b");
+    await expect(panel).toContainText("Panel value: 123");
+    await expect(panel).toContainText("Relative time: 15m · Time shift: 1h");
+    const window = /Panel window: (\d+) \/ (\d+) \/ utc/.exec(
+      await panel.innerText(),
+    )!;
+    expect(Number(window[2]) - Number(window[1])).toBe(900000);
+    expect(Number(window[2])).toBeGreaterThanOrEqual(before - 3600000);
+    expect(Number(window[2])).toBeLessThanOrEqual(Date.now() - 3600000);
+    await expect(panel).toContainText(
+      `Panel variables: ${window[1]} / ${window[2]} / 900000`,
+    );
+    expect(
+      queries.some(
+        (query) =>
+          Number(query.from) === Number(window[1]) &&
+          Number(query.to) === Number(window[2]),
+      ),
+    ).toBeTruthy();
+    await expect(
+      page
+        .getByRole("region", { name: "Time native plot", exact: true })
+        .locator(".panel-time-info"),
+    ).toHaveCount(0);
+    await page
+      .getByRole("combobox", { name: "shift", exact: true })
+      .selectOption("2h");
+    await expect(panel).toContainText("Panel value: 449");
+    await expect(panel).toContainText("Time shift: 2h");
+    await page.goto(
+      `${endpoint}/d/time-dashboard/time?from=${before - 120000}&to=${before}&timezone=utc&var-shift=2h`,
+    );
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7320000} / ${before - 7200000} / utc`,
+    );
+    await expect(panel).toContainText(
+      `Panel variables: ${before - 7320000} / ${before - 7200000} / 120000`,
+    );
+    await expect(panel.locator(".panel-time-info")).toHaveText(
+      "Time shift: 2h",
+    );
+    expect(
+      queries.some(
+        (query) =>
+          Number(query.from) === before - 7320000 &&
+          Number(query.to) === before - 7200000,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("panel-time-overrides.png"),
+      animations: "disabled",
+    });
+    await page.goto(endpoint + "/d/time-dashboard/time?var-window=bad");
+    await expect(panel.getByRole("alert")).toContainText(
+      "Invalid panel relative time",
+    );
     expect(errors).toEqual([]);
   } finally {
     if (!page.isClosed())
@@ -326,6 +446,187 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     )
       throw new Error("Unsafe time test cleanup target");
     await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("V2 refresh defaults, URL overrides and bilingual controls schedule and stop real panel queries", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  let requests = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname !== "/api/ds/query" ||
+      request.method() !== "POST"
+    )
+      return;
+    if (
+      request
+        .postDataJSON()
+        ?.queries?.some(
+          (query: { expr?: string }) => query.expr === "vector(233)",
+        )
+    )
+      requests++;
+  });
+  const source = {
+    apiVersion: "dashboard.grafana.app/v2beta1",
+    kind: "Dashboard",
+    metadata: { name: "refresh-v2" },
+    spec: {
+      title: "V2 refresh proof",
+      timeSettings: {
+        from: "now-1h",
+        to: "now",
+        timezone: "utc",
+        autoRefresh: "7s",
+        autoRefreshIntervals: ["7s", "1m"],
+      },
+      elements: {
+        proof: {
+          kind: "Panel",
+          spec: {
+            id: 1,
+            title: "Refresh proof",
+            data: {
+              kind: "QueryGroup",
+              spec: {
+                queryOptions: { timeFrom: "15m", timeShift: "1h" },
+                queries: [
+                  {
+                    kind: "PanelQuery",
+                    spec: {
+                      refId: "A",
+                      query: {
+                        kind: "DataQuery",
+                        group: "prometheus",
+                        spec: { expr: "vector(233)", instant: true },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+            vizConfig: { kind: "VizConfig", group: "stat", spec: {} },
+          },
+        },
+      },
+      layout: {
+        kind: "GridLayout",
+        spec: {
+          items: [
+            {
+              kind: "GridLayoutItem",
+              spec: {
+                x: 0,
+                y: 0,
+                width: 24,
+                height: 10,
+                element: { kind: "ElementReference", name: "proof" },
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+  const imported = await page.request.post(
+    endpoint + "/api/v1/import/grafana",
+    { data: source },
+  );
+  expect(imported.ok(), await imported.text()).toBeTruthy();
+  const saved = (await imported.json()).dashboard;
+  try {
+    await page.goto(endpoint + "/d/refresh-v2/refresh");
+    const panel = page.getByRole("region", {
+      name: "Refresh proof",
+      exact: true,
+    });
+    await expect(panel).toContainText("233");
+    await expect.poll(() => requests).toBeGreaterThan(0);
+    await expect(panel).toContainText("Relative time: 15m · Time shift: 1h");
+    const picker = page.getByRole("combobox", {
+      name: "Auto refresh",
+      exact: true,
+    });
+    await expect(picker).toHaveValue("7s");
+    await expect(picker.locator("option")).toHaveText([
+      "Off",
+      "Auto",
+      "7s",
+      "1m",
+    ]);
+    await picker.selectOption("");
+    const offCount = requests;
+    // Observe beyond the former unconditional five-second polling boundary.
+    await page.waitForTimeout(6200);
+    expect(requests).toBe(offCount);
+    await page
+      .getByRole("button", { name: "Refresh metrics", exact: true })
+      .click();
+    await expect.poll(() => requests).toBeGreaterThan(offCount);
+    await page.reload();
+    await expect(panel).toContainText("233");
+    await expect(picker).toHaveValue("");
+    expect(new URL(page.url()).searchParams.get("refresh")).toBe("");
+    await picker.selectOption("7s");
+    const timedCount = requests;
+    await expect
+      .poll(() => requests, { timeout: 11000 })
+      .toBeGreaterThan(timedCount);
+    await picker.selectOption("auto");
+    expect(new URL(page.url()).searchParams.get("refresh")).toBe("auto");
+    const autoCount = requests;
+    await expect
+      .poll(() => requests, { timeout: 9000 })
+      .toBeGreaterThan(autoCount);
+    await picker.selectOption("");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(
+      page.getByRole("combobox", { name: "自动刷新", exact: true }),
+    ).toHaveValue("");
+    expect(
+      (await page
+        .getByRole("combobox", { name: "自动刷新", exact: true })
+        .boundingBox())!.width,
+    ).toBeGreaterThanOrEqual(150);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("refresh-mobile.png"),
+      animations: "disabled",
+    });
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await picker.selectOption("7s");
+    await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+    const departedCount = requests;
+    await page.waitForTimeout(7400);
+    expect(requests).toBe(departedCount);
+    await page.goto(endpoint + "/d/refresh-v2/refresh?refresh=0s");
+    await expect(page.getByRole("alert")).toContainText(
+      "Invalid refresh interval",
+    );
+    await expect(panel).toContainText("233");
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto(endpoint + "/#overview").catch(() => {});
+    expect(
+      (
+        await page.request.delete(endpoint + "/api/v1/dashboards/" + saved.id)
+      ).ok(),
+    ).toBeTruthy();
   }
 });
 
@@ -1068,6 +1369,7 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
       data: {
         dashboard: {
           uid: "frontend-sdk-dashboard",
+          refresh: "5s",
           title: "SDK bridge",
           panels: [
             {
@@ -1123,6 +1425,7 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
           overwrite: true,
           dashboard: {
             uid: "frontend-chunks-dashboard",
+            refresh: "5s",
             title: "SDK chunked queries",
             panels: [
               {
@@ -1215,6 +1518,7 @@ test("Official frontend DataSourceWithBackend queries a real Go SDK subprocess",
       .toMatchObject({ active: 0, cancelled: cancelledBefore + 1 });
     const liveDashboard = {
       uid: "frontend-live-dashboard",
+      refresh: "5s",
       title: "SDK Live bridge",
       panels: [1, 2].map((id) => ({
         id,

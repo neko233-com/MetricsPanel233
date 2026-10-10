@@ -11,6 +11,14 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Relative time": "相对时间",
+  "Time shift": "时间偏移",
+  "Invalid panel relative time": "面板相对时间无效",
+  "Invalid panel time shift": "面板时间偏移无效",
+  "Invalid refresh interval": "刷新间隔无效",
+  "Auto refresh": "自动刷新",
+  Off: "关闭",
+  Auto: "自动",
   "Browser time": "浏览器时区",
   "Custom time range": "自定义时间范围",
   "Choose time range": "选择时间范围",

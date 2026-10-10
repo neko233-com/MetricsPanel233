@@ -8,7 +8,11 @@ import {
 } from "@grafana/data";
 import { type Panel, type InterpolationValues } from "../api";
 import { t } from "../i18n";
-import { resolveTimeRange, type TimeSelection } from "./time-range";
+import {
+  resolveTimeRange,
+  type ResolvedTimeRange,
+  type TimeSelection,
+} from "./time-range";
 import { ExtensionLink } from "./ExtensionHost";
 import { useExtensionLinks } from "./extensions";
 
@@ -19,6 +23,7 @@ export function PanelExtensionActions({
   dashboard,
   frames,
   state = LoadingState.Done,
+  queryRange,
 }: {
   panel: Panel;
   values: InterpolationValues;
@@ -26,10 +31,11 @@ export function PanelExtensionActions({
   dashboard: PluginExtensionPanelContext["dashboard"];
   frames: DataFrame[];
   state?: LoadingState;
+  queryRange?: ResolvedTimeRange;
 }) {
   const [open, setOpen] = useState(false);
   const context = useMemo<PluginExtensionPanelContext>(() => {
-    const resolved = resolveTimeRange(range);
+    const resolved = queryRange || resolveTimeRange(range);
     return {
       id: panel.config?.id || 0,
       title: panel.title,
@@ -57,7 +63,7 @@ export function PanelExtensionActions({
         timeRange: resolved.sdk,
       },
     };
-  }, [panel, values, range, dashboard, frames, state]);
+  }, [panel, values, range, dashboard, frames, state, queryRange]);
   const { links } = useExtensionLinks({
     extensionPointId: PluginExtensionPoints.DashboardPanelMenu,
     context,

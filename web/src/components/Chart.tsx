@@ -38,6 +38,7 @@ export function Chart({
   formatter = formatValue,
   streaming = false,
   onRange,
+  timeInfo,
 }: {
   panel: Panel;
   range: TimeSelection;
@@ -50,6 +51,7 @@ export function Chart({
   formatter?: (value: number, unit?: string) => string;
   streaming?: boolean;
   onRange?: (value: TimeSelection) => void;
+  timeInfo?: string;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
@@ -227,6 +229,7 @@ export function Chart({
           )}
         </div>
       </div>
+      {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
       <div className="chart-wrap">
         <svg
           onPointerDown={(event) => {

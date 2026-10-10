@@ -26,6 +26,7 @@ import { Chart } from "../components/Chart";
 import { Dialog } from "../components/Dialog";
 import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
+import { RefreshPicker } from "../components/RefreshPicker";
 export function DashboardView({
   dashboard,
   stats,
@@ -35,6 +36,8 @@ export function DashboardView({
   range,
   onRange,
   refresh,
+  refreshChoice,
+  onRefreshChoice,
   reload,
   notify,
   cli,
@@ -47,6 +50,8 @@ export function DashboardView({
   range: TimeSelection;
   onRange: (v: TimeSelection) => void;
   refresh: () => void;
+  refreshChoice: string;
+  onRefreshChoice: (value: string) => void;
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
   cli: () => void;
@@ -88,6 +93,7 @@ export function DashboardView({
         </div>
         <div className="toolbar">
           <TimeRangePicker value={range} onChange={onRange} />
+          <RefreshPicker value={refreshChoice} onChange={onRefreshChoice} />
           <button
             className="icon-button outlined"
             onClick={refresh}

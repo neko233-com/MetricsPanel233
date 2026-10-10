@@ -40,6 +40,7 @@ import {
   finalize,
   tap,
   exhaustMap,
+  share,
 } from "rxjs";
 import {
   message,
@@ -49,7 +50,12 @@ import {
   type QueryResult,
   type InterpolationValues,
 } from "../api";
-import { resolveTimeRange, type TimeSelection } from "./time-range";
+import {
+  resolveTimeRange,
+  resolvePanelTimeRange,
+  type PanelTimeRange,
+  type TimeSelection,
+} from "./time-range";
 
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
@@ -67,6 +73,9 @@ export type GrafanaConfig = {
   id?: number;
   type: string;
   description?: string;
+  timeFrom?: string;
+  timeShift?: string;
+  hideTimeOverride?: boolean;
   targets?: GrafanaTarget[];
   datasource?: GrafanaTarget["datasource"];
   transformations?: DataTransformerConfig[];
@@ -209,13 +218,39 @@ export type FrameUpdate = {
   loading: boolean;
   streaming: boolean;
   error: string;
+  timeRange?: PanelTimeRange;
 };
+type RangedResponse = DataQueryResponse & { panelRange?: PanelTimeRange };
 export function watchFrames(
   panel: Panel,
   values: InterpolationValues,
   range: TimeSelection,
   refresh: Observable<unknown>,
 ): Observable<FrameUpdate> {
+  let sampledAt = Date.now();
+  const trigger = refresh.pipe(
+    tap(() => {
+      sampledAt = Date.now();
+    }),
+    share(),
+  );
+  const panelRange = () => {
+    const base = resolveTimeRange(range, sampledAt);
+    const fixed = { from: base.start, to: base.end, timezone: base.timezone };
+    return resolvePanelTimeRange(
+      range,
+      {
+        timeFrom: panel.config?.timeFrom
+          ? interpolate(panel.config.timeFrom, values, fixed)
+          : undefined,
+        timeShift: panel.config?.timeShift
+          ? interpolate(panel.config.timeShift, values, fixed)
+          : undefined,
+        hideTimeOverride: panel.config?.hideTimeOverride,
+      },
+      sampledAt,
+    );
+  };
   const targets: GrafanaTarget[] =
     panel.config?.targets ||
     (panel.expressions || [panel.expr || ""]).map((expr, i) => ({
@@ -251,7 +286,7 @@ export function watchFrames(
     }).pipe(
       switchMap(({ datasource, runtime }) => {
         const query = (targets = queries) => {
-          const resolved = resolveTimeRange(range),
+          const resolved = panelRange(),
             { start, end } = resolved;
           // SDK macros must use the exact timestamps of this query, including relative refreshes.
           runtime.setPluginVariables(values, {
@@ -275,16 +310,22 @@ export function watchFrames(
               range: resolved.sdk,
               rangeRaw: resolved.sdk.raw,
               scopedVars: Object.fromEntries(
-                Object.entries(values).map(([name, value]) => [
-                  name,
-                  { text: value, value },
-                ]),
+                Object.entries({
+                  ...values,
+                  __from: String(start),
+                  __to: String(end),
+                }).map(([name, value]) => [name, { text: value, value }]),
               ),
               timezone: resolved.timezone,
               app: "dashboard",
               startTime: Date.now(),
               maxDataPoints: 240,
             }),
+          ).pipe(
+            map(
+              (response) =>
+                ({ ...response, panelRange: resolved }) as RangedResponse,
+            ),
           );
         };
         const finished = new ReplaySubject<void>(1),
@@ -292,7 +333,7 @@ export function watchFrames(
         let live = false;
         return merge(
           defer(() => query()).pipe(finalize(() => finished.next())),
-          refresh.pipe(
+          trigger.pipe(
             filter(
               () =>
                 live && queries.some((target) => !liveRefs.has(target.refId!)),
@@ -338,7 +379,7 @@ export function watchFrames(
               throw new Error("Query response stream key limit exceeded");
             chunks.set(key, response);
             return chunks;
-          }, new Map<string, DataQueryResponse>()),
+          }, new Map<string, RangedResponse>()),
           map((chunks) => {
             const responses = Array.from(chunks.values());
             return {
@@ -353,7 +394,9 @@ export function watchFrames(
                   ? LoadingState.Loading
                   : LoadingState.Done,
               error: responses.find((response) => response.error)?.error,
-            } as DataQueryResponse;
+              panelRange: responses.find((response) => response.panelRange)
+                ?.panelRange,
+            } as RangedResponse;
           }),
         );
       }),
@@ -364,7 +407,7 @@ export function watchFrames(
           error: { message: message(error) },
         } as DataQueryResponse),
       ),
-      repeat({ delay: () => refresh.pipe(take(1)) }),
+      repeat({ delay: () => trigger.pipe(take(1)) }),
       startWith({ data: [], state: LoadingState.Loading } as DataQueryResponse),
     ),
   );
@@ -372,12 +415,29 @@ export function watchFrames(
     return of({ frames: [], loading: false, streaming: false, error: "" });
   return combineLatest(streams).pipe(
     auditTime(50),
-    switchMap((responses) =>
-      from(
+    switchMap((responses) => {
+      const resolved = responses.reduce<PanelTimeRange | undefined>(
+        (latest, response) => {
+          const candidate = (response as RangedResponse).panelRange;
+          return candidate &&
+            (!latest || candidate.sampledAt > latest.sampledAt)
+            ? candidate
+            : latest;
+        },
+        undefined,
+      );
+      const effective = resolved
+        ? {
+            from: resolved.start,
+            to: resolved.end,
+            timezone: resolved.timezone,
+          }
+        : range;
+      return from(
         decorateFrames(
           panel,
           values,
-          range,
+          effective,
           responses.flatMap((response) =>
             response.data.map((frame) => toDataFrame(frame)),
           ),
@@ -385,6 +445,7 @@ export function watchFrames(
       ).pipe(
         map((frames) => ({
           frames,
+          timeRange: resolved,
           loading: responses.some(
             (response) => response.state === LoadingState.Loading,
           ),
@@ -396,8 +457,8 @@ export function watchFrames(
             .filter(Boolean)
             .join("; "),
         })),
-      ),
-    ),
+      );
+    }),
   );
 }
 export async function queryFrames(

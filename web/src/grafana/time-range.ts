@@ -3,6 +3,7 @@ import {
   dateTime,
   dateTimeForTimeZone,
   ISO_8601,
+  rangeUtil,
   type TimeRange,
 } from "@grafana/data";
 
@@ -134,4 +135,125 @@ export function rangeFromDashboard(
 export function rangeLabel(value: TimeSelection) {
   if (typeof value === "string") return value;
   return `${value.from} → ${value.to} (${value.timezone || "browser"})`;
+}
+
+export type ResolvedTimeRange = ReturnType<typeof resolveTimeRange>;
+export type PanelTimeRange = ResolvedTimeRange & {
+  sampledAt: number;
+  info: { timeFrom?: string; timeShift?: string };
+};
+// Matches Grafana 13.2 PanelTimeRange: relative overrides require relative parent
+// time, while shifts also apply to fixed dates and use calendar-aware date math.
+export function resolvePanelTimeRange(
+  value: TimeSelection,
+  overrides: {
+    timeFrom?: string;
+    timeShift?: string;
+    hideTimeOverride?: boolean;
+  },
+  now = Date.now(),
+): PanelTimeRange {
+  let selection = rawSelection(value);
+  let resolved = resolveTimeRange(selection, now);
+  const info: PanelTimeRange["info"] = {};
+  if (overrides.timeFrom) {
+    const relative = rangeUtil.describeTextRange(overrides.timeFrom);
+    if (relative.invalid) throw new Error("Invalid panel relative time");
+    if (rangeUtil.isRelativeTimeRange(resolved.sdk.raw)) {
+      selection = {
+        from: relative.from,
+        to: relative.to,
+        timezone: resolved.timezone,
+      };
+      resolved = resolveTimeRange(selection, now);
+      info.timeFrom = overrides.timeFrom;
+    }
+  }
+  if (overrides.timeShift) {
+    if (rangeUtil.describeTextRange(overrides.timeShift).invalid)
+      throw new Error("Invalid panel time shift");
+    const shift = "-" + overrides.timeShift;
+    if (rangeUtil.isRelativeTimeRange(resolved.sdk.raw)) {
+      // Semi-relative ranges retain their fixed anchor via ISO date math.
+      const shifted = (bound: string | number) =>
+        typeof bound === "string" && bound.startsWith("now")
+          ? bound + shift
+          : `${typeof bound === "number" || /^\d+$/.test(bound) ? dateTimeForTimeZone(resolved.timezone, Number(bound)).toISOString() : bound}${typeof bound === "string" && bound.includes("||") ? "" : "||"}${shift}`;
+      selection = {
+        from: shifted(selection.from),
+        to: shifted(selection.to),
+        timezone: resolved.timezone,
+      };
+    } else {
+      const from = dateMath.parseDateMath(
+        shift,
+        dateTime(resolved.sdk.from),
+        false,
+      );
+      const to = dateMath.parseDateMath(shift, dateTime(resolved.sdk.to), true);
+      if (!from || !to) throw new Error("Invalid panel time shift");
+      selection = {
+        from: from.valueOf(),
+        to: to.valueOf(),
+        timezone: resolved.timezone,
+      };
+    }
+    resolved = resolveTimeRange(selection, now);
+    info.timeShift = overrides.timeShift;
+  }
+  return {
+    ...resolved,
+    sampledAt: now,
+    info: overrides.hideTimeOverride ? {} : info,
+  };
+}
+
+function dashboardSpec(grafana: unknown): Record<string, unknown> | undefined {
+  if (!grafana || typeof grafana !== "object") return;
+  const doc = grafana as Record<string, unknown>;
+  return doc.dashboard
+    ? dashboardSpec(doc.dashboard)
+    : doc.spec
+      ? dashboardSpec(doc.spec)
+      : doc;
+}
+export function refreshFromDashboard(grafana: unknown): string {
+  const spec = dashboardSpec(grafana);
+  const settings = spec?.timeSettings as { autoRefresh?: string } | undefined;
+  const value = settings?.autoRefresh ?? spec?.refresh;
+  return typeof value === "string" ? value : "";
+}
+export function refreshOptionsFromDashboard(grafana: unknown): string[] {
+  const spec = dashboardSpec(grafana);
+  const settings = spec?.timeSettings as
+    | { autoRefreshIntervals?: unknown }
+    | undefined;
+  const timepicker = spec?.timepicker as
+    | { refresh_intervals?: unknown }
+    | undefined;
+  const values =
+    settings?.autoRefreshIntervals ?? timepicker?.refresh_intervals;
+  return Array.isArray(values)
+    ? values.filter((v): v is string => typeof v === "string" && !!v)
+    : [];
+}
+export function refreshMilliseconds(
+  value: string,
+  range: TimeSelection,
+  width = 1536,
+): number {
+  if (!value) return 0;
+  if (value === "auto")
+    return rangeUtil.calculateInterval(
+      resolveTimeRange(range).sdk,
+      Math.max(1, width),
+      "5s",
+    ).intervalMs;
+  if (!/^\d+(?:\.\d+)?(?:ms|[Mwdhmsy])$/.test(value))
+    throw new Error("Invalid refresh interval");
+  const interval = rangeUtil.describeInterval(value);
+  const milliseconds = Number.parseFloat(value) * interval.sec * 1000;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0)
+    throw new Error("Invalid refresh interval");
+  return Math.max(5000, milliseconds);
 }

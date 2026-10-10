@@ -145,14 +145,20 @@ Saved `time` / `timeSettings` and timezone defaults from classic, V1 and V2 dash
 URLs accept `from/to`, `time/time.window` and `timezone`. Explicit bounds take precedence; centered windows use Unix milliseconds.
 Changing ranges preserves `var-*` values; reloads and browser history restore the selected window.
 The custom picker accepts Unix milliseconds, ISO dates and SDK date math such as `now-1h/h` and `now/d`, including IANA zones and DST.
-One now anchors both endpoints. Fixed windows remain fixed across five-second refreshes; ranges are limited to 31 days.
+One now anchors both endpoints. Fixed windows remain fixed across refreshes; ranges are limited to 31 days.
 
 SDK `PanelProps.onChangeTimeRange` and native chart drag selection update the workspace and URL, then execute real queries.
 Query requests, SDK panel ranges, variable queries, date formatting and pattern capture use the selected bounds and timezone.
 `$__from`, `$__to` and `$__range_ms` retain exact milliseconds, and TemplateSrv.updateTimeRange is connected.
-Five model tests and browser tests cover fixed-window values, zoom, reload, URL parameters, date math, validation and bilingual mobile layout.
-Per-panel `timeFrom/timeShift`, imported automatic refresh settings and other time interactions remain outstanding.
+Panel `timeFrom` supports date math and variables and overrides relative dashboard ranges. `timeShift` also applies to fixed ranges, respects calendar/timezone shifts and accepts rounding such as `1d/d`.
+The query snapshot supplies SDK PanelProps, panel data, macros, transformations, chart bounds and panel menus. `hideTimeOverride` hides the time description.
+Classic `refresh` / V2 `timeSettings.autoRefresh` and interval choices drive timers; imported dashboards default to off, native workspaces to five seconds.
+Controls offer off, explicit intervals and automatic mode. URL `refresh` overrides saved defaults; an empty value means off, and browser history preserves the choice.
+The minimum interval is five seconds. Automatic mode uses the range and viewport width. Hidden pages pause requests, resume catches up once, and unmount clears timers.
+Eight model tests, Testify import tests and browser tests verify overrides, DST, actual request bounds, refresh/stop counts and bilingual mobile layout.
+Panel comparison ranges, local zoom and additional time interactions remain outstanding.
 See the [Grafana time URL contract](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/).
+Overrides follow the [Grafana 13.2 PanelTimeRange implementation](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx).
 
 ## Grafana application events
 

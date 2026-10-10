@@ -72,3 +72,21 @@ func TestResourceSchemasAndLosslessContracts(t *testing.T) {
 	assert.Contains(t, string(r.Dashboard.Panels[0].Config), `"w":20`)
 	assert.Empty(t, r.Warnings)
 }
+
+func TestTimeOverridesSurviveClassicAndResourceImport(t *testing.T) {
+	classic := `{"title":"Timing","refresh":"7s","timepicker":{"refresh_intervals":["7s","1m"]},"panels":[{"id":1,"title":"Past","type":"stat","timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true,"targets":[{"expr":"up"}]}]}`
+	v2 := `{"apiVersion":"dashboard.grafana.app/v2beta1","kind":"Dashboard","metadata":{"name":"timing-v2"},"spec":{"title":"Timing","timeSettings":{"autoRefresh":"7s","autoRefreshIntervals":["7s","1m"]},"elements":{"past":{"kind":"Panel","spec":{"id":1,"title":"Past","data":{"kind":"QueryGroup","spec":{"queryOptions":{"timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true},"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","spec":{"expr":"up"}}}}]}},"vizConfig":{"kind":"VizConfig","group":"stat","spec":{}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":12,"height":8,"element":{"kind":"ElementReference","name":"past"}}}]}}}}`
+	for name, source := range map[string]string{"classic": classic, "v1": `{"apiVersion":"dashboard.grafana.app/v1beta1","kind":"Dashboard","spec":` + classic + `}`, "v2": v2} {
+		t.Run(name, func(t *testing.T) {
+			result, err := grafana.Import([]byte(source))
+			require.NoError(t, err)
+			require.Len(t, result.Dashboard.Panels, 1)
+			assert.JSONEq(t, source, string(result.Dashboard.Grafana))
+			var config map[string]any
+			require.NoError(t, json.Unmarshal(result.Dashboard.Panels[0].Config, &config))
+			assert.Equal(t, "15m", config["timeFrom"])
+			assert.Equal(t, "$shift", config["timeShift"])
+			assert.Equal(t, true, config["hideTimeOverride"])
+		})
+	}
+}

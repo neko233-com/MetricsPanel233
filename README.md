@@ -229,14 +229,20 @@ metricspanel datasources health --id remote-prometheus
 URL 支持 `from/to`、`time/time.window` 和 `timezone`；前者优先，中心窗口以 Unix 毫秒表示，
 切换范围保留 `var-*` 参数，重载及浏览器历史可还原窗口。
 自定义选择器支持 Unix 毫秒、ISO 日期和 SDK 日期运算（例如 `now-1h/h`、`now/d`），包含 IANA 时区及夏令时。
-每次解析共享一个 now；固定时间不会随五秒刷新向后移动，范围限于 31 天。
+每次解析共享一个 now；固定时间不会随刷新向后移动，范围限于 31 天。
 
 SDK `PanelProps.onChangeTimeRange` 和原生折线图拖选都更新工作空间及 URL，并触发真实查询。
 查询 request、SDK 面板时间范围、变量查询、单位日期展示和波形捕获都使用选择的边界与时区；
 `$__from`、`$__to`、`$__range_ms` 保留精确毫秒，TemplateSrv.updateTimeRange 也已接通。
-五个时间模型测试和端到端测试覆盖固定窗口查询值、缩放、重载、时间参数、日期运算、边界错误及中英文手机布局。
-单面板 `timeFrom/timeShift` 覆盖、自动刷新配置及其他未实现的时间交互仍需补齐。
+单面板 `timeFrom` 支持日期运算和变量，仅覆盖相对仪表盘范围；`timeShift` 也适用于固定范围，按时区和日历移动，支持 `1d/d` 等舍入。
+查询快照同步到 SDK PanelProps、数据时间范围、宏、转换、图表和面板菜单；`hideTimeOverride` 隐藏时间说明。
+经典 `refresh` / V2 `timeSettings.autoRefresh` 和刷新选项会应用到定时器，导入模板缺省关闭；原生工作空间缺省 5 秒。
+刷新控件提供关闭、指定间隔和自动模式；URL `refresh` 优先于模板，空值表示关闭，切换与历史保留参数。
+刷新至少间隔 5 秒，自动模式依据窗口宽度和范围计算；隐藏页面暂停请求，恢复时补一次刷新，页面卸载清理定时器。
+八个时间模型测试、Testify 导入测试与浏览器回归覆盖时间覆盖、DST、真实请求时间戳、刷新/停止次数及中英文手机布局。
+面板比较范围、局部缩放和其他未实现的时间交互仍需补齐。
 参考 [Grafana 时间 URL 契约](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/)。
+时间覆盖按 [Grafana 13.2 PanelTimeRange 源码](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx) 实现。
 
 ## Grafana 应用事件
 

@@ -1400,10 +1400,11 @@ dialog::backdrop {
   .toolbar {
     width: 100%;
     gap: 9px;
+    flex-wrap: wrap;
   }
   .toolbar select {
-    min-width: 0;
-    flex: 1;
+    min-width: 150px;
+    flex: 1 0 150px;
     font-size: 12px;
   }
   .toolbar .primary {
@@ -2061,4 +2062,17 @@ dialog::backdrop {
   font-size: 12px;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+.panel-time-info {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 8px;
+  padding: 0 16px;
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .panel-time-info {
+    padding: 0 13px;
+  }
 }

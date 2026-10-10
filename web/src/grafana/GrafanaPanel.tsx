@@ -15,7 +15,7 @@ import { t } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
 import type { FrameUpdate } from "./engine";
-import type { TimeSelection } from "./time-range";
+import type { PanelTimeRange, TimeSelection } from "./time-range";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 
 function display(
@@ -52,6 +52,7 @@ export default function GrafanaPanel({
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
     [streaming, setStreaming] = useState(false);
+  const [queryRange, setQueryRange] = useState<PanelTimeRange>();
   const config = panel.config,
     type = panel.visualization || "timeseries",
     key = JSON.stringify(values);
@@ -69,6 +70,7 @@ export default function GrafanaPanel({
         setError(update.error);
         setLoading(update.loading);
         setStreaming(update.streaming);
+        setQueryRange(update.timeRange);
       },
       error: (e) => {
         setFrames([]);
@@ -80,7 +82,27 @@ export default function GrafanaPanel({
     return () => listener.unsubscribe();
   }, [JSON.stringify(panel), key, range, refresh]);
   useEffect(() => refresh.next(), [tick, refresh]);
-  const series = useMemo(() => framesAsSeries(frames, range), [frames, range]);
+  const effective = queryRange
+    ? {
+        from: queryRange.start,
+        to: queryRange.end,
+        timezone: queryRange.timezone,
+      }
+    : range;
+  const timeInfo = [
+    queryRange?.info.timeFrom
+      ? `${t("Relative time")}: ${queryRange.info.timeFrom}`
+      : "",
+    queryRange?.info.timeShift
+      ? `${t("Time shift")}: ${queryRange.info.timeShift}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const series = useMemo(
+    () => framesAsSeries(frames, effective),
+    [frames, queryRange, range],
+  );
   if (type === "timeseries") {
     const first = frames
       .flatMap((f) => f.fields)
@@ -88,7 +110,8 @@ export default function GrafanaPanel({
     return (
       <Chart
         panel={panel}
-        range={range}
+        range={effective}
+        timeInfo={timeInfo}
         tick={tick}
         result={series}
         resultError={error}
@@ -117,6 +140,8 @@ export default function GrafanaPanel({
           frames={frames}
           values={values}
           range={range}
+          queryRange={queryRange}
+          timeInfo={timeInfo}
           tick={tick}
           loading={loading}
           streaming={streaming}
@@ -186,9 +211,10 @@ export default function GrafanaPanel({
           </span>
         )}
       </div>
+      {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
       {error && (
         <p className="form-error" role="alert">
-          {error}
+          {t(error)}
         </p>
       )}
       {!supported && (

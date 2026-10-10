@@ -25,7 +25,11 @@ import { connectPanelEvents } from "./app-events";
 import { message, type Panel, type InterpolationValues } from "../api";
 import { interpolate } from "../api";
 import { t } from "../i18n";
-import { resolveTimeRange, type TimeSelection } from "./time-range";
+import {
+  resolveTimeRange,
+  type ResolvedTimeRange,
+  type TimeSelection,
+} from "./time-range";
 
 class PluginErrorBoundary extends Component<
   { children: ReactNode },
@@ -56,6 +60,8 @@ export default function PluginPanel({
   streaming,
   queryError,
   onRange,
+  queryRange,
+  timeInfo,
 }: {
   panel: Panel;
   frames: DataFrame[];
@@ -66,6 +72,8 @@ export default function PluginPanel({
   loading: boolean;
   streaming: boolean;
   queryError: string;
+  queryRange?: ResolvedTimeRange;
+  timeInfo?: string;
 }) {
   const [plugin, setPlugin] = useState<PanelPlugin | null>(null),
     [error, setError] = useState(""),
@@ -122,9 +130,14 @@ export default function PluginPanel({
   }, []);
   const eventBus = useMemo(() => new EventBusSrv(), []);
   useEffect(() => connectPanelEvents(eventBus), [eventBus]);
-  const resolved = resolveTimeRange(range),
+  const resolved = queryRange || resolveTimeRange(range),
     timeRange = resolved.sdk;
-  setPluginVariables(values, range);
+  const effective = {
+    from: resolved.start,
+    to: resolved.end,
+    timezone: resolved.timezone,
+  };
+  setPluginVariables(values, effective);
   const props: PanelProps = {
     id: Number((panel.config as { id?: number })?.id || 0),
     title: panel.title,
@@ -151,7 +164,7 @@ export default function PluginPanel({
     eventBus,
     onOptionsChange: setOptions,
     onFieldConfigChange: setFieldConfig,
-    replaceVariables: (text) => interpolate(text, values, range),
+    replaceVariables: (text) => interpolate(text, values, effective),
     onChangeTimeRange: (next) =>
       onRange({ ...next, timezone: resolved.timezone }),
   };
@@ -167,9 +180,10 @@ export default function PluginPanel({
           {plugin?.meta.name || panel.config?.type}
         </span>
       </div>
-      {error && (
+      {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
+      {(error || queryError) && (
         <p role="alert" className="form-error">
-          {error}
+          {t(error || queryError)}
         </p>
       )}
       <div ref={content} className="grafana-plugin-content">

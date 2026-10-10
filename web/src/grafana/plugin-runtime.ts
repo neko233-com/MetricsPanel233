@@ -321,13 +321,23 @@ async function init(): Promise<Runtime> {
         const values = { ...variableValues };
         for (const [name, v] of Object.entries(scoped || {}))
           if (v) values[name] = v.value;
+        // Panel-scoped request bounds keep async datasource interpolation isolated
+        // from sibling panels updating the workspace TemplateSrv context.
+        const range =
+          scoped?.__from && scoped?.__to
+            ? {
+                from: Number(scoped.__from.value),
+                to: Number(scoped.__to.value),
+                timezone: rawSelection(variableRange).timezone,
+              }
+            : variableRange;
         if (typeof format === "string")
           return interpolate(
             text.replace(/\$(\w+)(?!\w)/g, `\$\{$1:${format}\}`),
             values,
-            variableRange,
+            range,
           );
-        return interpolate(text, values, variableRange);
+        return interpolate(text, values, range);
       },
       containsTemplate: (text = "") => /\$(?:\w|\{)/.test(text),
       updateTimeRange: (range) => {

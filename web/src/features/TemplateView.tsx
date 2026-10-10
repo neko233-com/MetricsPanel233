@@ -25,6 +25,7 @@ import type { PluginExtensionPanelContext } from "@grafana/data";
 import { LoadingState } from "@grafana/data";
 import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
+import { RefreshPicker } from "../components/RefreshPicker";
 const PanelExtensionActions = lazy(() =>
   import("../grafana/PanelExtensionActions").then((module) => ({
     default: module.PanelExtensionActions,
@@ -95,6 +96,7 @@ function PanelCell({
             range={range}
             dashboard={dashboard}
             frames={update?.frames || []}
+            queryRange={update?.timeRange}
             state={
               update?.error
                 ? LoadingState.Error
@@ -127,12 +129,18 @@ export function TemplateView({
   onRange,
   tick,
   refresh,
+  refreshChoice,
+  refreshOptions,
+  onRefreshChoice,
 }: {
   dashboard: Dashboard;
   range: TimeSelection;
   onRange: (v: TimeSelection) => void;
   tick: number;
   refresh: () => void;
+  refreshChoice: string;
+  refreshOptions: string[];
+  onRefreshChoice: (value: string) => void;
 }) {
   const variables = dashboard.variables || [];
   const [values, setValues] = useState<VariableValues>(() =>
@@ -240,6 +248,11 @@ export function TemplateView({
           >
             <RefreshCw size={18} />
           </button>
+          <RefreshPicker
+            value={refreshChoice}
+            options={refreshOptions}
+            onChange={onRefreshChoice}
+          />
           <button
             onClick={() =>
               download(`${dashboard.id}-grafana.json`, dashboard.grafana)

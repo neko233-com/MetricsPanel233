@@ -56,6 +56,9 @@ import {
   resolveTimeRange,
   writeRangeURL,
   type TimeSelection,
+  refreshFromDashboard,
+  refreshOptionsFromDashboard,
+  refreshMilliseconds,
 } from "./grafana/time-range";
 const AppPluginView = lazy(() => import("./grafana/AppPluginView"));
 const ExtensionHost = lazy(() => import("./grafana/ExtensionHost"));
@@ -88,6 +91,11 @@ export default function App() {
     }
   });
   const [rangeError, setRangeError] = useState(initialRange.error);
+  const [refreshOverride, setRefreshOverride] = useState<string | null>(() =>
+    new URLSearchParams(location.search).get("refresh"),
+  );
+  const [refreshError, setRefreshError] = useState("");
+  const [refreshWidth, setRefreshWidth] = useState(window.innerWidth);
   const [locale, updateLocale] = useState<Locale>(getLocale());
   const languageButton = (
     <button
@@ -138,6 +146,34 @@ export default function App() {
     (text: string, error = false) =>
       setNotice({ text, severity: error ? "error" : "success" }),
     [],
+  );
+  const current = dashboards.find(
+    (d) => d.id === (view === "overview" ? "system" : dashboardID),
+  );
+  const refreshChoice =
+    refreshOverride ??
+    ((view === "dashboard" || view === "overview") && current?.grafana
+      ? refreshFromDashboard(current.grafana)
+      : "5s");
+  const refreshResolution = refreshChoice === "auto" ? refreshWidth : 0;
+  const changeRefresh = useCallback(
+    (next: string) => {
+      try {
+        refreshMilliseconds(next, range);
+        setRefreshOverride(next);
+        setRefreshError("");
+        const params = new URLSearchParams(location.search);
+        params.set("refresh", next);
+        history.replaceState(
+          history.state,
+          "",
+          `${location.pathname}?${params}${location.hash}`,
+        );
+      } catch (error) {
+        notify(tr(message(error)), true);
+      }
+    },
+    [range, notify],
   );
   const load = useCallback(async () => {
     try {
@@ -219,11 +255,57 @@ export default function App() {
   );
   useEffect(() => {
     void load();
-    const timer = setInterval(() => {
-      if (!document.hidden) refreshWorkspace();
-    }, 5000);
-    return () => clearInterval(timer);
   }, [load]);
+  useEffect(() => {
+    const resized = () => setRefreshWidth(window.innerWidth);
+    window.addEventListener("resize", resized);
+    return () => window.removeEventListener("resize", resized);
+  }, []);
+  useEffect(() => {
+    let interval: number;
+    try {
+      interval = refreshMilliseconds(
+        refreshChoice,
+        range,
+        refreshResolution || window.innerWidth,
+      );
+      setRefreshError("");
+    } catch (error) {
+      setRefreshError(message(error));
+      return;
+    }
+    if (!interval) return;
+    let timer: ReturnType<typeof setTimeout>,
+      blocked = false;
+    const schedule = (deadline = Date.now() + interval) => {
+      timer = setTimeout(
+        () => {
+          if (Date.now() < deadline) {
+            schedule(deadline);
+            return;
+          }
+          if (document.hidden) blocked = true;
+          else refreshWorkspace();
+          schedule();
+        },
+        Math.min(2147483647, Math.max(1, deadline - Date.now())),
+      );
+    };
+    const resume = () => {
+      if (blocked && !document.hidden) {
+        blocked = false;
+        clearTimeout(timer);
+        refreshWorkspace();
+        schedule();
+      }
+    };
+    schedule();
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [refreshChoice, range, refreshResolution]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(
@@ -259,6 +341,7 @@ export default function App() {
   }, [dashboards]);
   useEffect(() => {
     const restore = () => {
+      setRefreshOverride(new URLSearchParams(location.search).get("refresh"));
       const uid = /^\/d\/([^/]+)/.exec(location.pathname)?.[1];
       const dashboard = uid
         ? dashboards.find(
@@ -292,9 +375,6 @@ export default function App() {
     if (next !== "dashboard")
       history.replaceState({}, "", `/${location.search}#${next}`);
   }
-  const current = dashboards.find(
-    (d) => d.id === (view === "overview" ? "system" : dashboardID),
-  );
   const title =
     view === "app"
       ? "Application"
@@ -440,6 +520,11 @@ export default function App() {
               {tr(rangeError)}
             </p>
           )}
+          {refreshError && (
+            <p className="form-error" role="alert">
+              {tr(refreshError)}
+            </p>
+          )}
           {connectionError && (
             <div className="connection-error" role="alert">
               <span>
@@ -459,6 +544,9 @@ export default function App() {
                   onRange={changeRange}
                   tick={tick}
                   refresh={refreshWorkspace}
+                  refreshChoice={refreshChoice}
+                  refreshOptions={refreshOptionsFromDashboard(current.grafana)}
+                  onRefreshChoice={changeRefresh}
                 />
               ) : (
                 <DashboardView
@@ -470,6 +558,8 @@ export default function App() {
                   range={range}
                   onRange={changeRange}
                   refresh={refreshWorkspace}
+                  refreshChoice={refreshChoice}
+                  onRefreshChoice={changeRefresh}
                   reload={load}
                   notify={notify}
                   cli={() => navigate("cli")}
@@ -493,6 +583,7 @@ export default function App() {
               reload={load}
               notify={notify}
               open={(d) => {
+                setRefreshOverride(null);
                 setDashboardID(d.id);
                 history.replaceState(
                   {},
