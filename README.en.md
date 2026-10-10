@@ -147,7 +147,7 @@ Changing ranges preserves `var-*` values; reloads and browser history restore th
 The custom picker accepts Unix milliseconds, ISO dates and SDK date math such as `now-1h/h` and `now/d`, including IANA zones and DST.
 One now anchors both endpoints. Fixed windows remain fixed across refreshes; ranges are limited to 31 days.
 
-SDK `PanelProps.onChangeTimeRange` and native chart drag selection update the workspace and URL, then execute real queries.
+SDK `PanelProps.onChangeTimeRange` and native chart drag selection default to updating the workspace and URL, then execute real queries.
 Query requests, SDK panel ranges, variable queries, date formatting and pattern capture use the selected bounds and timezone.
 `$__from`, `$__to` and `$__range_ms` retain exact milliseconds, and TemplateSrv.updateTimeRange is connected.
 Panel `timeFrom` supports date math and variables and overrides relative dashboard ranges. `timeShift` also applies to fixed ranges, respects calendar/timezone shifts and accepts rounding such as `1d/d`.
@@ -156,8 +156,13 @@ SDK zoom and native drag selection reverse a panel's shift before updating the d
 Classic `refresh` / V2 `timeSettings.autoRefresh` and interval choices drive timers; imported dashboards default to off, native workspaces to five seconds.
 Controls offer off, explicit intervals and automatic mode. URL `refresh` overrides saved defaults; an empty value means off, and browser history preserves the choice.
 The minimum interval is five seconds. Automatic mode uses the range and viewport width. Hidden pages pause requests, resume catches up once, and unmount clears timers.
-Eight model tests, Testify import tests and browser tests verify overrides, DST, actual request bounds, refresh/stop counts and bilingual mobile layout.
-Panel comparison ranges, local zoom and additional time interactions remain outstanding.
+`compareWith` issues separate historical queries for explicit intervals or `__previousPeriod`; `timeRangeCompare: false` opts individual queries out.
+Comparison frames carry idempotent `-compare` refIds and SDK `timeCompare.diffMs` metadata. SDK panels retain historical timestamps; native curves use the official alignment helper and dashed styling.
+Comparison `1d` / `1M` offsets follow the SDK's fixed 24-hour / 30-day durations, whereas `timeShift` uses calendar date math. Relative raw ranges advance on refresh.
+Choosing “Zoom scope → This panel” creates a native local view: SDK zoom and drag selection query that panel while preserving the URL and other panels. Refresh retains the local window; reset or parent range/variable changes restore the dashboard window.
+Local zoom is browser view state and preserves original template exports. Comparison errors are visible while primary query data remains available.
+Eleven model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual mobile layout.
+Full Scenes lifecycle, imported `zoomBehavior` semantics and additional time interactions remain outstanding.
 See the [Grafana time URL contract](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/).
 Overrides follow the [Grafana 13.2 PanelTimeRange implementation](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx).
 

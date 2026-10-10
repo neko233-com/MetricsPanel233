@@ -6,6 +6,7 @@ import {
   useId,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import {
@@ -39,6 +40,7 @@ export function Chart({
   streaming = false,
   onRange,
   timeInfo,
+  controls,
 }: {
   panel: Panel;
   range: TimeSelection;
@@ -52,6 +54,7 @@ export function Chart({
   streaming?: boolean;
   onRange?: (value: TimeSelection) => void;
   timeInfo?: string;
+  controls?: ReactNode;
 }) {
   const [data, setData] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
@@ -198,6 +201,7 @@ export function Chart({
       <div className="panel-heading">
         <h2>{tr(panel.title)}</h2>
         <div className="panel-actions">
+          {controls}
           {streaming && (
             <span className="status healthy" role="status">
               <i />
@@ -352,7 +356,7 @@ export function Chart({
               .join(" ");
             return (
               <g key={JSON.stringify(s.labels)}>
-                {i === 0 && s.points.length > 1 && (
+                {i === 0 && !s.comparison && s.points.length > 1 && (
                   <polygon
                     points={`${chart.x(s.points[0].timestamp)},185 ${coordinates} ${chart.x(s.points.at(-1)!.timestamp)},185`}
                     fill={`url(#${gradient})`}
@@ -363,6 +367,7 @@ export function Chart({
                   fill="none"
                   stroke={i === 0 ? color : palette[i]}
                   strokeWidth="2"
+                  strokeDasharray={s.comparison ? "1 5 4 5" : undefined}
                   strokeLinejoin="round"
                   strokeLinecap="round"
                 />

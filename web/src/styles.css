@@ -2071,6 +2071,25 @@ dialog::backdrop {
   overflow-wrap: anywhere;
   flex-shrink: 0;
 }
+.panel-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.panel-zoom-controls select {
+  width: 110px;
+  height: 30px;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.panel-zoom-controls .icon-button {
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 3px;
+}
 @media (max-width: 700px) {
   .panel-time-info {
     padding: 0 13px;

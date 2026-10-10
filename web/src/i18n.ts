@@ -11,6 +11,13 @@ export function setLocale(value: Locale) {
   document.documentElement.lang = value === "zh" ? "zh-CN" : "en";
 }
 const zh: Record<string, string> = {
+  "Zoom scope": "缩放范围",
+  "This panel": "当前面板",
+  "Reset panel zoom": "重置面板缩放",
+  "Compare with": "比较范围",
+  "Previous period": "前一时段",
+  Comparison: "比较",
+  "Invalid comparison interval": "比较间隔无效",
   "Relative time": "相对时间",
   "Time shift": "时间偏移",
   "Invalid panel relative time": "面板相对时间无效",

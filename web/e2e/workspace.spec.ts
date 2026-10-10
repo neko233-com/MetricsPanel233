@@ -103,7 +103,8 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     archive = path.join(temp, "events.zip");
   const run = promisify(execFile),
     errors: string[] = [];
-  const queries: { from: string; to: string }[] = [];
+  const queries: { from: string; to: string; queries?: { refId: string }[] }[] =
+    [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/ds/query")
@@ -486,6 +487,87 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     expect(Number(new URL(page.url()).searchParams.get("to"))).toBeLessThan(
       before - 20000,
     );
+    await page.goto(
+      `${endpoint}/d/time-dashboard/time?from=${before - 240000}&to=${before}&timezone=utc&var-shift=2h`,
+    );
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7440000} / ${before - 7200000} / utc`,
+    );
+    const nativePanel = page.getByRole("region", {
+      name: "Time native plot",
+      exact: true,
+    });
+    await expect(nativePanel.locator("polyline").first()).toHaveAttribute(
+      "points",
+      /\d/,
+    );
+    const siblingCount = () =>
+      queries.filter((request) =>
+        request.queries?.some((query) => query.refId === "N"),
+      ).length;
+    const siblingBefore = siblingCount(),
+      dashboardURL = page.url();
+    await panel
+      .getByRole("combobox", { name: "Zoom scope", exact: true })
+      .selectOption("panel");
+    await panel
+      .getByRole("button", { name: "SDK zoom window", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7420000} / ${before - 7220000} / utc`,
+    );
+    expect(page.url()).toBe(dashboardURL);
+    expect(siblingCount()).toBe(siblingBefore);
+    await expect(
+      panel.getByRole("button", { name: "Reset panel zoom", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Refresh metrics", exact: true })
+      .click();
+    await expect.poll(siblingCount).toBeGreaterThan(siblingBefore);
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7420000} / ${before - 7220000} / utc`,
+    );
+    await panel
+      .getByRole("button", { name: "Reset panel zoom", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      `Panel window: ${before - 7440000} / ${before - 7200000} / utc`,
+    );
+    expect(page.url()).toBe(dashboardURL);
+    await nativePanel
+      .getByRole("combobox", { name: "Zoom scope", exact: true })
+      .selectOption("panel");
+    const nativeBefore = siblingCount();
+    const localBox = (await shiftedPlot.boundingBox())!;
+    await page.mouse.move(
+      localBox.x + localBox.width * 0.4,
+      localBox.y + localBox.height * 0.4,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      localBox.x + localBox.width * 0.7,
+      localBox.y + localBox.height * 0.4,
+      { steps: 5 },
+    );
+    await page.mouse.up();
+    await expect.poll(siblingCount).toBeGreaterThan(nativeBefore);
+    await expect(
+      nativePanel.getByRole("button", {
+        name: "Reset panel zoom",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(page.url()).toBe(dashboardURL);
+    await nativePanel
+      .getByRole("button", { name: "Reset panel zoom", exact: true })
+      .click();
+    await expect(
+      nativePanel.getByRole("button", {
+        name: "Reset panel zoom",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await page.goto(endpoint + "/d/time-dashboard/time?var-window=bad");
     await expect(panel.getByRole("alert")).toContainText(
       "Invalid panel relative time",
@@ -504,6 +586,274 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       !path.basename(resolved).startsWith("metricspanel233-time-e2e-")
     )
       throw new Error("Unsafe time test cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("Comparison requests retain raw SDK timestamps, opt out individual queries and align native curves", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-compare-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "events.zip");
+  const run = promisify(execFile),
+    errors: string[] = [];
+  const bodies: { from: string; to: string; queries: { refId: string }[] }[] =
+    [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/ds/query")
+      bodies.push(request.postDataJSON());
+  });
+  const end = Date.now() - 60000,
+    start = end - 120000,
+    day = 86400000;
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-extension-events", archive], {
+      windowsHide: true,
+    });
+    expect(
+      (
+        await page.request.post(endpoint + "/api/v1/plugins/install", {
+          data: await readFile(archive),
+          headers: { "Content-Type": "application/zip" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    expect(
+      (
+        await page.request.post(endpoint + "/api/v1/ingest", {
+          data: {
+            samples: [
+              { name: "compare_fixture", value: 100, timestamp: start + 10000 },
+              { name: "compare_fixture", value: 150, timestamp: start + 60000 },
+              { name: "compare_fixture", value: 25, timestamp: start - 60000 },
+              {
+                name: "compare_fixture",
+                value: 5,
+                timestamp: start - day - 60000,
+              },
+              {
+                name: "compare_fixture",
+                value: 10,
+                timestamp: start - day + 10000,
+              },
+              {
+                name: "compare_fixture",
+                value: 15,
+                timestamp: start - day + 60000,
+              },
+            ],
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const source = {
+      uid: "compare-dashboard",
+      title: "Comparison dashboard",
+      timezone: "utc",
+      time: { from: String(start), to: String(end) },
+      refresh: "",
+      panels: [
+        {
+          id: 1,
+          title: "Comparison SDK",
+          type: "metricspanel-events-panel",
+          compareWith: "1d",
+          gridPos: { x: 0, y: 0, w: 12, h: 16 },
+          targets: [
+            { refId: "A", expr: "compare_fixture", instant: true },
+            {
+              refId: "B",
+              expr: "vector(777)",
+              instant: true,
+              timeRangeCompare: false,
+            },
+          ],
+        },
+        {
+          id: 2,
+          title: "Comparison curves",
+          type: "timeseries",
+          compareWith: "1d",
+          gridPos: { x: 12, y: 0, w: 12, h: 16 },
+          targets: [{ refId: "N", expr: "compare_fixture" }],
+        },
+      ],
+    };
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await page.goto(endpoint + "/d/compare-dashboard/compare");
+    const panel = page.getByRole("region", {
+        name: "Comparison SDK",
+        exact: true,
+      }),
+      plot = page.getByRole("region", {
+        name: "Comparison curves",
+        exact: true,
+      });
+    await expect(panel).toContainText("Panel value: 150");
+    await expect(panel).toContainText("Compare with: 1d");
+    await panel.getByText("Frame inspection", { exact: true }).click();
+    const inspect = async () =>
+      JSON.parse(
+        (await panel.locator("pre").innerText()).replace("Frame details: ", ""),
+      ) as {
+        refId: string;
+        compare: boolean;
+        diff?: number;
+        time: number;
+        value: number;
+      }[];
+    await expect
+      .poll(async () => (await inspect()).map((frame) => frame.refId).sort())
+      .toEqual(["A", "A-compare", "B"]);
+    expect(
+      (await inspect()).find((frame) => frame.refId === "A-compare"),
+    ).toMatchObject({ compare: true, diff: -day, time: end - day, value: 15 });
+    expect(
+      (await inspect()).find((frame) => frame.refId === "B"),
+    ).toMatchObject({ compare: false, value: 777 });
+    await expect(panel).toContainText(
+      `Panel variables: ${start} / ${end} / 120000`,
+    );
+    expect(
+      bodies.some(
+        (body) =>
+          Number(body.from) === start - day &&
+          Number(body.to) === end - day &&
+          body.queries.length === 1 &&
+          body.queries[0].refId === "A-compare",
+      ),
+    ).toBeTruthy();
+    expect(
+      bodies
+        .flatMap((body) => body.queries)
+        .some((query) => query.refId === "B-compare"),
+    ).toBeFalsy();
+    const normal = plot.locator("polyline:not([stroke-dasharray])"),
+      compared = plot.locator('polyline[stroke-dasharray="1 5 4 5"]');
+    await expect(normal).toHaveCount(1);
+    await expect(compared).toHaveCount(1);
+    const firstX = async (line: typeof normal) =>
+      Number((await line.getAttribute("points"))!.split(/[ ,]/)[0]);
+    expect(await firstX(compared)).toBeCloseTo(await firstX(normal), 4);
+    for (let round = 0; round < 2; round++) {
+      const count = bodies.length;
+      await page
+        .getByRole("button", { name: "Refresh metrics", exact: true })
+        .click();
+      await expect.poll(() => bodies.length).toBeGreaterThan(count);
+      await expect
+        .poll(async () => (await inspect()).map((frame) => frame.refId).sort())
+        .toEqual(["A", "A-compare", "B"]);
+    }
+    await page.screenshot({
+      path: testInfo.outputPath("comparison-desktop.png"),
+      animations: "disabled",
+    });
+    source.panels[0].compareWith = "__previousPeriod";
+    source.panels[1].compareWith = "__previousPeriod";
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await page.reload();
+    await panel.getByText("Frame inspection", { exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          (await inspect()).find((frame) => frame.refId === "A-compare")?.diff,
+      )
+      .toBe(-120000);
+    expect(
+      bodies.some(
+        (body) =>
+          Number(body.from) === start - 120000 &&
+          Number(body.to) === start &&
+          body.queries.some((query) => query.refId === "A-compare"),
+      ),
+    ).toBeTruthy();
+    await expect(panel).toContainText("Compare with: Previous period");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(panel).toContainText("比较范围: 前一时段");
+    await panel
+      .getByRole("combobox", { name: "缩放范围", exact: true })
+      .selectOption("panel");
+    await expect(
+      panel.getByRole("combobox", { name: "缩放范围", exact: true }),
+    ).toHaveValue("panel");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await plot.scrollIntoViewIfNeeded();
+    await expect(plot).toContainText("比较范围: 前一时段");
+    await expect(plot).toContainText("(比较)");
+    await plot.screenshot({
+      path: testInfo.outputPath("comparison-mobile.png"),
+      animations: "disabled",
+    });
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    source.panels[0].compareWith = "bad";
+    source.panels[1].compareWith = "bad";
+    source.panels[1].targets[0].timeRangeCompare = false;
+    expect(
+      (
+        await page.request.post(endpoint + "/api/dashboards/db", {
+          data: { dashboard: source, overwrite: true },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await page.reload();
+    await expect(panel.getByRole("alert")).toContainText(
+      "Invalid comparison interval",
+    );
+    await expect(panel).toContainText("Panel value: 150");
+    await expect(plot.getByRole("alert")).toHaveCount(0);
+    await expect(plot.locator("polyline")).toHaveCount(1);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto(endpoint + "/#overview").catch(() => {});
+    await page.request.delete(
+      endpoint + "/api/dashboards/uid/compare-dashboard",
+    );
+    await page.request.delete(
+      endpoint + "/api/v1/plugins/metricspanel-events-app",
+    );
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-compare-e2e-")
+    )
+      throw new Error("Unsafe comparison test cleanup target");
     await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
   }
 });

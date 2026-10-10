@@ -11,10 +11,11 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { Chart } from "../components/Chart";
 import { message, type Panel, type InterpolationValues } from "../api";
-import { t } from "../i18n";
+import { t, getLocale } from "../i18n";
 import { watchFrames, framesAsSeries } from "./engine";
 import { Subject } from "rxjs";
 import type { FrameUpdate } from "./engine";
+import { PanelZoomControls } from "../components/PanelZoomControls";
 import {
   panelZoomToDashboard,
   type PanelTimeRange,
@@ -60,6 +61,17 @@ export default function GrafanaPanel({
   const config = panel.config,
     type = panel.visualization || "timeseries",
     key = JSON.stringify(values);
+  const scopeKey = JSON.stringify([panel, values, range]);
+  const [zoomScope, setZoomScope] = useState<"dashboard" | "panel">(
+    "dashboard",
+  );
+  const [localZoom, setLocalZoom] = useState<{
+    value: TimeSelection;
+    key: string;
+  }>();
+  const local = localZoom?.key === scopeKey ? localZoom.value : undefined;
+  const inputRange = local || range;
+  useEffect(() => setLocalZoom(undefined), [scopeKey]);
   const refresh = useMemo(() => new Subject<void>(), []);
   useEffect(() => {
     if (type === "text" || type === "row") {
@@ -67,7 +79,7 @@ export default function GrafanaPanel({
       return;
     }
     setLoading(true);
-    const listener = watchFrames(panel, values, range, refresh).subscribe({
+    const listener = watchFrames(panel, values, inputRange, refresh).subscribe({
       next: (update) => {
         onUpdate?.(update);
         setFrames(update.frames);
@@ -84,7 +96,7 @@ export default function GrafanaPanel({
       },
     });
     return () => listener.unsubscribe();
-  }, [JSON.stringify(panel), key, range, refresh]);
+  }, [JSON.stringify(panel), key, inputRange, refresh]);
   useEffect(() => refresh.next(), [tick, refresh]);
   const effective = queryRange
     ? {
@@ -92,7 +104,7 @@ export default function GrafanaPanel({
         to: queryRange.end,
         timezone: queryRange.timezone,
       }
-    : range;
+    : inputRange;
   const timeInfo = [
     queryRange?.info.timeFrom
       ? `${t("Relative time")}: ${queryRange.info.timeFrom}`
@@ -100,19 +112,36 @@ export default function GrafanaPanel({
     queryRange?.info.timeShift
       ? `${t("Time shift")}: ${queryRange.info.timeShift}`
       : "",
+    queryRange?.info.compareWith
+      ? `${t("Compare with")}: ${queryRange.info.compareWith === "__previousPeriod" ? t("Previous period") : queryRange.info.compareWith}`
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");
   const changePanelRange = (next: TimeSelection) => {
     try {
-      onRange(panelZoomToDashboard(next, queryRange?.shift));
+      const selected = panelZoomToDashboard(next, queryRange?.shift);
+      if (zoomScope === "panel")
+        setLocalZoom({ value: selected, key: scopeKey });
+      else onRange(selected);
     } catch (error) {
       setError(message(error));
     }
   };
+  const zoomControls = (
+    <PanelZoomControls
+      scope={zoomScope}
+      active={Boolean(local)}
+      onScope={(next) => {
+        setZoomScope(next);
+        if (next === "dashboard") setLocalZoom(undefined);
+      }}
+      onReset={() => setLocalZoom(undefined)}
+    />
+  );
   const series = useMemo(
     () => framesAsSeries(frames, effective),
-    [frames, queryRange, range],
+    [frames, queryRange, inputRange, getLocale()],
   );
   if (type === "timeseries") {
     const first = frames
@@ -123,6 +152,7 @@ export default function GrafanaPanel({
         panel={panel}
         range={effective}
         timeInfo={timeInfo}
+        controls={zoomControls}
         tick={tick}
         result={series}
         resultError={error}
@@ -150,9 +180,10 @@ export default function GrafanaPanel({
           panel={panel}
           frames={frames}
           values={values}
-          range={range}
+          range={inputRange}
           queryRange={queryRange}
           timeInfo={timeInfo}
+          controls={zoomControls}
           tick={tick}
           loading={loading}
           streaming={streaming}

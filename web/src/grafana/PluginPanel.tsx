@@ -62,6 +62,7 @@ export default function PluginPanel({
   onRange,
   queryRange,
   timeInfo,
+  controls,
 }: {
   panel: Panel;
   frames: DataFrame[];
@@ -74,6 +75,7 @@ export default function PluginPanel({
   queryError: string;
   queryRange?: ResolvedTimeRange;
   timeInfo?: string;
+  controls?: ReactNode;
 }) {
   const [plugin, setPlugin] = useState<PanelPlugin | null>(null),
     [error, setError] = useState(""),
@@ -176,9 +178,11 @@ export default function PluginPanel({
     >
       <div className="panel-heading">
         <h2>{panel.title}</h2>
-        <span className="subtle">
-          {plugin?.meta.name || panel.config?.type}
-        </span>
+        {controls || (
+          <span className="subtle">
+            {plugin?.meta.name || panel.config?.type}
+          </span>
+        )}
       </div>
       {timeInfo && <p className="panel-time-info">{timeInfo}</p>}
       {(error || queryError) && (

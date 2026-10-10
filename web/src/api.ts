@@ -9,7 +9,7 @@ export type QueryResult = {
   start: number;
   end: number;
   step: number;
-  series: { labels: Labels; points: Point[] }[];
+  series: { labels: Labels; points: Point[]; comparison?: boolean }[];
 };
 export type Panel = {
   id: string;

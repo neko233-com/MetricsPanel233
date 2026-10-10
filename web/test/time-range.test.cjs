@@ -32,8 +32,75 @@ const {
   refreshOptionsFromDashboard,
   refreshMilliseconds,
   panelZoomToDashboard,
+  resolveComparisonRange,
+  comparisonRefId,
 } = exportsObject;
 const now = Date.parse("2026-10-10T12:34:56.789Z");
+test("comparison queries preserve parent bounds and shift exact previous periods", () => {
+  const parent = resolveTimeRange("1h", now);
+  const compared = resolveComparisonRange(parent, "1d");
+  assert.equal(compared.start, parent.start - 86400000);
+  assert.equal(compared.end, parent.end - 86400000);
+  assert.equal(compared.sdk.raw.from, "now-1h-1d");
+  assert.equal(compared.sdk.raw.to, "now-1d");
+  assert.equal(parent.sdk.raw.from, "now-1h");
+  const previous = resolveComparisonRange(parent, "__previousPeriod");
+  assert.equal(previous.end, parent.start);
+  assert.equal(previous.sdk.raw.to, "now-1h");
+  assert.equal(
+    resolveComparisonRange(resolveTimeRange("3700s", now), "__previousPeriod")
+      .sdk.raw.to,
+    "now-3700s",
+  );
+  const precise = resolveComparisonRange(
+    resolveTimeRange({ from: now - 1001, to: now }),
+    "__previousPeriod",
+  );
+  assert.equal(precise.start, now - 2002);
+  assert.equal(precise.end, now - 1001);
+  assert.equal(precise.sdk.raw.to.valueOf(), now - 1001);
+  assert.equal(comparisonRefId("A"), "A-compare");
+  assert.equal(comparisonRefId("A-compare"), "A-compare");
+  for (const bad of ["bad", "-1d", "0s", "1dgarbage"])
+    assert.throws(() => resolveComparisonRange(parent, bad), /Invalid/);
+});
+test("comparison month offsets follow the SDK's fixed duration contract across DST", () => {
+  const parent = resolveTimeRange(
+    { from: "now-1h", to: "now", timezone: "America/New_York" },
+    Date.parse("2026-03-09T16:00:00Z"),
+  );
+  assert.equal(parent.end - resolveComparisonRange(parent, "1d").end, 86400000);
+  assert.equal(
+    parent.end - resolveComparisonRange(parent, "1M").end,
+    30 * 86400000,
+  );
+});
+test("SDK comparison alignment copies timestamps and preserves datasource-owned frames", () => {
+  const {
+    alignTimeRangeCompareData,
+    createTheme,
+    FieldType,
+  } = require("@grafana/data");
+  const frame = {
+    refId: "A-compare",
+    length: 2,
+    meta: { timeCompare: { diffMs: -3600000, isTimeShiftQuery: true } },
+    fields: [
+      {
+        name: "Time",
+        type: FieldType.time,
+        config: {},
+        values: [now - 3600000, now - 3599000],
+      },
+      { name: "Value", type: FieldType.number, config: {}, values: [10, 20] },
+    ],
+  };
+  const result = alignTimeRangeCompareData(frame, -3600000, createTheme());
+  assert.equal(result.fields[0].values[0], now);
+  assert.equal(frame.fields[0].values[0], now - 3600000);
+  assert.equal(result.fields[1].config.custom.lineStyle.fill, "dash");
+  assert.equal(frame.fields[1].config.custom, undefined);
+});
 
 test("one now anchors both bounds; fixed windows stay fixed across refreshes", () => {
   const relative = resolveTimeRange("1h", now);

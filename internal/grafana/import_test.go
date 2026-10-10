@@ -74,8 +74,8 @@ func TestResourceSchemasAndLosslessContracts(t *testing.T) {
 }
 
 func TestTimeOverridesSurviveClassicAndResourceImport(t *testing.T) {
-	classic := `{"title":"Timing","refresh":"7s","timepicker":{"refresh_intervals":["7s","1m"]},"panels":[{"id":1,"title":"Past","type":"stat","timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true,"targets":[{"expr":"up"}]}]}`
-	v2 := `{"apiVersion":"dashboard.grafana.app/v2beta1","kind":"Dashboard","metadata":{"name":"timing-v2"},"spec":{"title":"Timing","timeSettings":{"autoRefresh":"7s","autoRefreshIntervals":["7s","1m"]},"elements":{"past":{"kind":"Panel","spec":{"id":1,"title":"Past","data":{"kind":"QueryGroup","spec":{"queryOptions":{"timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true},"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","spec":{"expr":"up"}}}}]}},"vizConfig":{"kind":"VizConfig","group":"stat","spec":{}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":12,"height":8,"element":{"kind":"ElementReference","name":"past"}}}]}}}}`
+	classic := `{"title":"Timing","refresh":"7s","timepicker":{"refresh_intervals":["7s","1m"]},"panels":[{"id":1,"title":"Past","type":"stat","timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true,"compareWith":"1d","targets":[{"expr":"up","timeRangeCompare":false}]}]}`
+	v2 := `{"apiVersion":"dashboard.grafana.app/v2beta1","kind":"Dashboard","metadata":{"name":"timing-v2"},"spec":{"title":"Timing","timeSettings":{"autoRefresh":"7s","autoRefreshIntervals":["7s","1m"]},"elements":{"past":{"kind":"Panel","spec":{"id":1,"title":"Past","data":{"kind":"QueryGroup","spec":{"queryOptions":{"timeFrom":"15m","timeShift":"$shift","hideTimeOverride":true,"compareWith":"1d"},"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","spec":{"expr":"up","timeRangeCompare":false}}}}]}},"vizConfig":{"kind":"VizConfig","group":"stat","spec":{}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":12,"height":8,"element":{"kind":"ElementReference","name":"past"}}}]}}}}`
 	for name, source := range map[string]string{"classic": classic, "v1": `{"apiVersion":"dashboard.grafana.app/v1beta1","kind":"Dashboard","spec":` + classic + `}`, "v2": v2} {
 		t.Run(name, func(t *testing.T) {
 			result, err := grafana.Import([]byte(source))
@@ -87,6 +87,10 @@ func TestTimeOverridesSurviveClassicAndResourceImport(t *testing.T) {
 			assert.Equal(t, "15m", config["timeFrom"])
 			assert.Equal(t, "$shift", config["timeShift"])
 			assert.Equal(t, true, config["hideTimeOverride"])
+			assert.Equal(t, "1d", config["compareWith"])
+			targets := config["targets"].([]any)
+			require.Len(t, targets, 1)
+			assert.Equal(t, false, targets[0].(map[string]any)["timeRangeCompare"])
 		})
 	}
 }

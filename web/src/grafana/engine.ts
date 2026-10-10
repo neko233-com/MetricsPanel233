@@ -13,6 +13,7 @@ import {
   type DataFrame,
   type DataTransformerConfig,
   type FieldConfigSource,
+  alignTimeRangeCompareData,
 } from "@grafana/data";
 import {
   firstValueFrom,
@@ -53,10 +54,13 @@ import {
 import {
   resolveTimeRange,
   resolvePanelTimeRange,
+  resolveComparisonRange,
+  comparisonRefId,
   type PanelTimeRange,
   type TimeSelection,
 } from "./time-range";
 
+import { t } from "../i18n";
 export type VariableValues = Record<string, string | string[]>;
 export type GrafanaTarget = {
   [key: string]: unknown;
@@ -67,6 +71,7 @@ export type GrafanaTarget = {
   instant?: boolean;
   range?: boolean;
   format?: string;
+  timeRangeCompare?: boolean;
   datasource?: string | { type?: string; uid?: string };
 };
 export type GrafanaConfig = {
@@ -76,6 +81,7 @@ export type GrafanaConfig = {
   timeFrom?: string;
   timeShift?: string;
   hideTimeOverride?: boolean;
+  compareWith?: string;
   targets?: GrafanaTarget[];
   datasource?: GrafanaTarget["datasource"];
   transformations?: DataTransformerConfig[];
@@ -247,6 +253,9 @@ export function watchFrames(
           ? interpolate(panel.config.timeShift, values, fixed)
           : undefined,
         hideTimeOverride: panel.config?.hideTimeOverride,
+        compareWith: panel.config?.compareWith
+          ? interpolate(panel.config.compareWith, values, fixed)
+          : undefined,
       },
       sampledAt,
     );
@@ -278,7 +287,20 @@ export function watchFrames(
       });
       groups.set(uid, existing);
     });
-  const streams = Array.from(groups, ([uid, queries]) =>
+  const requests = Array.from(groups, ([uid, queries]) => ({
+    uid,
+    queries,
+    compare: false,
+  }));
+  if (panel.config?.compareWith)
+    for (const [uid, queries] of groups) {
+      const compared = queries
+        .filter((query) => query.timeRangeCompare !== false)
+        .map((query) => ({ ...query, refId: comparisonRefId(query.refId!) }));
+      if (compared.length)
+        requests.push({ uid, queries: compared, compare: true });
+    }
+  const streams = requests.map(({ uid, queries, compare }) =>
     defer(async () => {
       const runtime = await import("./plugin-runtime");
       runtime.setPluginVariables(values, range);
@@ -286,7 +308,10 @@ export function watchFrames(
     }).pipe(
       switchMap(({ datasource, runtime }) => {
         const query = (targets = queries) => {
-          const resolved = panelRange(),
+          const primary = panelRange();
+          const resolved = compare
+              ? resolveComparisonRange(primary, primary.comparison!)
+              : primary,
             { start, end } = resolved;
           // SDK macros must use the exact timestamps of this query, including relative refreshes.
           runtime.setPluginVariables(values, {
@@ -296,7 +321,7 @@ export function watchFrames(
           });
           return from(
             datasource.query({
-              requestId: `${panel.id}-${Date.now()}`,
+              requestId: `${panel.id}${compare ? "-compare" : ""}-${Date.now()}`,
               interval: `${Math.max(1, Math.ceil((end - start) / 240000))}s`,
               intervalMs: Math.max(
                 1000,
@@ -324,7 +349,29 @@ export function watchFrames(
           ).pipe(
             map(
               (response) =>
-                ({ ...response, panelRange: resolved }) as RangedResponse,
+                ({
+                  ...response,
+                  data: compare
+                    ? response.data.map((input) => {
+                        const frame = toDataFrame(input);
+                        return {
+                          ...frame,
+                          refId: comparisonRefId(
+                            frame.refId ||
+                              (targets.length === 1 ? targets[0].refId! : ""),
+                          ),
+                          meta: {
+                            ...frame.meta,
+                            timeCompare: {
+                              diffMs: resolved.start - primary.start,
+                              isTimeShiftQuery: true,
+                            },
+                          },
+                        };
+                      })
+                    : response.data,
+                  panelRange: primary,
+                }) as RangedResponse,
             ),
           );
         };
@@ -561,12 +608,24 @@ export function framesAsSeries(
 ): QueryResult {
   const { start, end } = resolveTimeRange(range);
   const series = frames.flatMap((frame) => {
-    const time = frame.fields.find((f) => f.type === FieldType.time);
+    const compared = frame.meta?.timeCompare?.isTimeShiftQuery;
+    const aligned = compared
+      ? alignTimeRangeCompareData(frame, frame.meta!.timeCompare!.diffMs, theme)
+      : frame;
+    const time = aligned.fields.find((f) => f.type === FieldType.time);
     if (!time) return [];
-    return frame.fields
+    return aligned.fields
       .filter((f) => f.type === FieldType.number)
       .map((field) => ({
-        labels: { series: getFieldDisplayName(field, frame, frames) },
+        labels: {
+          series: compared
+            ? getFieldDisplayName(field, frame, frames).replace(
+                / \(comparison\)$/,
+                ` (${t("Comparison")})`,
+              )
+            : getFieldDisplayName(field, frame, frames),
+        },
+        comparison: Boolean(compared),
         points: field.values.flatMap((value, i) =>
           typeof value === "number" &&
           Number.isFinite(value) &&

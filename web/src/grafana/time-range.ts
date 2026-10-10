@@ -141,7 +141,8 @@ export type ResolvedTimeRange = ReturnType<typeof resolveTimeRange>;
 export type PanelTimeRange = ResolvedTimeRange & {
   sampledAt: number;
   shift?: string;
-  info: { timeFrom?: string; timeShift?: string };
+  comparison?: string;
+  info: { timeFrom?: string; timeShift?: string; compareWith?: string };
 };
 // Matches Grafana 13.2 PanelTimeRange: relative overrides require relative parent
 // time, while shifts also apply to fixed dates and use calendar-aware date math.
@@ -151,12 +152,14 @@ export function resolvePanelTimeRange(
     timeFrom?: string;
     timeShift?: string;
     hideTimeOverride?: boolean;
+    compareWith?: string;
   },
   now = Date.now(),
 ): PanelTimeRange {
   let selection = rawSelection(value);
   let resolved = resolveTimeRange(selection, now);
   const info: PanelTimeRange["info"] = {};
+  if (overrides.compareWith) info.compareWith = overrides.compareWith;
   if (overrides.timeFrom) {
     const relative = rangeUtil.describeTextRange(overrides.timeFrom);
     if (relative.invalid) throw new Error("Invalid panel relative time");
@@ -206,8 +209,53 @@ export function resolvePanelTimeRange(
     ...resolved,
     sampledAt: now,
     shift: overrides.timeShift || undefined,
+    comparison: overrides.compareWith || undefined,
     info: overrides.hideTimeOverride ? {} : info,
   };
+}
+
+export function comparisonRefId(refId: string) {
+  return refId.endsWith("-compare") ? refId : refId + "-compare";
+}
+export function resolveComparisonRange(
+  primary: ResolvedTimeRange,
+  compareWith: string,
+): ResolvedTimeRange {
+  let offset: number;
+  if (compareWith === "__previousPeriod") offset = primary.end - primary.start;
+  else {
+    if (!/^\d+(?:\.\d+)?(?:ms|[Mwdhmsy])$/.test(compareWith))
+      throw new Error("Invalid comparison interval");
+    const interval = rangeUtil.describeInterval(compareWith);
+    offset = Number.parseFloat(compareWith) * interval.sec * 1000;
+  }
+  if (!Number.isSafeInteger(offset) || offset <= 0)
+    throw new Error("Invalid comparison interval");
+  const resolved = resolveTimeRange({
+    from: primary.start - offset,
+    to: primary.end - offset,
+    timezone: primary.timezone,
+  });
+  const raw = primary.sdk.raw;
+  if (rangeUtil.isRelativeTimeRange(raw) && offset % 1000 === 0) {
+    const period = rangeUtil.secondsToHms(offset / 1000);
+    // secondsToHms chooses the largest unit; retain the remainder for non-preset windows.
+    const exactPeriod =
+      rangeUtil.intervalToMs(period) === offset ? period : `${offset / 1000}s`;
+    const suffix =
+      "-" + (compareWith === "__previousPeriod" ? exactPeriod : compareWith);
+    resolved.sdk.raw = {
+      from:
+        typeof raw.from === "string" && raw.from.startsWith("now")
+          ? raw.from + suffix
+          : dateTime(resolved.sdk.from),
+      to:
+        typeof raw.to === "string" && raw.to.startsWith("now")
+          ? raw.to + suffix
+          : dateTime(resolved.sdk.to),
+    };
+  }
+  return resolved;
 }
 
 export function panelZoomToDashboard(
