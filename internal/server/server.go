@@ -156,6 +156,8 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, v)
 	})
 	api.HandleFunc("POST /api/v1/targets", s.saveTarget)
+	api.HandleFunc("GET /api/v1/collectors/catalog", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, collector.Catalog()) })
+	api.HandleFunc("GET /api/v1/collectors/exporters", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, collector.Exporters()) })
 	api.HandleFunc("PUT /api/v1/targets/{id}", s.saveTarget)
 	api.HandleFunc("DELETE /api/v1/targets/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

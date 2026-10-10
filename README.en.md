@@ -35,7 +35,25 @@ Non-loopback listeners require a token of at least 16 characters. Use an HTTPS r
 
 Push format: `{"samples":[{"name":"business_orders","labels":{"service":"api"},"value":233}]}`.
 Timestamp is Unix milliseconds; omitted / zero uses server time. Duplicate series/timestamp writes replace the prior value.
-The [Go example](examples/go-service/main.go) demonstrates both exporter and push integration. MySQL uses the official `mysqld_exporter` with `.my.cnf` credentials.
+The [Go example](examples/go-service/main.go) demonstrates both exporter and push integration. MySQL can use the official `mysqld_exporter` with `.my.cnf` credentials or the native SQL collector.
+
+Use `targets catalog` for twelve implemented collection paths and `targets exporters` for eighteen exporter presets. `targets add --file FILE|-` accepts native connections and encrypted `secure_settings.password` / `bearer_token`. Responses contain `secure_fields` only; omitted credentials are retained, empty values clear them. Preserve both the database and `secrets.key` in backups. URL credentials are rejected. Examples under `examples/collectors` start with automatic collection disabled.
+
+| Integration | Implemented metrics interface |
+| --- | --- |
+| MySQL / MariaDB | `SHOW GLOBAL STATUS` |
+| Redis | `INFO ALL`, ACL authentication and verified `rediss` TLS |
+| PostgreSQL | `pg_stat_database` |
+| ClickHouse | HTTP SQL over current / asynchronous metrics and events |
+| Elasticsearch | `/_nodes/stats` numeric fields, labeled by node |
+| Hadoop / YARN / HDFS | `/jmx` numeric attributes labeled by MBean |
+| Hive / Kafka | Jolokia wildcard `read`; requires a configured agent |
+| Spark | Configured MetricsServlet `/metrics/json` |
+| Flink | REST metrics discovery and bounded batch reads at the configured scope |
+
+HTTP collectors support Basic or Bearer authentication (Bearer takes precedence). SQL TLS modes are disable, require (encryption) and verify-full (certificate and hostname validation). Native metric names do not reproduce every third-party exporter contract; use the original exporter for its dashboards. Presets cover Node, Windows, Process, MySQL, Redis, PostgreSQL, Elasticsearch, Kafka, JMX, cAdvisor, Kubernetes, MongoDB, RabbitMQ, Nginx, Apache, Memcached, Blackbox and SNMP. Exporters run on monitored hosts; presets do not install them. Custom URLs accept any compatible exporter.
+
+Prometheus text, OpenMetrics 1.0 and delimited protobuf support scalar samples and classic histograms/summaries. Native histogram samples fail explicitly; exemplars are not stored. Kerberos/SPNEGO, Sentinel discovery and automatic cluster fan-out remain unfinished.
 
 ## Storage and performance
 
@@ -425,6 +443,6 @@ Browser tests use a temporary database and clean it after verifying both languag
 official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and mobile layout.
 GitHub Actions runs these checks plus two Docker integration runs.
 CI pulls test images by pinned digest from [Google Cloud's public cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images) to reduce Docker Hub rate-limit failures.
-`compose.test.yml` accepts `METRICSPANEL_TEST_CLICKHOUSE_IMAGE`, `METRICSPANEL_TEST_MYSQL_IMAGE` and `METRICSPANEL_TEST_EXPORTER_IMAGE` source overrides; production Compose has its own configuration.
+The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2 GiB memory and 512 PIDs. It runs real MySQL-compatible MariaDB, Redis, PostgreSQL, ClickHouse, the official MySQL exporter and Go services. JVM/big-data endpoints use protocol fixtures, not real clusters. Full-container restarts verify durable samples and encrypted connections. Cleanup removes this project's container, network, volume and test image. Runtime images omit Node/Go toolchains; the real ClickHouse executable alone is approximately 762 MiB, and tests print actual image size. `compose.test.yml` accepts `METRICSPANEL_TEST_CLICKHOUSE_IMAGE` and `METRICSPANEL_TEST_EXPORTER_IMAGE` build-source overrides; production Compose has its own configuration.
 
 Apache-2.0. See the [Chinese README](README.md) for API details, environment variables, architecture and limitations.

@@ -64,7 +64,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db, Path: path}
 	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
-		for _, table := range []string{"datasources", "app_settings"} {
+		for _, table := range []string{"datasources", "app_settings", "target_connections"} {
 			var exists int
 			if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
 				db.Close()
@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS series(id INTEGER PRIMARY KEY, name TEXT NOT NULL, la
 CREATE TABLE IF NOT EXISTS samples(series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE, timestamp INTEGER NOT NULL, value REAL NOT NULL, PRIMARY KEY(series_id,timestamp)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
 CREATE TABLE IF NOT EXISTS targets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, interval_seconds INTEGER NOT NULL, labels TEXT NOT NULL, enabled INTEGER NOT NULL, last_scrape INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', samples INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS target_connections(id INTEGER PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,kind TEXT NOT NULL,username TEXT NOT NULL,database_name TEXT NOT NULL,tls_mode TEXT NOT NULL,secrets BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS patterns(id TEXT PRIMARY KEY,metric TEXT NOT NULL,labels TEXT NOT NULL,normalization TEXT NOT NULL,aggregation TEXT NOT NULL,created_at INTEGER NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS patterns_metric ON patterns(normalization,aggregation,metric,created_at);

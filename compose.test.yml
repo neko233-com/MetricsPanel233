@@ -1,99 +1,23 @@
 name: metricspanel233-tests
-x-app: &app
-  build:
-    context: .
-    target: runtime
-    args:
-      GOPROXY: ${METRICSPANEL_GOPROXY:-https://proxy.golang.org,direct}
-  image: metricspanel233-test:local
-  ports: ["127.0.0.1::7333"]
-  environment: &app-env
-    METRICSPANEL_TOKEN: metricspanel-integration-test-token
-    METRICSPANEL_ALLOW_UNSIGNED_PLUGINS: metricspanel-sdk-app
-  healthcheck:
-    test: ["CMD", "metricspanel", "health"]
-    interval: 2s
-    timeout: 5s
-    retries: 60
-    start_period: 10s
 services:
-  sqlite:
-    <<: *app
-    volumes: ["sqlite:/data"]
-  clickhouse-app:
-    <<: *app
-    environment:
-      <<: *app-env
-      METRICSPANEL_STORAGE: clickhouse
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_USER: metricspanel
-      CLICKHOUSE_PASSWORD: integration-only-password
-    volumes: ["control:/data"]
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-  clickhouse:
-    image: ${METRICSPANEL_TEST_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.8-alpine}
-    ports: ["127.0.0.1::8123"]
-    environment:
-      CLICKHOUSE_USER: metricspanel
-      CLICKHOUSE_PASSWORD: integration-only-password
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    volumes: ["clickhouse:/var/lib/clickhouse"]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
-      interval: 2s
-      timeout: 3s
-      retries: 60
-  mysql:
-    image: ${METRICSPANEL_TEST_MYSQL_IMAGE:-mysql:8.4.10}
-    environment:
-      MYSQL_ROOT_PASSWORD: integration-root-password
-      MYSQL_DATABASE: business
-    volumes:
-      - mysql:/var/lib/mysql
-      - ./tests/docker/mysql-init.sql:/docker-entrypoint-initdb.d/exporter.sql:ro
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pintegration-root-password"]
-      interval: 2s
-      timeout: 3s
-      retries: 60
-      start_period: 10s
-  mysql-exporter:
-    image: ${METRICSPANEL_TEST_EXPORTER_IMAGE:-prom/mysqld-exporter:v0.20.0}
-    command: ["--config.my-cnf=/etc/exporter.cnf"]
-    volumes: ["./tests/docker/exporter.cnf:/etc/exporter.cnf:ro"]
-    depends_on:
-      mysql:
-        condition: service_healthy
-  go-sqlite:
+  suite:
     build:
       context: .
-      target: example
+      target: integration
       args:
         GOPROXY: ${METRICSPANEL_GOPROXY:-https://proxy.golang.org,direct}
-    image: metricspanel233-go-test:local
+        TEST_CLICKHOUSE_IMAGE: ${METRICSPANEL_TEST_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.8-alpine}
+        TEST_EXPORTER_IMAGE: ${METRICSPANEL_TEST_EXPORTER_IMAGE:-prom/mysqld-exporter:v0.20.0}
+    image: metricspanel233-test:local
     environment:
-      METRICSPANEL_URL: http://sqlite:7333
       METRICSPANEL_TOKEN: metricspanel-integration-test-token
-    depends_on:
-      sqlite:
-        condition: service_healthy
-  go-clickhouse:
-    build:
-      context: .
-      target: example
-      args:
-        GOPROXY: ${METRICSPANEL_GOPROXY:-https://proxy.golang.org,direct}
-    image: metricspanel233-go-test:local
-    environment:
-      METRICSPANEL_URL: http://clickhouse-app:7333
-      METRICSPANEL_TOKEN: metricspanel-integration-test-token
-    depends_on:
-      clickhouse-app:
-        condition: service_healthy
+      METRICSPANEL_ALLOW_UNSIGNED_PLUGINS: metricspanel-sdk-app
+    ports: ["127.0.0.1::7333", "127.0.0.1::7334", "127.0.0.1::8123"]
+    cpus: 2
+    mem_limit: 2g
+    pids_limit: 512
+    volumes: ["suite:/data"]
+    extra_hosts: ["mysql-exporter:127.0.0.1"]
+    stop_grace_period: 30s
 volumes:
-  sqlite:
-  control:
-  clickhouse:
-  mysql:
+  suite:

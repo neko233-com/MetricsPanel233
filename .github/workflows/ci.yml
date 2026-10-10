@@ -34,7 +34,6 @@ jobs:
     timeout-minutes: 30
     env:
       METRICSPANEL_TEST_CLICKHOUSE_IMAGE: mirror.gcr.io/clickhouse/clickhouse-server:26.8-alpine@sha256:11f32c76f576b5fd993cbcfffe4349caac6a67c2e58bb846f4da421889573a69
-      METRICSPANEL_TEST_MYSQL_IMAGE: mirror.gcr.io/library/mysql:8.4.10@sha256:8dbcf531a03aade657e181b9cf2f1d1803ce621a1d55610cb44cb531ab7d7db6
       METRICSPANEL_TEST_EXPORTER_IMAGE: mirror.gcr.io/prom/mysqld-exporter:v0.20.0@sha256:abed8dac117b4ae5b70757f988e44795935b9a72c3b58d720c67ba688f8cb79e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"strconv"
 	"time"
 
@@ -11,7 +12,81 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	prommodel "github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/model/textparse"
 )
+
+// ParseExposition negotiates OpenMetrics and protobuf through Prometheus' own
+// parser. Native histogram samples need histogram storage and fail explicitly.
+func ParseExposition(r io.Reader, contentType string, target model.Target) ([]model.Sample, error) {
+	media, _, err := mime.ParseMediaType(contentType)
+	if contentType == "" || media == "text/plain" || media == "application/octet-stream" {
+		return ParsePrometheus(r, target)
+	}
+	if err != nil || (media != "application/openmetrics-text" && media != "application/vnd.google.protobuf") {
+		return nil, fmt.Errorf("unsupported metrics Content-Type")
+	}
+	body, err := io.ReadAll(io.LimitReader(r, maxBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("exporter exceeds 4 MiB limit")
+	}
+	parser, err := textparse.New(body, contentType, nil, textparse.ParserOptions{KeepClassicOnClassicAndNativeHistograms: true})
+	if err != nil {
+		return nil, err
+	}
+	out := []model.Sample{}
+	now := time.Now().UnixMilli()
+	for {
+		entry, err := parser.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if entry == textparse.EntryHistogram {
+			return nil, fmt.Errorf("native histograms require histogram storage; configure the exporter to expose classic buckets")
+		}
+		if entry != textparse.EntrySeries {
+			continue
+		}
+		_, stamp, value := parser.Series()
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		var set labels.Labels
+		parser.Labels(&set)
+		name := set.Get("__name__")
+		extra := map[string]string{}
+		duplicate := false
+		set.Range(func(label labels.Label) {
+			if label.Name != "__name__" {
+				if _, ok := extra[label.Name]; ok {
+					duplicate = true
+				}
+				extra[label.Name] = label.Value
+			}
+		})
+		if duplicate {
+			return nil, fmt.Errorf("duplicate labels")
+		}
+		timestamp := now
+		if stamp != nil {
+			timestamp = *stamp
+		}
+		out = append(out, model.Sample{Name: name, Labels: targetLabels(target, extra), Value: value, Timestamp: timestamp})
+		if len(out) > 10000 {
+			return nil, fmt.Errorf("exporter exceeds 10000 samples per scrape")
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("exporter returned no finite samples")
+	}
+	return out, nil
+}
 
 // ParsePrometheus accepts the Prometheus 0.0.4 text exposition format, including
 // classic histograms and summaries. Target labels win over exporter labels.

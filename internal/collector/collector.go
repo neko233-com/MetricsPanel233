@@ -1,10 +1,7 @@
 package collector
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -34,30 +31,15 @@ func (c *Collector) Scrape(ctx context.Context, t model.Target) (int, error) {
 		return 0, ctx.Err()
 	}
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	count := 0
 	err := func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.URL, nil)
+		secrets, err := c.Store.TargetSecrets(ctx, t.ID)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Accept", "text/plain; version=0.0.4")
-		req.Header.Set("User-Agent", "MetricsPanel233/0.1")
-		resp, err := c.Client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("exporter returned HTTP %d", resp.StatusCode)
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024+1))
-		if err != nil {
-			return err
-		}
-		if len(body) > 4*1024*1024 {
-			return fmt.Errorf("exporter exceeds 4 MiB limit")
-		}
-		samples, err := ParsePrometheus(bytes.NewReader(body), t)
+		samples, err := c.collect(ctx, t, secrets)
 		if err != nil {
 			return err
 		}

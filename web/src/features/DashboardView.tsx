@@ -233,7 +233,7 @@ export function DashboardView({
       )}
       <div className="agent-strip">
         <Terminal size={25} />
-        <strong>{tr("Agent ready")}</strong>
+        <strong>{tr("Command line")}</strong>
         <code>
           {tr(
             "metricspanel query --metric metricspanel_memory_bytes --range 30m",

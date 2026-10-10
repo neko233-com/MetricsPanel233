@@ -1,0 +1,12 @@
+<clickhouse>
+  <profiles><default>
+    <max_threads>2</max_threads>
+    <max_memory_usage>536870912</max_memory_usage>
+    <allow_experimental_vector_similarity_index>1</allow_experimental_vector_similarity_index>
+  </default></profiles>
+  <users><metricspanel>
+    <password>integration-only-password</password>
+    <networks><ip>0.0.0.0/0</ip></networks>
+    <profile>default</profile><quota>default</quota><access_management>1</access_management>
+  </metricspanel></users>
+</clickhouse>

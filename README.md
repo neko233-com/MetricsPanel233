@@ -5,7 +5,7 @@
 更简单的自托管监控工作空间：**Go 1.27 + Vite 7 + React 19 + 原生 Agent CLI**。
 一个服务提供指标采集、持久化存储、查询和面板。界面可切换中文 / English。
 
-适合 MySQL exporter、Go / Java / Python 业务后端及其他 Prometheus 文本指标。
+支持数据库直连、服务指标接口、Prometheus / OpenMetrics exporter 和业务指标上报。
 SQLite 模式无需额外服务；ClickHouse 模式采用压缩列式时序存储、向量化聚合、按天分区、TTL 和持久化 HNSW 波形向量索引。
 
 ## 快速开始
@@ -51,19 +51,40 @@ ClickHouse 存指标；SQLite 存采集器、仪表盘、模板变量和模板�
 `--retention-days 30` 是默认保留期，SQLite 每小时清理，ClickHouse TTL 在后台合并时清理。
 已有 ClickHouse 表的 TTL 不会因修改启动参数自动重写；变更时执行受控的 `ALTER TABLE ... MODIFY TTL`。
 
-## 采集 MySQL 和业务指标
+## 采集数据库、服务和业务指标
 
 ```sh
 metricspanel targets add --name mysql --url http://localhost:9104/metrics --interval 15s
 metricspanel targets add --name backend --url http://localhost:8080/metrics --interval 5s
 metricspanel targets list
 metricspanel targets scrape --id 1
+metricspanel targets catalog
+metricspanel targets exporters
+metricspanel targets add --file examples/collectors/redis.json
 ```
 
-MySQL 通过官方 `mysqld_exporter` 采集，使用 `.my.cnf` 配置账号。
+内置 MySQL / MariaDB、Redis、PostgreSQL 直连采集，无需 exporter。使用 JSON 文件的 `secure_settings.password` 配置密码，URL 不接受内嵌账号。密码由本地 `secrets.key` 加密保存，备份时需保留数据库与密钥。API / CLI 只返回 `secure_fields`，更新时省略密码保留原值，空字符串清除。示例默认关闭自动采集，替换地址和凭据后设置 `enabled: true`。
+
+| 类型 | 采集接口 | 范围 |
+| --- | --- | --- |
+| MySQL / MariaDB | `SHOW GLOBAL STATUS` | 连接、查询、InnoDB、复制计数器 |
+| Redis | `INFO ALL`，支持 ACL 和 `rediss` | 内存、客户端、命令、持久化、复制、键空间 |
+| PostgreSQL | `pg_stat_database` | 连接、事务、数据块、行、冲突、死锁 |
+| ClickHouse | HTTP SQL | `system.metrics` / `asynchronous_metrics` / `events` |
+| Elasticsearch | `/_nodes/stats` | JVM、索引、磁盘、线程池等节点数值 |
+| Hadoop / YARN、HDFS | `/jmx` | 按 MBean 标签保留数值属性 |
+| Hive、Kafka | Jolokia `read` | 需要配置 Jolokia agent；也可使用 JMX exporter |
+| Spark | `/metrics/json` | 需要配置 MetricsServlet |
+| Flink | REST metrics | JobManager、TaskManager 或 job 的指标地址，自动发现后批量读取 |
+
+HTTP 类型支持 Basic / Bearer 认证和 HTTPS，Bearer 配置优先。SQL TLS 支持 `disable`、`require`（仅加密）、`verify-full`（验证证书和主机名）。内置直连指标名称与第三方 exporter 不完全相同，原 exporter 仪表盘应继续采集对应 exporter。
+
+界面和 `targets exporters` 提供 18 个常用 exporter 预设，包括 Node、Windows、Process、MySQL、Redis、PostgreSQL、Elasticsearch、Kafka、JMX、cAdvisor、Kubernetes、MongoDB、RabbitMQ、Nginx、Apache、Memcached、Blackbox、SNMP。预设填写地址，exporter 需运行在被监控环境；Blackbox / SNMP 使用带探测参数的 URL。任意兼容格式的 exporter 都可自定义地址。
+
+MySQL 也可通过官方 `mysqld_exporter` 采集，使用 `.my.cnf` 配置账号。
 账号需要对应 exporter collector 的 MySQL 权限；可参考 [官方配置](https://github.com/prometheus/mysqld_exporter)。
 [Go 业务服务示例](examples/go-service/main.go) 同时展示 `/metrics` 抓取和 JSON 主动上报。
-Docker 自动化测试使用真实 MySQL 8.4 + 官方 exporter，测试账号仅用于隔离测试。
+Docker 集成测试在一个容器中启动 MySQL 协议兼容的 MariaDB、Redis、PostgreSQL、ClickHouse、官方 MySQL exporter 和业务服务。JVM / 大数据 API 使用固定协议响应验证，不代表已验证真实集群。测试账号仅用于隔离测试。
 
 ```json
 {"samples":[{"name":"business_orders","labels":{"service":"checkout"},"value":233}]}
@@ -71,7 +92,7 @@ Docker 自动化测试使用真实 MySQL 8.4 + 官方 exporter，测试账号仅
 
 保存为 `samples.json`，运行 `metricspanel ingest --file samples.json`，或直接 POST `/api/v1/ingest`。
 `timestamp` 使用 Unix 毫秒，省略 / 0 使用服务端时间。同序列同时间戳重复写入覆盖旧值。
-NaN / Inf 无法存入 JSON；exporter 的非有限样本会跳过。支持经典 histogram / summary，暂不接收原生 histogram。
+NaN / Inf 无法存入 JSON；exporter 的非有限样本会跳过。支持 Prometheus 文本、OpenMetrics 1.0 和 delimited protobuf；经典 histogram / summary 正常入库。原生 histogram 明确拒绝，exemplar 不存储。Kerberos/SPNEGO、Sentinel 自动发现和集群自动遍历仍待补齐。
 
 ## Agent CLI
 
@@ -505,10 +526,10 @@ go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
 
 Windows：`pwsh -File scripts/test-docker.ps1 -Repeat 2`；race 测试需本机 C 编译器。
 集成测试使用固定 Compose 项目 `metricspanel233-tests`、随机宿主机端口、自动释放的并发锁；
-每轮先清理旧测试资源，结束后删除该项目容器、网络、数据卷和两个测试应用镜像。
+每轮只创建一个 `suite` 容器和一个数据卷，限制 2 CPU / 2 GiB 内存 / 512 PID。结束后删除该项目容器、网络、数据卷和测试镜像。
 不清理其他项目或公共基础镜像，BuildKit 缓存会复用。若进程被强制杀死，下次执行会清理旧项目。
 
-测试涵盖真实 Go 抓取 / 主动上报、MySQL exporter、两种后端的重复写入、应用重启、ClickHouse 重启、
+测试涵盖真实 Go 抓取 / 主动上报、MySQL 协议 / Redis / PostgreSQL / ClickHouse 直连和 MySQL exporter、大数据 API 协议、两种后端的重复写入、应用重启、ClickHouse 重启、整个测试容器重启、
 Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源 / Live、Agent NDJSON 订阅、重启及资源清理。
 
 浏览器自动化：先构建网页和 `bin/metricspanel[.exe]`，再运行：
@@ -522,7 +543,7 @@ npm run test:e2e
 每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、波形保存 / 检索、文本清理和移动布局，结束时删除临时数据。
 GitHub Actions 自动运行 race / API / 浏览器测试与两轮 Docker 集成测试。
 CI 从 [Google Cloud 官方缓存](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images)拉取按摘要固定的测试镜像，减少 Docker Hub 限流影响。
-`compose.test.yml` 的 `METRICSPANEL_TEST_CLICKHOUSE_IMAGE`、`METRICSPANEL_TEST_MYSQL_IMAGE` 和 `METRICSPANEL_TEST_EXPORTER_IMAGE` 可覆盖测试镜像来源；生产 Compose 使用独立配置。
+`compose.test.yml` 的 `METRICSPANEL_TEST_CLICKHOUSE_IMAGE` 和 `METRICSPANEL_TEST_EXPORTER_IMAGE` 可覆盖构建来源。镜像不含 Node / Go 工具链；真实 ClickHouse 可执行文件约 762 MiB，是测试镜像体积的主要部分，测试会打印实际字节数。生产 Compose 使用独立配置。
 
 开发：后端 `go run ./cmd/metricspanel serve`；网页 `cd web && npm run dev`。
 

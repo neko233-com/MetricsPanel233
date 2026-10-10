@@ -79,7 +79,7 @@ const navigation = [
   { id: "collectors", name: "Collectors", icon: Server },
   { id: "alerts", name: "Alerts", icon: Bell },
   { id: "plugins", name: "Plugins", icon: Puzzle },
-  { id: "cli", name: "Agent CLI", icon: Terminal },
+  { id: "cli", name: "Command line", icon: Terminal },
 ] as const;
 export default function App() {
   const routeLoaded = useRef(false);

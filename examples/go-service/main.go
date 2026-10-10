@@ -52,8 +52,12 @@ func main() {
 			}
 		}
 	}()
-	slog.Info("example Go backend", "address", ":8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	address := os.Getenv("GO_SERVICE_LISTEN")
+	if address == "" {
+		address = ":8080"
+	}
+	slog.Info("example Go backend", "address", address)
+	if err := http.ListenAndServe(address, mux); err != nil {
 		slog.Error("serve", "error", err)
 		os.Exit(1)
 	}

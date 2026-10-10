@@ -1,5 +1,5 @@
 import { t as tr } from "../i18n";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import {
   api,
@@ -10,6 +10,8 @@ import {
   type Target,
 } from "../api";
 import { Dialog } from "../components/Dialog";
+type Integration = { kind: string; name: string; endpoint: string; protocol: string; metrics: string; docs: string };
+type ExporterPreset = { id:string; name:string; endpoint:string; docs:string };
 export function Collectors({
   targets,
   reload,
@@ -29,7 +31,7 @@ export function Collectors({
           <h1>{tr("Collectors")}</h1>
           <p>
             {tr(
-              "Connect a Prometheus exporter. Collection starts automatically.",
+              "Collect from databases, service metrics APIs or Prometheus exporters.",
             )}
           </p>
         </div>
@@ -58,15 +60,15 @@ export function Collectors({
       <section className="list-panel">
         <div className="section-heading">
           <h2>
-            {tr("Prometheus exporters")}
+            {tr("Collection targets")}
             <span>{targets.length}</span>
           </h2>
         </div>
         {targets.length === 0 ? (
           <div className="empty-workspace">
-            <h2>{tr("No exporters connected yet")}</h2>
+            <h2>{tr("No collection targets")}</h2>
             <p>
-              {tr("Add an existing /metrics endpoint to start collecting.")}
+              {tr("Choose a collector type and enter its connection address.")}
             </p>
             <button onClick={() => setEditor("new")} className="primary">
               <Plus size={18} />
@@ -91,6 +93,7 @@ export function Collectors({
                   <tr key={t.id}>
                     <td>
                       <strong>{t.name}</strong>
+                      <div className="subtle">{t.kind || "prometheus"}</div>
                       <div className="endpoint mono">{t.url}</div>
                       {t.last_error && (
                         <div className="collector-error">{t.last_error}</div>
@@ -173,10 +176,10 @@ export function Collectors({
         )}
       </section>
       <div className="inline-note">
-        <h3>{tr("One endpoint is all you need.")}</h3>
+        <h3>{tr("Collection protocols")}</h3>
         <p>
           {tr(
-            "Prometheus text-format gauges, counters, classic histograms and summaries are supported. Exporter labels are preserved; collector labels take priority. You can also push samples with",
+            "MySQL, Redis and PostgreSQL support direct connections. ClickHouse, Elasticsearch, Hadoop, HDFS, Hive, Kafka, Spark and Flink use their metrics APIs. Existing Prometheus exporters use the HTTP collector. Push samples with",
           )}
           <code>{tr("metricspanel ingest")}</code>.
         </p>
@@ -247,10 +250,31 @@ function CollectorEditor({
     [enabled, setEnabled] = useState(target?.enabled ?? true),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
+  const [catalog, setCatalog] = useState<Integration[]>([]);
+  const [exporters, setExporters] = useState<ExporterPreset[]>([]);
+  const [preset,setPreset] = useState("");
+  const [kind, setKind] = useState(target?.kind || "prometheus");
+  const [username, setUsername] = useState(target?.username || "");
+  const [database, setDatabase] = useState(target?.database || "");
+  const [tlsMode, setTLSMode] = useState(target?.tls_mode || "disable");
+  const [password, setPassword] = useState("");
+  const [bearer, setBearer] = useState("");
+  const [clearPassword, setClearPassword] = useState(false);
+  const [clearBearer, setClearBearer] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<Integration[]>("/collectors/catalog", { signal: controller.signal })
+      .then(setCatalog).catch((error) => { if (!controller.signal.aborted) setError(message(error)); });
+    void api<ExporterPreset[]>("/collectors/exporters", {signal:controller.signal}).then(setExporters).catch((error)=>{ if(!controller.signal.aborted) setError(message(error)); });
+    return () => controller.abort();
+  }, []);
+  const integration = catalog.find((entry) => entry.kind === kind);
+  const sql = kind === "mysql" || kind === "postgresql";
+  const tcp = sql || kind === "redis";
   return (
     <Dialog
       title={tr(target ? "Edit collector" : "Add collector")}
-      onClose={onClose}
+      onClose={saving ? () => {} : onClose}
     >
       <form
         onSubmit={async (e) => {
@@ -259,6 +283,11 @@ function CollectorEditor({
           setError("");
           try {
             await onSave({
+              kind, username, database, tls_mode: sql ? tlsMode : undefined,
+              secure_settings: {
+                ...(password || clearPassword ? { password: clearPassword ? "" : password } : {}),
+                ...(bearer || clearBearer ? { bearer_token: clearBearer ? "" : bearer } : {}),
+              },
               name,
               url,
               interval_seconds: interval,
@@ -271,6 +300,24 @@ function CollectorEditor({
           }
         }}
       >
+        <fieldset className="query-editor-fields" disabled={saving}>
+        <label>{tr("Collector type")}
+          <select aria-label={tr("Collector type")} value={kind} onChange={(event) => {
+            const value=event.target.value; setKind(value);
+            const preset=catalog.find((entry)=>entry.kind===value);
+            if(preset) { setURL(preset.endpoint); if(!name) setName(value); }
+          }}>
+            {catalog.length ? catalog.map((entry)=><option key={entry.kind} value={entry.kind}>{entry.name}</option>) : <option value={kind}>{kind}</option>}
+          </select>
+        </label>
+        {integration ? <p className="subtle">{integration.protocol} · {tr(integration.metrics)} <a href={integration.docs} target="_blank" rel="noreferrer">{tr("Documentation")}</a></p> : null}
+        {kind === "prometheus" ? <label>{tr("Exporter preset")}
+          <select aria-label={tr("Exporter preset")} value={preset} onChange={(event)=>{
+            setPreset(event.target.value); const source=exporters.find((item)=>item.id===event.target.value);
+            if(source) { setURL(source.endpoint); if(!name || name==="prometheus") setName(source.id); }
+          }}><option value="">{tr("Custom endpoint")}</option>{exporters.map((item)=><option key={item.id} value={item.id}>{item.name}</option>)}</select>
+          <small>{tr("The exporter must run on the monitored host. Adjust the address, port and probe parameters.")}</small>
+        </label> : null}
         <label>
           {tr("Collector name")}
           <input
@@ -285,13 +332,24 @@ function CollectorEditor({
         <label>
           {tr("Metrics endpoint")}
           <input
-            type="url"
-            placeholder={tr("http://localhost:8080/metrics")}
+            type={tcp ? "text" : "url"}
+            placeholder={integration?.endpoint || "http://localhost:8080/metrics"}
             value={url}
             onChange={(e) => setURL(e.target.value)}
             required
           />
         </label>
+        <div className="form-row">
+          <label>{tr("Username")}<input aria-label={tr("Username")} value={username} autoComplete="off" onChange={(event)=>setUsername(event.target.value)} /></label>
+          <label>{tr("Password")}<input type="password" aria-label={tr("Password")} value={password} autoComplete="new-password" placeholder={target?.secure_fields?.password ? tr("Configured; leave blank to keep") : ""} disabled={clearPassword} onChange={(event)=>setPassword(event.target.value)} /></label>
+        </div>
+        {target?.secure_fields?.password ? <label className="checkbox-label"><input type="checkbox" checked={clearPassword} onChange={(event)=>setClearPassword(event.target.checked)} />{tr("Clear saved password")}</label> : null}
+        {sql ? <div className="form-row">
+          <label>{tr("Database")}<input aria-label={tr("Database")} value={database} placeholder={kind === "postgresql" ? "postgres" : ""} onChange={(event)=>setDatabase(event.target.value)} /></label>
+          <label>{tr("TLS mode")}<select aria-label={tr("TLS mode")} value={tlsMode} onChange={(event)=>setTLSMode(event.target.value)}><option value="disable">{tr("Disabled")}</option><option value="require">{tr("Encrypt connection")}</option><option value="verify-full">{tr("Verify certificate and hostname")}</option></select></label>
+        </div> : null}
+        {!tcp ? <label>{tr("Bearer token")}<input type="password" aria-label={tr("Bearer token")} value={bearer} autoComplete="new-password" placeholder={target?.secure_fields?.bearer_token ? tr("Configured; leave blank to keep") : ""} disabled={clearBearer} onChange={(event)=>setBearer(event.target.value)} /></label> : null}
+        {!tcp && target?.secure_fields?.bearer_token ? <label className="checkbox-label"><input type="checkbox" checked={clearBearer} onChange={(event)=>setClearBearer(event.target.checked)} />{tr("Clear saved token")}</label> : null}
         <label>
           {tr("Scrape interval")}
           <small>{tr("seconds")}</small>
@@ -335,6 +393,7 @@ function CollectorEditor({
             {tr(saving ? "Saving…" : "Save collector")}
           </button>
         </div>
+        </fieldset>
       </form>
     </Dialog>
   );

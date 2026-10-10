@@ -3,6 +3,11 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Native collectors",
+    detail: "List collection protocols and exporter presets. Save connection credentials from a JSON file.",
+    command: "metricspanel targets catalog\nmetricspanel targets exporters\nmetricspanel targets add --file collector.json\nmetricspanel targets scrape --id 1",
+  },
+  {
     title: "Stream datasource queries",
     detail:
       "Receive DataFrame chunks as they arrive. Partial failures keep data and return exit code 1.",
@@ -79,7 +84,7 @@ const examples = [
   {
     title: "Manage dashboards",
     detail:
-      "Portable JSON configurations, ready for agents and version control.",
+      "Export dashboard definitions as JSON and save them with their revision.",
     command:
       "metricspanel dashboards list\nmetricspanel dashboards export --id system > dashboard.json\nmetricspanel dashboards save --file dashboard.json",
   },
@@ -91,21 +96,21 @@ export function AgentCLI() {
     <>
       <div className="page-heading">
         <div>
-          <h1>{tr("Agent CLI")}</h1>
-          <p>{tr("The same workspace, without the clicks.")}</p>
+          <h1>{tr("Command line")}</h1>
+          <p>{tr("Query metrics, manage collectors and export configuration.")}</p>
         </div>
         <Terminal className="heading-symbol" size={36} />
       </div>
       <div className="cli-intro">
-        <h2>{tr("JSON in. JSON out.")}</h2>
+        <h2>{tr("Usage")}</h2>
         <p>
           {tr(
             "Every client command returns structured JSON. Errors go to stderr with exit code 1. Use",
           )}
-          <code>{tr("METRICSPANEL_URL")}</code>
-          {tr("for a remote server and")}
+          {" "}<code>{tr("METRICSPANEL_URL")}</code>
+          {" "}{tr("for a remote server and")}{" "}
           <code>{tr("METRICSPANEL_TOKEN")}</code>
-          {tr("for authentication.")}
+          {" "}{tr("for authentication.")}
         </p>
         <p>
           {tr(
@@ -117,12 +122,12 @@ export function AgentCLI() {
         </p>
         <p>
           {tr("Build the CLI from source with")}
-          <code>
+          {" "}<code>
             {tr("go build -tags webui -o bin/metricspanel ./cmd/metricspanel")}
           </code>
-          {tr("after building the web UI. Add")}
+          {" "}{tr("after building the web UI. Add")}{" "}
           <code>{tr("bin")}</code>
-          {tr("to your PATH.")}
+          {" "}{tr("to your PATH.")}
         </p>
       </div>
       {error && (

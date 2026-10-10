@@ -25,7 +25,7 @@ export function Dashboards({
       <div className="page-heading">
         <div>
           <h1>{tr("Dashboards")}</h1>
-          <p>{tr("A few useful panels. A clear view of your system.")}</p>
+          <p>{tr("Create dashboards, edit panels or import Grafana JSON.")}</p>
         </div>
         <div className="toolbar">
           <button onClick={() => input.current?.click()}>

@@ -57,7 +57,98 @@ func (e environment) docker(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 func (e environment) compose(args ...string) (string, error) {
+	args = singleContainerArgs(args)
 	return e.docker(append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
+}
+
+func singleContainerArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	switch args[0] {
+	case "build":
+		return []string{"build", "suite"}
+	case "port":
+		port := args[2]
+		if args[1] == "clickhouse-app" {
+			port = "7334"
+		}
+		return []string{"port", "suite", port}
+	case "restart":
+		if args[1] == "suite" {
+			return args
+		}
+		return []string{"exec", "-T", "suite", "testctl", "restart", args[1]}
+	case "exec":
+		if len(args) > 3 && args[1] == "-T" && args[2] != "suite" {
+			service := args[2]
+			command := append([]string{}, args[3:]...)
+			for i, arg := range command {
+				if arg == "/data/plugins" {
+					folder := "sqlite"
+					if service == "clickhouse-app" {
+						folder = "control"
+					}
+					command[i] = "/data/" + folder + "/plugins"
+				}
+			}
+			return append([]string{"exec", "-T", "suite", "testctl", "exec", service}, command...)
+		}
+	}
+	return args
+}
+
+func (e environment) verifyNativeCollectors(address string) {
+	e.t.Helper()
+	var catalog []struct {
+		Kind string `json:"kind"`
+	}
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/collectors/catalog", nil), &catalog))
+	require.Len(e.t, catalog, 12)
+	var existing []model.Target
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/targets", nil), &existing))
+	for _, item := range []struct{ kind, address, user, database, password, metric string }{
+		{"mysql", "mysql://127.0.0.1:3306", "exporter", "business", "integration-exporter-password", "mysql_global_status_threads_connected"},
+		{"redis", "redis://127.0.0.1:6379", "", "", "integration-cache-password", "redis_memory_used_bytes"},
+		{"postgresql", "postgresql://127.0.0.1:5432", "metrics", "postgres", "integration-postgres-password", "pg_stat_database_numbackends"},
+		{"clickhouse", "http://127.0.0.1:8123", "metricspanel", "", "integration-only-password", "clickhouse_current_query"},
+	} {
+		var target model.Target
+		name := "native-" + item.kind
+		for _, row := range existing {
+			if row.Name == name {
+				target = row
+			}
+		}
+		if target.ID == 0 {
+			target = model.Target{Name: name, Kind: item.kind, URL: item.address, Username: item.user, Database: item.database, IntervalSeconds: 86400, SecureSettings: map[string]string{"password": item.password}}
+			data := e.must(address, "POST", "/api/v1/targets", target)
+			require.NoError(e.t, json.Unmarshal(data, &target))
+			assert.NotContains(e.t, string(data), item.password)
+		}
+		assert.True(e.t, target.SecureFields["password"])
+		e.must(address, "POST", fmt.Sprintf("/api/v1/targets/%d/scrape", target.ID), nil)
+		require.Eventually(e.t, func() bool { value, ok := e.value(address, item.metric); return ok && value >= 0 }, 10*time.Second, 100*time.Millisecond, "native %s metrics not ingested", item.kind)
+	}
+	e.t.Log("real MySQL-compatible MariaDB, Redis, PostgreSQL and ClickHouse native collection passed; credentials masked")
+	for _, fixture := range []struct{ kind, metric string }{
+		{"prometheus", "fixture_requests_total"}, {"hadoop", "hadoop_memheapusedm"}, {"hdfs", "hdfs_capacityused"}, {"hive", "hive_count"}, {"kafka", "kafka_count"}, {"spark", "spark_gauges_driver_jvm_heap_used_value"}, {"elasticsearch", "elasticsearch_jvm_mem_heap_used_in_bytes"}, {"flink", "flink_status_jvm_memory_heap_used"},
+	} {
+		name := "protocol-" + fixture.kind
+		var target model.Target
+		for _, row := range existing {
+			if row.Name == name {
+				target = row
+			}
+		}
+		if target.ID == 0 {
+			data := e.must(address, "POST", "/api/v1/targets", model.Target{Name: name, Kind: fixture.kind, URL: "http://127.0.0.1:9099/" + fixture.kind, Username: "metrics", IntervalSeconds: 86400, SecureSettings: map[string]string{"password": "integration-fixture-password"}})
+			require.NoError(e.t, json.Unmarshal(data, &target))
+		}
+		e.must(address, "POST", fmt.Sprintf("/api/v1/targets/%d/scrape", target.ID), nil)
+		require.Eventually(e.t, func() bool { value, ok := e.value(address, fixture.metric); return ok && value == 233 }, 10*time.Second, 100*time.Millisecond, "%s protocol fixture did not reach storage", fixture.kind)
+	}
+	e.t.Log("OpenMetrics, Hadoop, HDFS, Hive, Kafka, Spark, Elasticsearch and Flink protocol fixtures passed (not live clusters)")
 }
 
 func (e environment) verifyBuiltinGrafana(address string) {
@@ -93,7 +184,7 @@ func (e environment) verifyExpressionGraph(address string) {
 	var result backend.QueryDataResponse
 	payload := map[string]any{"from": strconv.FormatInt(time.Now().Add(-time.Minute).UnixMilli(), 10), "to": strconv.FormatInt(time.Now().UnixMilli(), 10), "queries": []any{
 		map[string]any{"refId": "C", "type": "math", "expression": "$A * $D", "datasource": map[string]string{"uid": "__expr__"}},
-		map[string]any{"refId": "A", "hide": true, "expr": "mysql_up", "instant": true, "datasource": map[string]string{"uid": "metricspanel"}},
+		map[string]any{"refId": "A", "hide": true, "expr": `mysql_up{job="mysql"}`, "instant": true, "datasource": map[string]string{"uid": "metricspanel"}},
 		map[string]any{"refId": "B", "hide": true, "value": 2, "datasource": map[string]string{"uid": "docker-sdk"}},
 		map[string]any{"refId": "D", "hide": true, "type": "reduce", "expression": "B", "reducer": "mean", "datasource": map[string]string{"uid": "__expr__"}},
 		map[string]any{"refId": "Classic", "type": "classic_conditions", "datasource": map[string]string{"uid": "__expr__"}, "conditions": []any{
@@ -111,6 +202,7 @@ func (e environment) verifyExpressionGraph(address string) {
 	assert.Contains(e.t, string(metadata), `"value":"2"`)
 }
 func (e environment) composeInput(input string, args ...string) (string, error) {
+	args = singleContainerArgs(args)
 	command := exec.Command("docker", append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
 	command.Dir = e.root
 	command.Stdin = strings.NewReader(input)
@@ -120,7 +212,7 @@ func (e environment) composeInput(input string, args ...string) (string, error) 
 
 func (e environment) verifySQL(address string, restarted bool) {
 	e.t.Helper()
-	payload := json.RawMessage(`{"from":"now-1m","to":"now","queries":[{"refId":"A","datasource":{"uid":"metricspanel"},"expr":"mysql_up","instant":true},{"refId":"B","datasource":{"uid":"docker-sdk"},"value":2,"sqlTable":true},{"refId":"Q","datasource":{"uid":"__expr__"},"type":"sql","expression":"WITH joined AS (SELECT A.job, B.host, A.__value__ * B.value AS total, B.online, B.payload FROM A CROSS JOIN B) SELECT job, host, SUM(total) AS total, MAX(JSON_EXTRACT(payload,'$.n')) AS payload FROM joined WHERE online GROUP BY job, host"}]}`)
+	payload := json.RawMessage(`{"from":"now-1m","to":"now","queries":[{"refId":"A","datasource":{"uid":"metricspanel"},"expr":"mysql_up{job=\"mysql\"}","instant":true},{"refId":"B","datasource":{"uid":"docker-sdk"},"value":2,"sqlTable":true},{"refId":"Q","datasource":{"uid":"__expr__"},"type":"sql","expression":"WITH joined AS (SELECT A.job, B.host, A.__value__ * B.value AS total, B.online, B.payload FROM A CROSS JOIN B) SELECT job, host, SUM(total) AS total, MAX(JSON_EXTRACT(payload,'$.n')) AS payload FROM joined WHERE online GROUP BY job, host"}]}`)
 	var envelope map[string]json.RawMessage
 	require.NoError(e.t, json.Unmarshal(payload, &envelope))
 	at := time.Now()
@@ -171,7 +263,7 @@ func (e environment) verifySQL(address string, restarted bool) {
 
 func (e environment) verifyAlertGraph(address string, restarted bool) {
 	const uid = "docker-sdk-graph"
-	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","labels":{"severity":"{{ if gt $values.K0.Value 1.0 }}critical{{ else }}warning{{ end }}"},"annotations":{"summary":"MySQL {{ $values.K1.Value }} with SDK {{ $values.K0.Value }}","description":"{{ $labels.severity }} / {{ $values.K0.Labels.job }}"},"data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
+	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","labels":{"severity":"{{ if gt $values.K0.Value 1.0 }}critical{{ else }}warning{{ end }}"},"annotations":{"summary":"MySQL {{ $values.K1.Value }} with SDK {{ $values.K0.Value }}","description":"{{ $labels.severity }} / {{ $values.K0.Labels.job }}"},"data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up{job=\"mysql\"}","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
 	if !restarted {
 		status, raw, err := e.request(address, "POST", "/api/v1/provisioning/alert-rules", graph)
 		require.NoError(e.t, err)
@@ -221,7 +313,7 @@ func (e environment) verifyAlertGroups(address string, restarted bool) {
 		return raw
 	}
 	if !restarted {
-		put(json.RawMessage(`{"interval":86400,"rules":[{"uid":"docker-group-z-mysql","title":"Grouped MySQL health","condition":"C","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D>1"}}]},{"uid":"docker-group-a-record","title":"Grouped SDK recording","record":{"metric":"sdk:group_value","from":"D","target_datasource_uid":"metricspanel"},"data":[{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}}]}]}`))
+		put(json.RawMessage(`{"interval":86400,"rules":[{"uid":"docker-group-z-mysql","title":"Grouped MySQL health","condition":"C","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up{job=\"mysql\"}","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D>1"}}]},{"uid":"docker-group-a-record","title":"Grouped SDK recording","record":{"metric":"sdk:group_value","from":"D","target_datasource_uid":"metricspanel"},"data":[{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}}]}]}`))
 		for _, ruleUID := range []string{uid, "docker-group-a-record"} {
 			status, raw, err := e.request(address, "POST", "/api/v1/alerts/rules/"+ruleUID+"/evaluate", nil)
 			require.NoError(e.t, err)
@@ -724,8 +816,14 @@ func TestDockerEndToEnd(t *testing.T) {
 		t.Log(logs)
 	}
 	require.NoError(t, err, out)
+	containers, err := e.compose("ps", "--quiet")
+	require.NoError(t, err)
+	require.Len(t, strings.Fields(containers), 1, "suite must use exactly one container")
+	imageSize, err := e.docker("image", "inspect", "metricspanel233-test:local", "--format", "{{.Size}}")
+	require.NoError(t, err)
+	t.Logf("single test container runtime image: %s bytes; 2 CPUs, 2 GiB memory limit", imageSize)
 	for _, backend := range []struct{ service, goService string }{{"sqlite", "go-sqlite"}, {"clickhouse-app", "go-clickhouse"}} {
-		t.Run(backend.service, func(t *testing.T) {
+		if !t.Run(backend.service, func(t *testing.T) {
 			e := e
 			e.t = t
 			address := e.address(backend.service)
@@ -738,12 +836,19 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.must(address, "POST", "/api/plugins/metricspanel-sdk-app/settings", map[string]any{"enabled": true, "pinned": true, "jsonData": map[string]string{"label": "Docker operations"}, "secureJsonData": map[string]string{"apiKey": "app-secret-233"}})
 			e.must(address, "POST", "/api/datasources", map[string]any{"uid": "docker-sdk", "name": "Docker SDK datasource", "type": "metricspanel-sdk-datasource", "secureJsonData": map[string]string{"apiKey": "test-secret-233"}})
 			e.verifySDKPlugin(address, backend.service)
-			for _, target := range []model.Target{{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true}, {Name: "go", URL: "http://" + backend.goService + ":8080/metrics", IntervalSeconds: 5, Enabled: true}} {
-				e.must(address, "POST", "/api/v1/targets", target)
+			goPort := 8080
+			if backend.service == "clickhouse-app" {
+				goPort = 8081
+			}
+			for _, target := range []model.Target{{Name: "mysql", URL: "http://mysql-exporter:9104/metrics", IntervalSeconds: 5, Enabled: true}, {Name: "go", URL: fmt.Sprintf("http://127.0.0.1:%d/metrics", goPort), IntervalSeconds: 5, Enabled: true}} {
+				var saved model.Target
+				require.NoError(t, json.Unmarshal(e.must(address, "POST", "/api/v1/targets", target), &saved))
+				e.must(address, "POST", fmt.Sprintf("/api/v1/targets/%d/scrape", saved.ID), nil)
 			}
 			require.Eventually(t, func() bool { v, ok := e.value(address, "mysql_up"); return ok && v == 1 }, 30*time.Second, 500*time.Millisecond, "real MySQL exporter did not report mysql_up=1")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_http_requests_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go exporter not scraped")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
+			e.verifyNativeCollectors(address)
 			e.verifyExpressionGraph(address)
 			e.verifySQL(address, false)
 			e.verifyAlertGraph(address, false)
@@ -770,7 +875,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			}
 			e.loadAndAnalyze(address, batches)
 			patternID := e.capturePatternFixture(address)
-			alert := model.AlertRule{UID: "docker-alert", Title: "MySQL is online", Expr: "mysql_up == bool 1", Condition: "nonzero", IntervalSeconds: 86400, ForSeconds: 30}
+			alert := model.AlertRule{UID: "docker-alert", Title: "MySQL is online", Expr: `mysql_up{job="mysql"} == bool 1`, Condition: "nonzero", IntervalSeconds: 86400, ForSeconds: 30}
 			data := e.must(address, "POST", "/api/v1/alerts/rules", alert)
 			data = e.must(address, "POST", "/api/v1/alerts/rules/docker-alert/evaluate", nil)
 			var before model.AlertRuleView
@@ -783,7 +888,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Len(t, beforeAlertAnnotations, 1)
 			assert.Equal(t, "Pending", beforeAlertAnnotations[0].NewState)
 			assert.Contains(t, beforeAlertAnnotations[0].Tags, "job:mysql")
-			record := model.AlertRule{UID: "docker-record", Title: "MySQL availability recording", Expr: "mysql_up", Record: "mysql:availability", IntervalSeconds: 86400}
+			record := model.AlertRule{UID: "docker-record", Title: "MySQL availability recording", Expr: `mysql_up{job="mysql"}`, Record: "mysql:availability", IntervalSeconds: 86400}
 			e.must(address, "POST", "/api/v1/alerts/rules", record)
 			e.must(address, "POST", "/api/v1/alerts/rules/docker-record/evaluate", nil)
 			v, ok := e.value(address, "mysql:availability")
@@ -803,7 +908,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			original := map[string]any{"title": "Docker MySQL", "panels": []any{map[string]any{"title": "Connections", "type": "timeseries", "targets": []any{map[string]string{"expr": "mysql_global_status_threads_connected"}}}}}
 			data = e.must(address, "POST", "/api/v1/import/grafana", original)
 			assert.Contains(t, string(data), "Docker MySQL")
-			data = e.must(address, "POST", "/api/dashboards/db", map[string]any{"dashboard": map[string]any{"uid": "docker-mysql", "title": "MySQL API", "panels": []any{map[string]any{"id": 1, "title": "Health", "type": "table", "gridPos": map[string]int{"x": 0, "y": 0, "w": 24, "h": 8}, "targets": []any{map[string]any{"refId": "A", "expr": "mysql_up", "instant": true, "format": "table"}}, "transformations": []any{map[string]any{"id": "organize", "options": map[string]any{"excludeByName": map[string]bool{"Time": true}}}}}}}})
+			data = e.must(address, "POST", "/api/dashboards/db", map[string]any{"dashboard": map[string]any{"uid": "docker-mysql", "title": "MySQL API", "panels": []any{map[string]any{"id": 1, "title": "Health", "type": "table", "gridPos": map[string]int{"x": 0, "y": 0, "w": 24, "h": 8}, "targets": []any{map[string]any{"refId": "A", "expr": `mysql_up{job="mysql"}`, "instant": true, "format": "table"}}, "transformations": []any{map[string]any{"id": "organize", "options": map[string]any{"excludeByName": map[string]bool{"Time": true}}}}}}}})
 			assert.Contains(t, string(data), `"status":"success"`)
 			annotation := map[string]any{"dashboardUID": "docker-mysql", "panelId": 1, "time": ts - 10000, "timeEnd": ts + 10000, "text": "MySQL deployment", "tags": []string{"docker", "mysql"}, "idempotencyKey": "mysql-deploy"}
 			firstAnnotation := e.must(address, "POST", "/api/annotations", annotation)
@@ -886,6 +991,15 @@ func TestDockerEndToEnd(t *testing.T) {
 				e.verifyPatternNeighbor(address, patternID)
 				e.verifyHNSWAfterRestart(benchmarkID)
 			}
-		})
+		}) {
+			return
+		}
+	}
+	_, err = e.compose("restart", "suite")
+	require.NoError(t, err)
+	for _, service := range []string{"sqlite", "clickhouse-app"} {
+		address := e.address(service)
+		require.Eventually(t, func() bool { value, ok := e.value(address, "restart_marker"); return ok && value == 234 }, 60*time.Second, 500*time.Millisecond, "single-container restart lost durable state")
+		e.verifyNativeCollectors(address)
 	}
 }

@@ -1,0 +1,10 @@
+{
+  "name": "redis",
+  "kind": "redis",
+  "url": "redis://127.0.0.1:6379",
+  "username": "metrics",
+  "secure_settings": { "password": "REPLACE_ME" },
+  "interval_seconds": 15,
+  "enabled": false,
+  "labels": { "environment": "production" }
+}

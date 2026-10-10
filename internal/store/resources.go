@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
 func (s *Store) Targets(ctx context.Context) ([]model.Target, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,url,interval_seconds,labels,enabled,last_scrape,last_error,samples,duration_ms FROM targets ORDER BY id`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,name,url,interval_seconds,labels,enabled,last_scrape,last_error,samples,duration_ms,COALESCE(c.kind,''),COALESCE(c.username,''),COALESCE(c.database_name,''),COALESCE(c.tls_mode,''),c.secrets FROM targets t LEFT JOIN target_connections c ON c.id=t.id ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -20,11 +21,24 @@ func (s *Store) Targets(ctx context.Context) ([]model.Target, error) {
 	for rows.Next() {
 		var t model.Target
 		var labels string
-		if err = rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &labels, &t.Enabled, &t.LastScrape, &t.LastError, &t.Samples, &t.DurationMS); err != nil {
+		var sealed []byte
+		if err = rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &labels, &t.Enabled, &t.LastScrape, &t.LastError, &t.Samples, &t.DurationMS, &t.Kind, &t.Username, &t.Database, &t.TLSMode, &sealed); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(labels), &t.Labels); err != nil {
 			return nil, err
+		}
+		if len(sealed) > 0 {
+			secrets, err := s.openSecrets(fmt.Sprintf("target:%d", t.ID), sealed)
+			if err != nil {
+				return nil, err
+			}
+			t.SecureFields = map[string]bool{}
+			for key, value := range secrets {
+				if value != "" {
+					t.SecureFields[key] = true
+				}
+			}
 		}
 		out = append(out, t)
 	}
@@ -34,23 +48,86 @@ func (s *Store) SaveTarget(ctx context.Context, t model.Target) (model.Target, e
 	if err := t.Validate(); err != nil {
 		return t, err
 	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return t, err
+	}
+	defer tx.Rollback()
+	secrets := map[string]string{}
+	if t.ID != 0 {
+		var sealed []byte
+		err = tx.QueryRowContext(ctx, `SELECT secrets FROM target_connections WHERE id=?`, t.ID).Scan(&sealed)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return t, err
+		}
+		if len(sealed) > 0 {
+			secrets, err = s.openSecrets(fmt.Sprintf("target:%d", t.ID), sealed)
+			if err != nil {
+				return t, err
+			}
+		}
+	}
 	if t.ID == 0 {
-		r, err := s.DB.ExecContext(ctx, `INSERT INTO targets(name,url,interval_seconds,labels,enabled) VALUES(?,?,?,?,?)`, t.Name, t.URL, t.IntervalSeconds, model.LabelsJSON(t.Labels), t.Enabled)
+		r, err := tx.ExecContext(ctx, `INSERT INTO targets(name,url,interval_seconds,labels,enabled) VALUES(?,?,?,?,?)`, t.Name, t.URL, t.IntervalSeconds, model.LabelsJSON(t.Labels), t.Enabled)
 		if err != nil {
 			return t, err
 		}
 		t.ID, err = r.LastInsertId()
-		return t, err
+		if err != nil {
+			return t, err
+		}
+	} else {
+		r, err := tx.ExecContext(ctx, `UPDATE targets SET name=?,url=?,interval_seconds=?,labels=?,enabled=?,last_scrape=0,last_error='' WHERE id=?`, t.Name, t.URL, t.IntervalSeconds, model.LabelsJSON(t.Labels), t.Enabled, t.ID)
+		if err != nil {
+			return t, err
+		}
+		n, err := r.RowsAffected()
+		if err != nil {
+			return t, err
+		}
+		if n == 0 {
+			return t, sql.ErrNoRows
+		}
 	}
-	r, err := s.DB.ExecContext(ctx, `UPDATE targets SET name=?,url=?,interval_seconds=?,labels=?,enabled=?,last_scrape=0,last_error='' WHERE id=?`, t.Name, t.URL, t.IntervalSeconds, model.LabelsJSON(t.Labels), t.Enabled, t.ID)
+	for key, value := range t.SecureSettings {
+		if value == "" {
+			delete(secrets, key)
+		} else {
+			secrets[key] = value
+		}
+	}
+	sealed, err := s.seal(fmt.Sprintf("target:%d", t.ID), secrets)
 	if err != nil {
 		return t, err
 	}
-	n, err := r.RowsAffected()
-	if n == 0 {
-		return t, sql.ErrNoRows
+	_, err = tx.ExecContext(ctx, `INSERT INTO target_connections(id,kind,username,database_name,tls_mode,secrets) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,username=excluded.username,database_name=excluded.database_name,tls_mode=excluded.tls_mode,secrets=excluded.secrets`, t.ID, t.Kind, t.Username, t.Database, t.TLSMode, sealed)
+	if err != nil {
+		return t, err
 	}
-	return t, err
+	if err = tx.Commit(); err != nil {
+		return t, err
+	}
+	t.SecureSettings = nil
+	t.SecureFields = map[string]bool{}
+	for key, value := range secrets {
+		if value != "" {
+			t.SecureFields[key] = true
+		}
+	}
+	return t, nil
+}
+
+// TargetSecrets is used by the collector only. Public target responses contain flags.
+func (s *Store) TargetSecrets(ctx context.Context, id int64) (map[string]string, error) {
+	var sealed []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT secrets FROM target_connections WHERE id=?`, id).Scan(&sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.openSecrets(fmt.Sprintf("target:%d", id), sealed)
 }
 func (s *Store) TargetResult(ctx context.Context, id int64, count int, duration int64, scrapeErr error) error {
 	message := ""

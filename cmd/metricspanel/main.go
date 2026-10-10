@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
@@ -62,7 +63,7 @@ Usage: metricspanel <command> [flags]
   metrics      List metric names and series counts
   query        Query a metric (--metric NAME --range 30m --aggregation last)
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
-  targets      list | add | set | delete | scrape
+  targets      catalog | exporters | list | add | set | delete | scrape
   dashboards   list | save | export | delete
   annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
@@ -124,7 +125,11 @@ func run(args []string) error {
 	alertPreviewAt := f.Int64("at", 0, "alert preview timestamp: Unix milliseconds (0 uses server time)")
 	disableProvenance := f.Bool("disable-provenance", false, "allow editing Grafana-provisioned rules")
 	name := f.String("name", "", "collector name or annotation tag search")
-	targetURL := f.String("url", "", "exporter /metrics URL")
+	targetURL := f.String("url", "", "collector endpoint (HTTP, mysql, redis or postgresql)")
+	targetKind := f.String("kind", "prometheus", "collector kind; targets catalog lists supported protocols")
+	targetUser := f.String("username", "", "collector account name; passwords belong in --file JSON")
+	targetDatabase := f.String("database", "", "collector database name")
+	targetTLS := f.String("tls-mode", "", "SQL TLS mode: disable, require, verify-full")
 	interval := f.Duration("interval", 15*time.Second, "scrape interval (5s–24h)")
 	enabled := f.Bool("enabled", true, "enable automatic collection")
 	start := f.Int64("start", 0, "window start: Unix milliseconds (optional)")
@@ -148,6 +153,12 @@ func run(args []string) error {
 	if err := f.Parse(rest); err != nil {
 		return err
 	}
+	fileProvided := false
+	f.Visit(func(option *flag.Flag) {
+		if option.Name == "file" {
+			fileProvided = true
+		}
+	})
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
 	}
@@ -519,10 +530,23 @@ func run(args []string) error {
 		return request("POST", "/api/v1/ingest", body)
 	case "targets":
 		switch action {
+		case "catalog":
+			return request("GET", "/api/v1/collectors/catalog", nil)
+		case "exporters":
+			return request("GET", "/api/v1/collectors/exporters", nil)
 		case "list":
 			return request("GET", "/api/v1/targets", nil)
 		case "add", "set":
-			t := model.Target{Name: *name, URL: *targetURL, IntervalSeconds: int(interval.Seconds()), Labels: filter, Enabled: *enabled}
+			t := model.Target{Name: *name, URL: *targetURL, Kind: *targetKind, Username: *targetUser, Database: *targetDatabase, TLSMode: *targetTLS, IntervalSeconds: int(interval.Seconds()), Labels: filter, Enabled: *enabled}
+			if fileProvided {
+				data, err := readFile(*file)
+				if err != nil {
+					return err
+				}
+				if err = json.Unmarshal(data, &t); err != nil {
+					return err
+				}
+			}
 			if err := t.Validate(); err != nil {
 				return err
 			}
@@ -832,6 +856,11 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
 	routes := result["api"].(map[string][]string)
+	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
+	result["commands"] = append(result["commands"].([]string), "targets exporters")
+	result["prometheus_exporters"] = collector.Exporters()
+	result["commands"] = append(result["commands"].([]string), "targets catalog", "targets add --kind KIND --url URL --name NAME [--username USER --database DB --tls-mode verify-full]", "targets add|set --file FILE|- [--id ID]")
+	result["collectors"] = map[string]any{"catalog": collector.Catalog(), "authentication": "encrypted secure_settings.password / bearer_token; public secure_fields flags only; omitted secrets retained, empty string clears", "limits": map[string]int{"concurrency": 8, "timeout_seconds": 10, "response_bytes": 4 << 20, "samples": 10000}, "formats": []string{"Prometheus text 0.0.4", "OpenMetrics 1.0", "Prometheus delimited protobuf"}, "pending": []string{"native histogram and exemplar storage", "Kerberos/SPNEGO", "Redis Sentinel service discovery and automatic cluster fan-out"}}
 	routes["GET"] = append(routes["GET"], "/api/v1/patterns", "/api/v1/patterns/{id}")
 	routes["POST"] = append(routes["POST"], "/api/v1/patterns/capture", "/api/v1/patterns/search")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/patterns/{id}")

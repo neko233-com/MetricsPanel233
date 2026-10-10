@@ -56,12 +56,50 @@ type Target struct {
 	LastError       string            `json:"last_error"`
 	Samples         int               `json:"samples"`
 	DurationMS      int64             `json:"duration_ms"`
+	Kind            string            `json:"kind,omitempty"`
+	Username        string            `json:"username,omitempty"`
+	Database        string            `json:"database,omitempty"`
+	TLSMode         string            `json:"tls_mode,omitempty"`
+	SecureSettings  map[string]string `json:"secure_settings,omitempty"`
+	SecureFields    map[string]bool   `json:"secure_fields,omitempty"`
 }
 
 func (t Target) Validate() error {
 	u, err := url.Parse(t.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("URL must be http(s), without credentials or fragment")
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" || len(t.URL) > 2048 {
+		return errors.New("invalid collector URL; credentials belong in secure_settings")
+	}
+	scheme := "http"
+	switch t.Kind {
+	case "", "prometheus", "clickhouse", "elasticsearch", "hadoop", "hdfs", "hive", "kafka", "spark", "flink":
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return errors.New("HTTP collector URL must use http or https")
+		}
+	case "mysql", "postgresql":
+		scheme = t.Kind
+		if u.Scheme != scheme || u.RawQuery != "" || u.Path != "" {
+			return fmt.Errorf("%s URL must be %s://host:port; use database and tls_mode fields", scheme, scheme)
+		}
+	case "redis":
+		if (u.Scheme != "redis" && u.Scheme != "rediss") || u.RawQuery != "" || u.Path != "" {
+			return errors.New("Redis URL must be redis(s)://host:port")
+		}
+	default:
+		return errors.New("unknown collector kind")
+	}
+	if t.TLSMode != "" && t.TLSMode != "disable" && t.TLSMode != "require" && t.TLSMode != "verify-full" {
+		return errors.New("tls_mode must be disable, require or verify-full")
+	}
+	if t.TLSMode != "" && t.Kind != "mysql" && t.Kind != "postgresql" {
+		return errors.New("tls_mode is only supported by SQL collectors; Redis uses rediss and HTTP uses https")
+	}
+	if len(t.Username) > 256 || len(t.Database) > 256 {
+		return errors.New("username and database limit: 256 bytes")
+	}
+	for key, value := range t.SecureSettings {
+		if (key != "password" && key != "bearer_token") || len(value) > 8192 {
+			return errors.New("secure_settings supports password and bearer_token, at most 8192 bytes each")
+		}
 	}
 	if len(t.Name) == 0 || len(t.Name) > 100 {
 		return errors.New("name must contain 1–100 bytes")

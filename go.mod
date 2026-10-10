@@ -10,10 +10,12 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/dolthub/go-mysql-server v0.19.1-0.20250410182021-5632d67cd46e
 	github.com/dolthub/vitess v0.0.0-20260225173707-20566e4abe9e
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/grafana-plugin-sdk-go v0.297.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
+	github.com/lib/pq v1.12.3
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.72.0
@@ -25,6 +27,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/FZambia/eagle v0.2.0 // indirect
 	github.com/apache/arrow-go/v18 v18.8.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

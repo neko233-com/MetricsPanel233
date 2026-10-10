@@ -42,7 +42,7 @@ export function Explore({
       <div className="page-heading">
         <div>
           <h1>{tr("Explore")}</h1>
-          <p>{tr("Pick a metric. Filter labels. Get an answer.")}</p>
+          <p>{tr("Query stored metrics with label filters and PromQL.")}</p>
         </div>
       </div>
       <form

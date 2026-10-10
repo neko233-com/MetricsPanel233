@@ -1,0 +1,12 @@
+{
+  "name": "mysql",
+  "kind": "mysql",
+  "url": "mysql://127.0.0.1:3306",
+  "username": "metrics",
+  "database": "business",
+  "tls_mode": "verify-full",
+  "secure_settings": { "password": "REPLACE_ME" },
+  "interval_seconds": 15,
+  "enabled": false,
+  "labels": { "environment": "production" }
+}

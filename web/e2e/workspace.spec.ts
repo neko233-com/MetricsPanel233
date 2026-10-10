@@ -5,6 +5,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer as createTCPServer, type Socket } from "node:net";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -85,6 +86,105 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("Native collector forms preserve credentials, scrape Redis, and use plain Chinese/English CLI copy", async ({ page, endpoint }, testInfo) => {
+  test.setTimeout(60000);
+  const issues: string[] = [], sockets = new Set<Socket>();
+  page.on("pageerror", error => issues.push(error.message));
+  page.on("console", entry => { if (["error", "warning"].includes(entry.type())) issues.push(entry.text()); });
+  const secret = "native-ui-secret-233";
+  let authenticated = 0;
+  const redis = createTCPServer(socket => {
+    sockets.add(socket); socket.on("close", () => sockets.delete(socket));
+    let buffer = Buffer.alloc(0), auth = false;
+    socket.on("data", chunk => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length) {
+        const first = buffer.indexOf("\r\n"); if (first < 0) return;
+        const count = Number(buffer.subarray(1, first).toString()); let offset = first + 2;
+        const parts: string[] = [];
+        for (let i=0; i<count; i++) {
+          const end = buffer.indexOf("\r\n", offset); if (end < 0) return;
+          const size = Number(buffer.subarray(offset+1,end).toString()); offset=end+2;
+          if (buffer.length < offset+size+2) return;
+          parts.push(buffer.subarray(offset,offset+size).toString()); offset+=size+2;
+        }
+        buffer=buffer.subarray(offset);
+        if (parts[0]==="AUTH") { auth=parts[1]==="metrics" && parts[2]===secret; if(auth) authenticated++; socket.write(auth ? "+OK\r\n" : "-WRONGPASS\r\n"); }
+        else if (!auth) socket.write("-NOAUTH Authentication required\r\n");
+        else { const info="used_memory:233\r\nconnected_clients:2\r\ndb0:keys=4,expires=1,avg_ttl=0\r\n"; socket.write(`$${Buffer.byteLength(info)}\r\n${info}\r\n`); }
+      }
+    });
+  });
+  await new Promise<void>(resolve=>redis.listen(0,"127.0.0.1",resolve));
+  const address = redis.address(); if (!address || typeof address==="string") throw new Error("Missing Redis fixture address");
+  try {
+    await page.addInitScript(()=>localStorage.setItem("metricspanel-locale","en"));
+    await page.goto(endpoint+"/#collectors");
+    await page.getByRole("button",{name:"Add collector",exact:true}).first().click();
+    let dialog=page.getByRole("dialog",{name:"Add collector",exact:true});
+    const type=dialog.getByLabel("Collector type",{exact:true});
+    await expect(type.locator("option")).toHaveCount(12);
+    for (const kind of ["mysql","redis","postgresql","clickhouse","elasticsearch","hadoop","hdfs","hive","kafka","spark","flink","prometheus"]) {
+      await type.selectOption(kind); await expect(dialog.getByLabel("Metrics endpoint",{exact:true})).not.toHaveValue("");
+    }
+    const preset=dialog.getByLabel("Exporter preset",{exact:true});
+    await expect(preset.locator("option")).toHaveCount(19);
+    await preset.selectOption("blackbox");
+    await expect(dialog.getByLabel("Metrics endpoint",{exact:true})).toHaveValue(/\/probe\?module=http_2xx&target=/);
+    await type.selectOption("redis");
+    await dialog.getByLabel("Collector name",{exact:true}).fill("Native cache");
+    await dialog.getByLabel("Metrics endpoint",{exact:true}).fill(`redis://127.0.0.1:${address.port}`);
+    await dialog.getByLabel("Username",{exact:true}).fill("metrics");
+    await dialog.getByLabel("Password",{exact:true}).fill(secret);
+    await dialog.getByLabel("Automatic collection enabled",{exact:true}).uncheck();
+    await dialog.getByRole("button",{name:"Save collector",exact:true}).click();
+    await expect(dialog).not.toBeVisible();
+    const row=page.getByRole("row").filter({hasText:"Native cache"});
+    await row.getByRole("button",{name:"Scrape Native cache",exact:true}).click();
+    await expect.poll(()=>authenticated).toBe(1);
+    const targets=async()=> (await page.request.get(endpoint+"/api/v1/targets")).json();
+    let cache=(await targets()).find((target:any)=>target.name==="Native cache");
+    expect(cache.kind).toBe("redis"); expect(cache.samples).toBe(6); expect(cache.secure_fields.password).toBe(true); expect(JSON.stringify(cache)).not.toContain(secret);
+    await row.getByRole("button",{name:"Edit Native cache",exact:true}).click();
+    dialog=page.getByRole("dialog",{name:"Edit collector",exact:true});
+    await expect(dialog.getByLabel("Password",{exact:true})).toHaveValue("");
+    await expect(dialog.getByLabel("Password",{exact:true})).toHaveAttribute("placeholder","Configured; leave blank to keep");
+    await dialog.getByRole("button",{name:"Save collector",exact:true}).click();
+    await expect(dialog).not.toBeVisible();
+    await row.getByRole("button",{name:"Scrape Native cache",exact:true}).click(); await expect.poll(()=>authenticated).toBe(2);
+    await page.getByRole("button",{name:"Command line",exact:true}).click();
+    await expect(page.getByRole("heading",{name:"Usage",exact:true})).toBeVisible();
+    await expect(page.getByRole("heading",{name:"Native collectors",exact:true})).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("JSON in. JSON out.");
+    await page.screenshot({path:testInfo.outputPath("command-line-en.png"),animations:"disabled"});
+    await page.getByRole("button",{name:"Explore",exact:true}).click();
+    await expect(page.getByText("Query stored metrics with label filters and PromQL.",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Dashboards",exact:true}).click();
+    await expect(page.getByText("Create dashboards, edit panels or import Grafana JSON.",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Collectors",exact:true}).click();
+    await page.getByRole("button",{name:"Switch language",exact:true}).click();
+    await page.setViewportSize({width:390,height:844});
+    await expect(page.getByRole("heading",{name:"采集器",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"添加采集器",exact:true}).first().click();
+    dialog=page.getByRole("dialog",{name:"添加采集器",exact:true});
+    await dialog.getByLabel("采集类型",{exact:true}).selectOption("mysql");
+    await expect(dialog.getByLabel("数据库",{exact:true})).toBeVisible();
+    await expect(dialog.getByLabel("TLS 模式",{exact:true})).toBeVisible();
+    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth); expect(overflow).toBe(false);
+    await page.screenshot({path:testInfo.outputPath("collector-mysql-zh-mobile.png"),animations:"disabled"});
+    await dialog.getByRole("button",{name:"取消",exact:true}).click();
+    await page.setViewportSize({width:1536,height:1024}); await page.getByRole("button",{name:"Switch language",exact:true}).click();
+    await page.getByRole("row").filter({hasText:"Native cache"}).getByRole("button",{name:"Edit Native cache",exact:true}).click();
+    dialog=page.getByRole("dialog",{name:"Edit collector",exact:true}); await dialog.getByLabel("Clear saved password",{exact:true}).check(); await dialog.getByRole("button",{name:"Save collector",exact:true}).click(); await expect(dialog).not.toBeVisible();
+    cache=(await targets()).find((target:any)=>target.name==="Native cache"); expect(cache.secure_fields?.password).not.toBe(true);
+    const failed=await page.request.post(endpoint+`/api/v1/targets/${cache.id}/scrape`); expect(failed.ok()).toBe(false); expect(await failed.text()).not.toContain(secret);
+    expect(issues).toEqual([]);
+  } finally {
+    for(const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve=>redis.close(()=>resolve()));
+  }
 });
 
 test("Alert visual query graph runs SDK callbacks and read-only previews, saves losslessly and cancels backend work", async ({
@@ -7577,9 +7677,9 @@ test("English and Chinese, panels, PromQL, dashboards and collector forms", asyn
     .getByRole("button", { name: "Scrape Self test", exact: true })
     .click();
   await expect(page.getByRole("status")).toContainText("Scrape completed");
-  await page.getByRole("button", { name: "Agent CLI", exact: true }).click();
+  await page.getByRole("button", { name: "Command line", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "JSON in. JSON out.", exact: true }),
+    page.getByRole("heading", { name: "Usage", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", {

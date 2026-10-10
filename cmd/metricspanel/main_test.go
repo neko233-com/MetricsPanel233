@@ -244,3 +244,39 @@ func TestServeRejectsUnsafeAndInvalidSettingsBeforeBinding(t *testing.T) {
 		require.Error(t, serve(args))
 	}
 }
+
+func TestNativeCollectorCLIFileAndMaskedSecrets(t *testing.T) {
+	t.Setenv("METRICSPANEL_TOKEN", "")
+	db, err := store.Open(filepath.Join(t.TempDir(), "control.db"))
+	require.NoError(t, err)
+	defer db.DB.Close()
+	httpServer := httptest.NewServer(server.New(db, "", 30).Handler())
+	defer httpServer.Close()
+	file := filepath.Join(t.TempDir(), "collector.json")
+	require.NoError(t, os.WriteFile(file, []byte(`{"name":"cache","kind":"redis","url":"redis://localhost:6379","username":"metrics","interval_seconds":30,"enabled":false,"secure_settings":{"password":"agent-secret-233"}}`), 0600))
+	data, err := capture(t, "targets", "add", "--file", file, "--server", httpServer.URL)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "agent-secret-233")
+	var target model.Target
+	require.NoError(t, json.Unmarshal(data, &target))
+	assert.Equal(t, "redis", target.Kind)
+	assert.False(t, target.Enabled)
+	assert.True(t, target.SecureFields["password"])
+	data, err = capture(t, "targets", "catalog", "--server", httpServer.URL)
+	require.NoError(t, err)
+	var integrations []any
+	require.NoError(t, json.Unmarshal(data, &integrations))
+	assert.Len(t, integrations, 12)
+	data, err = capture(t, "targets", "exporters", "--server", httpServer.URL)
+	require.NoError(t, err)
+	var presets []any
+	require.NoError(t, json.Unmarshal(data, &presets))
+	assert.Len(t, presets, 18)
+	data, err = capture(t, "targets", "list", "--server", httpServer.URL)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "agent-secret-233")
+	_, err = capture(t, "targets", "add", "--kind", "unknown", "--name", "bad", "--url", "http://localhost", "--server", httpServer.URL)
+	require.Error(t, err)
+	_, err = capture(t, "targets", "add", "--kind", "redis", "--name", "bad", "--url", "redis://user:secret@localhost:6379", "--server", httpServer.URL)
+	require.Error(t, err)
+}

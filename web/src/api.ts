@@ -67,6 +67,12 @@ export function dashboardUID(dashboard: Dashboard): string {
   );
 }
 export type Target = {
+	 kind?: string;
+	 username?: string;
+	 database?: string;
+	 tls_mode?: string;
+	 secure_fields?: Record<string, boolean>;
+	 secure_settings?: Record<string,string>;
   id: number;
   name: string;
   url: string;
