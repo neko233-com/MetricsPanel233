@@ -136,6 +136,13 @@ func TestReduceAllFunctionsAndModes(t *testing.T) {
 	result, err := strict.execute(map[string]values{"A": {dirty}}, time.Time{}, time.Time{}, &budget{ctx: context.Background()})
 	require.NoError(t, err)
 	assert.True(t, math.IsNaN(*result[0].points[0]))
+	legacyStrict := queryModel{Type: "reduce", Expression: "A", Reducer: "mean"}
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"reduce","expression":"A","reducer":"mean","settings":{"mode":"strict"}}`), &legacyStrict))
+	strictAlias, err := compile(legacyStrict)
+	require.NoError(t, err)
+	result, err = strictAlias.execute(map[string]values{"A": {dirty}}, time.Time{}, time.Time{}, &budget{ctx: context.Background()})
+	require.NoError(t, err)
+	assert.True(t, math.IsNaN(*result[0].points[0]))
 	// Numbers remain numbers for every reducer; count must not turn an instant 233 into 1.
 	for function := range reducers {
 		op, _ := compile(queryModel{Type: "reduce", Expression: "A", Reducer: function})

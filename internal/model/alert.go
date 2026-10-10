@@ -7,17 +7,19 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/neko233-com/MetricsPanel233/internal/alertgraph"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
 var alertUID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
 
 // AlertRule also represents a recording rule when Record is nonempty. Grafana
-// keeps the accepted provisioning payload; Expr is the executable PromQL form.
+// keeps the accepted provisioning payload; Execution selects its graph or Expr.
 type AlertRule struct {
 	UID                      string            `json:"uid"`
 	Title                    string            `json:"title"`
 	Expr                     string            `json:"expr"`
+	Execution                string            `json:"execution,omitempty"`
 	Condition                string            `json:"condition"` // presence (Prometheus) or nonzero (Grafana)
 	IntervalSeconds          int               `json:"interval_seconds"`
 	ForSeconds               int               `json:"for_seconds"`
@@ -38,13 +40,21 @@ type AlertRule struct {
 
 func (r *AlertRule) Defaults() {
 	if r.Condition == "" {
-		r.Condition = "presence"
+		if r.Execution == "grafana" {
+			r.Condition = "nonzero"
+		} else {
+			r.Condition = "presence"
+		}
 	}
 	if r.IntervalSeconds == 0 {
 		r.IntervalSeconds = 30
 	}
 	if r.NoDataState == "" {
-		r.NoDataState = "OK"
+		if r.Execution == "grafana" {
+			r.NoDataState = "NoData"
+		} else {
+			r.NoDataState = "OK"
+		}
 	}
 	if r.ErrorState == "" {
 		r.ErrorState = "Error"
@@ -60,15 +70,30 @@ func (r *AlertRule) Defaults() {
 	}
 }
 func (r AlertRule) Validate() error {
-	if !alertUID.MatchString(r.UID) || len(r.Title) == 0 || len(r.Title) > 256 || len(r.Expr) == 0 || len(r.Expr) > 10000 {
-		return errors.New("rule needs a valid UID, title (1–256 bytes) and PromQL expression (1–10000 bytes)")
+	if !alertUID.MatchString(r.UID) || len(r.Title) == 0 || len(r.Title) > 256 {
+		return errors.New("rule needs a valid UID and title (1–256 bytes)")
 	}
-	expr, err := parser.NewParser(parser.Options{}).ParseExpr(r.Expr)
-	if err != nil {
-		return fmt.Errorf("invalid PromQL: %w", err)
-	}
-	if expr.Type() != parser.ValueTypeVector && expr.Type() != parser.ValueTypeScalar {
-		return errors.New("alert expression must return an instant vector or scalar")
+	if r.Execution == "grafana" {
+		if r.Expr != "" || r.Condition != "nonzero" {
+			return errors.New("Grafana graph execution requires an empty expr and nonzero condition")
+		}
+		if _, err := alertgraph.Parse(r.Grafana); err != nil {
+			return err
+		}
+	} else {
+		if r.Execution != "" && r.Execution != "promql" {
+			return errors.New("execution must be promql or grafana")
+		}
+		if len(r.Expr) == 0 || len(r.Expr) > 10000 {
+			return errors.New("PromQL expression must be 1–10000 bytes")
+		}
+		expr, err := parser.NewParser(parser.Options{}).ParseExpr(r.Expr)
+		if err != nil {
+			return fmt.Errorf("invalid PromQL: %w", err)
+		}
+		if expr.Type() != parser.ValueTypeVector && expr.Type() != parser.ValueTypeScalar {
+			return errors.New("alert expression must return an instant vector or scalar")
+		}
 	}
 	if r.Condition != "presence" && r.Condition != "nonzero" {
 		return errors.New("condition must be presence or nonzero")
@@ -115,6 +140,8 @@ type AlertInstance struct {
 	Labels             map[string]string `json:"labels"`
 	State              string            `json:"state"`
 	Value              *float64          `json:"value"`
+	ValueText          string            `json:"value_text,omitempty"`
+	Matches            json.RawMessage   `json:"matches,omitempty"`
 	ActiveAt           int64             `json:"active_at"`
 	FiringAt           int64             `json:"firing_at"`
 	RecoveringAt       int64             `json:"recovering_at"`
@@ -144,5 +171,6 @@ type AlertEvent struct {
 	Reason     string            `json:"reason,omitempty"`
 	PrevReason string            `json:"prev_reason,omitempty"`
 	Value      *float64          `json:"value,omitempty"`
+	ValueText  string            `json:"value_text,omitempty"`
 	Error      string            `json:"error,omitempty"`
 }

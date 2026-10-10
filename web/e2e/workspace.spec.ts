@@ -5373,6 +5373,146 @@ test("Plugin management and official signed Clock render from its unchanged AMD 
   ).toBeTruthy();
 });
 
+test("Grafana alert graphs execute compound conditions and retain graphs through bilingual edits", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (entry) => {
+    if (["warning", "error"].includes(entry.type())) errors.push(entry.text());
+  });
+  let uid = "";
+  const graph = {
+    condition: "C",
+    data: [
+      {
+        refId: "A",
+        datasourceUid: "metricspanel",
+        model: { expr: "vector(233)", instant: true },
+      },
+      {
+        refId: "B",
+        datasourceUid: "__expr__",
+        model: { type: "math", expression: "$A*2" },
+      },
+      {
+        refId: "C",
+        datasourceUid: "__expr__",
+        model: {
+          type: "classic_conditions",
+          conditions: [
+            {
+              query: { params: ["B"] },
+              reducer: { type: "last" },
+              evaluator: { type: "gt", params: [400] },
+            },
+            {
+              query: { params: ["A"] },
+              reducer: { type: "last" },
+              evaluator: { type: "lt", params: [300] },
+              operator: { type: "and" },
+            },
+          ],
+        },
+      },
+    ],
+  };
+  try {
+    await page.goto(endpoint + "/#alerts");
+    await page
+      .getByRole("button", { name: "Create alert", exact: true })
+      .first()
+      .click();
+    await page
+      .getByLabel("Rule name", { exact: true })
+      .fill("Graph editor test");
+    await page
+      .getByLabel("Query mode", { exact: true })
+      .selectOption("grafana");
+    await page
+      .getByLabel("Queries and condition (Grafana JSON)", { exact: true })
+      .fill(JSON.stringify(graph, null, 2));
+    await page.getByLabel("Evaluate every (s)").fill("86400");
+    const savedResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/v1/alerts/rules"),
+    );
+    await page.getByRole("button", { name: "Save rule", exact: true }).click();
+    const saved = await (await savedResponse).json();
+    uid = saved.uid;
+    expect(saved.execution).toBe("grafana");
+    expect(saved.expr).toBe("");
+    expect(saved.grafana).toEqual(graph);
+    await page.request.post(
+      endpoint + "/api/v1/alerts/rules/" + uid + "/evaluate",
+    );
+    await page.reload();
+    let row = page
+      .locator(".alert-rule")
+      .filter({ hasText: "Graph editor test" });
+    await expect(row.locator(".alert-rule-status")).toContainText("Firing");
+    await row
+      .getByRole("button", { name: "Edit Graph editor test", exact: true })
+      .click();
+    await expect(page.getByLabel("Query mode", { exact: true })).toHaveValue(
+      "grafana",
+    );
+    await expect(
+      page.getByLabel("Queries and condition (Grafana JSON)", { exact: true }),
+    ).toHaveValue(JSON.stringify(graph, null, 2));
+    await page.getByLabel("Rule name", { exact: true }).fill("Graph renamed");
+    await page.screenshot({
+      path: testInfo.outputPath("alertgraph-desktop.png"),
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: "Save rule", exact: true }).click();
+    row = page.locator(".alert-rule").filter({ hasText: "Graph renamed" });
+    await expect(row).toHaveCount(1);
+    const updated = await (
+      await page.request.get(endpoint + "/api/v1/alerts/rules/" + uid)
+    ).json();
+    expect(updated.grafana).toEqual(graph);
+    expect(updated.execution).toBe("grafana");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await row
+      .getByRole("button", { name: "编辑 Graph renamed", exact: true })
+      .click();
+    await expect(page.getByLabel("查询模式", { exact: true })).toHaveValue(
+      "grafana",
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("alertgraph-mobile.png"),
+      animations: "disabled",
+    });
+    await page.getByLabel("查询模式", { exact: true }).selectOption("promql");
+    await page.getByLabel("PromQL 条件", { exact: true }).fill("vector(0)");
+    await page.getByRole("button", { name: "保存规则", exact: true }).click();
+    const native = await (
+      await page.request.get(endpoint + "/api/v1/alerts/rules/" + uid)
+    ).json();
+    expect(native.execution).toBe("promql");
+    expect(native.grafana).toBeUndefined();
+    expect(native.expr).toBe("vector(0)");
+    expect(errors).toEqual([]);
+  } finally {
+    if (uid)
+      await fetch(
+        endpoint + "/api/v1/alerts/rules/" + encodeURIComponent(uid),
+        { method: "DELETE", signal: AbortSignal.timeout(10000) },
+      );
+  }
+});
+
 test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI", async ({
   page,
   endpoint,

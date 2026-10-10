@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/alertgraph"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -134,9 +135,9 @@ func threshold(expr, kind string, params []float64) (string, error) {
 	}
 }
 
-// CompileGrafana accepts a bounded, explicit subset of expression nodes. Unknown
-// data sources and node types fail before persistence instead of changing meaning.
-func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
+// compileLegacyGrafana reproduces the original PromQL compiler for comparing
+// previously stored rules when native edits determine whether to keep export data.
+func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	r := model.AlertRule{UID: g.UID, Title: g.Title, Condition: "nonzero", IntervalSeconds: interval, NoDataState: g.NoDataState, ErrorState: g.ExecErrState, Labels: g.Labels, Annotations: g.Annotations, Paused: g.IsPaused, FolderUID: g.FolderUID, Group: g.RuleGroup}
 	if r.NoDataState == "" {
 		r.NoDataState = "NoData"
@@ -341,6 +342,9 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	}
 	condition := g.Condition
 	if g.Record != nil {
+		if g.Record.Metric == "" {
+			return r, errors.New("recording rule needs a metric name")
+		}
 		if g.Record.TargetDatasourceUID != "" && g.Record.TargetDatasourceUID != "metricspanel" {
 			return r, errors.New("recording target must be metricspanel")
 		}
@@ -372,10 +376,88 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	r.Grafana = payload
 	return r, err
 }
+
+// CompileGrafana persists the validated graph and uses the shared SDK-frame
+// expression runtime instead of rewriting Grafana operations into PromQL.
+func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
+	r := model.AlertRule{UID: g.UID, Title: g.Title, Execution: "grafana", Condition: "nonzero", IntervalSeconds: interval, NoDataState: g.NoDataState, ErrorState: g.ExecErrState, Labels: g.Labels, Annotations: g.Annotations, Paused: g.IsPaused, FolderUID: g.FolderUID, Group: g.RuleGroup}
+	if g.OrgID != 0 && g.OrgID != 1 {
+		return r, errors.New("only organization 1 is supported")
+	}
+	if len(g.NotificationSettings) > 0 && string(g.NotificationSettings) != "null" {
+		return r, errors.New("notification_settings requires a notification integration, which is not configured")
+	}
+	for _, value := range g.Labels {
+		if strings.Contains(value, "{{") {
+			return r, errors.New("templated alert labels are not supported")
+		}
+	}
+	var err error
+	if r.ForSeconds, err = durationSeconds(g.For); err != nil {
+		return r, err
+	}
+	if r.KeepFiringForSeconds, err = durationSeconds(g.KeepFiringFor); err != nil {
+		return r, err
+	}
+	if g.Record != nil {
+		if g.Record.TargetDatasourceUID != "" && g.Record.TargetDatasourceUID != "metricspanel" {
+			return r, errors.New("recording target must be metricspanel")
+		}
+		r.Record = g.Record.Metric
+	}
+	if g.Record != nil && g.Record.Metric == "" {
+		return r, errors.New("recording rule needs a metric name")
+	}
+	g.OrgID = 1
+	g.Provenance = "api"
+	r.Grafana, err = json.Marshal(g)
+	if err != nil {
+		return r, err
+	}
+	r.Defaults()
+	if err = r.Validate(); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+// Previously stored rules without execution=grafana retain their native
+// PromQL path. Native edits still discard a stale legacy export graph.
+func LegacyGraphMatches(rule model.AlertRule) bool {
+	var g GrafanaRule
+	if json.Unmarshal(rule.Grafana, &g) != nil {
+		return false
+	}
+	compiled, err := compileLegacyGrafana(g, rule.IntervalSeconds)
+	if err != nil || rule.Condition != "nonzero" || compiled.Record != rule.Record {
+		return false
+	}
+	a, err := parser.NewParser(parser.Options{}).ParseExpr(compiled.Expr)
+	if err != nil {
+		return false
+	}
+	b, err := parser.NewParser(parser.Options{}).ParseExpr(rule.Expr)
+	return err == nil && a.String() == b.String()
+}
+
 func ExportGrafana(r model.AlertRule) GrafanaRule {
 	var g GrafanaRule
 	if len(r.Grafana) > 0 {
 		_ = json.Unmarshal(r.Grafana, &g)
+		if r.Execution == "grafana" {
+			if plan, err := alertgraph.Parse(r.Grafana); err == nil {
+				if r.Record == "" {
+					g.Record = nil
+					g.Condition = plan.Condition
+				} else {
+					g.Record = &struct {
+						Metric              string `json:"metric"`
+						From                string `json:"from"`
+						TargetDatasourceUID string `json:"target_datasource_uid"`
+					}{r.Record, plan.Condition, "metricspanel"}
+				}
+			}
+		}
 	} else {
 		g.Condition = "A"
 		query := GrafanaQuery{RefID: "A", DatasourceUID: "metricspanel"}

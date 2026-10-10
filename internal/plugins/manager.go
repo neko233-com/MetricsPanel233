@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
+	"github.com/neko233-com/MetricsPanel233/internal/querycontext"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"google.golang.org/grpc"
 )
@@ -350,7 +351,7 @@ func (m *Manager) Query(ctx context.Context, ds model.DataSource, queries []back
 	if err != nil {
 		return nil, err
 	}
-	request := &backend.QueryDataRequest{PluginContext: pc, Queries: queries, Format: backend.DataFrameFormat_JSON}
+	request := &backend.QueryDataRequest{PluginContext: pc, Queries: queries, Format: backend.DataFrameFormat_JSON, Headers: querycontext.Headers(ctx)}
 	result, err := host.data.QueryData(ctx, backend.ToProto().QueryDataRequest(request))
 	if err != nil {
 		return nil, err

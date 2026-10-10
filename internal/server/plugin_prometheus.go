@@ -17,6 +17,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
+	"github.com/neko233-com/MetricsPanel233/internal/querycontext"
 )
 
 // The capture is bounded because external datasources can return untrusted data.
@@ -79,6 +80,9 @@ func (s *Server) queryPrometheusSource(ctx context.Context, ds model.DataSource,
 			params.Set("step", strconv.FormatFloat(step.Seconds(), 'f', 3, 64))
 		}
 		request, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost/api/v1/"+endpoint+"?"+params.Encode(), nil)
+		for name, value := range querycontext.Headers(ctx) {
+			request.Header.Set(strings.TrimPrefix(name, "http_"), value)
+		}
 		output := &boundedResponse{header: http.Header{}}
 		if ds.UID == "metricspanel" {
 			s.Prometheus.Handler().ServeHTTP(output, request)

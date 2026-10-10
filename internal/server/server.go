@@ -49,6 +49,7 @@ func New(s *store.Store, token string, retention int) *Server {
 	prom := promcompat.New(s)
 	server := &Server{Store: s, Collector: collector.New(s), Alerts: alerting.New(s, prom), Prometheus: prom, Plugins: plugins.New(s, "", nil), Token: token, RetentionDays: retention, Started: time.Now()}
 	server.Live = live.New(func() *plugins.Manager { return server.Plugins })
+	server.Alerts.GraphSource = server.expressionSourceQuery
 	return server
 }
 func writeJSON(w http.ResponseWriter, status int, data any) {

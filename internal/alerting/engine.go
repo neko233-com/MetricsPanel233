@@ -9,27 +9,29 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/alertgraph"
+	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/promcompat"
+	"github.com/neko233-com/MetricsPanel233/internal/querycontext"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 )
 
-type Value struct {
-	Labels map[string]string
-	Value  float64
-}
+type Value = alertgraph.Value
 type QueryFunc func(context.Context, string, time.Time) ([]Value, error)
 type Engine struct {
-	Store  *store.Store
-	Query  QueryFunc
-	mu     sync.Mutex
-	active map[string]bool
-	slots  chan struct{}
+	Store       *store.Store
+	Query       QueryFunc
+	GraphSource expressions.SourceQuery
+	mu          sync.Mutex
+	active      map[string]bool
+	slots       chan struct{}
 }
 
 func New(s *store.Store, prom *promcompat.API) *Engine {
@@ -154,6 +156,21 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 		policy = rule.NoDataState
 		reason = "NoData"
 	}
+	if queryErr == nil && len(values) > 0 {
+		allMissing := true
+		for _, v := range values {
+			if !v.Missing {
+				allMissing = false
+			}
+			if v.Missing {
+				out.Health = "nodata"
+			}
+		}
+		if allMissing && len(old) > 0 && (rule.NoDataState == "KeepLast" || rule.NoDataState == "OK" || rule.NoDataState == "Alerting") {
+			policy = rule.NoDataState
+			reason = "NoData"
+		}
+	}
 	if rule.Record != "" {
 		return out, nil, nil
 	}
@@ -171,9 +188,13 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			case "OK":
 				v = advance(rule, v, false, at)
 				v.Value = nil
+				v.ValueText = ""
+				v.Matches = nil
 			case "Alerting":
 				v = advance(rule, v, true, at)
 				v.Value = nil
+				v.ValueText = ""
+				v.Matches = nil
 			case "NoData", "Error":
 				v.State = policy
 				if v.ActiveAt == 0 {
@@ -184,12 +205,14 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 				}
 				v.RecoveringAt = 0
 				v.Value = nil
+				v.ValueText = ""
+				v.Matches = nil
 			}
 			current[key] = v
 		}
 	} else {
 		for _, value := range values {
-			if math.IsNaN(value.Value) || math.IsInf(value.Value, 0) {
+			if !value.Missing && (math.IsNaN(value.Value) || math.IsInf(value.Value, 0)) && rule.Execution != "grafana" {
 				return out, nil, errors.New("alert value must be finite")
 			}
 			ls := mergedLabels(value.Labels, rule.Labels, rule.Title)
@@ -202,11 +225,44 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 				v = model.AlertInstance{Key: key, Labels: ls, State: "Normal"}
 			}
 			n := value.Value
-			v.Value = &n
+			v.Value, v.ValueText = &n, ""
+			v.Matches = value.Matches
+			if math.IsNaN(n) || math.IsInf(n, 0) {
+				v.Value = nil
+				v.ValueText = strconv.FormatFloat(n, 'g', -1, 64)
+			}
 			v.UpdatedAt = at
 			v.MissingEvaluations = 0
 			v.Reason = ""
-			v = advance(rule, v, rule.Condition == "presence" || value.Value != 0, at)
+			if value.Missing {
+				v.Reason = "NoData"
+				v.Value = nil
+				v.ValueText = ""
+				switch rule.NoDataState {
+				case "KeepLast":
+					if !exists {
+						continue
+					}
+					v.Value = old[key].Value
+					v.ValueText = old[key].ValueText
+					v.Matches = old[key].Matches
+				case "OK":
+					v = advance(rule, v, false, at)
+				case "Alerting":
+					v = advance(rule, v, true, at)
+				default:
+					v.State = rule.NoDataState
+					if v.ActiveAt == 0 {
+						v.ActiveAt = at
+					}
+					if v.FiringAt == 0 {
+						v.FiringAt = at
+					}
+					v.RecoveringAt = 0
+				}
+			} else {
+				v = advance(rule, v, rule.Condition == "presence" || value.Value != 0, at)
+			}
 			current[key] = v
 		}
 		for key, v := range old {
@@ -225,6 +281,8 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			if v.MissingEvaluations >= missing {
 				v.Reason = "MissingSeries"
 				v.Value = nil
+				v.ValueText = ""
+				v.Matches = nil
 				v = advance(rule, v, false, at)
 			}
 			current[key] = v
@@ -240,7 +298,7 @@ func Transition(rule model.AlertRule, previous model.AlertRuntime, values []Valu
 			before = "Normal"
 		}
 		if before != v.State {
-			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason, PrevReason: old[key].Reason, Value: v.Value, Error: out.Error})
+			events = append(events, model.AlertEvent{UID: rule.UID, Key: key, Labels: v.Labels, From: before, To: v.State, Timestamp: at, Reason: v.Reason, PrevReason: old[key].Reason, Value: v.Value, ValueText: v.ValueText, Error: out.Error})
 		}
 		out.Instances = append(out.Instances, v)
 	}
@@ -301,7 +359,19 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 	started := time.Now()
 	queryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	values, queryErr := e.Query(queryCtx, view.Expr, at)
+	var values []Value
+	var queryErr error
+	if view.Execution == "grafana" {
+		plan, err := alertgraph.Parse(view.Grafana)
+		if err != nil {
+			queryErr = err
+		} else {
+			graphCtx := querycontext.WithHeaders(queryCtx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": "1", "http_X-Rule-Uid": view.UID})
+			values, queryErr = alertgraph.Execute(graphCtx, plan, at, e.GraphSource)
+		}
+	} else {
+		values, queryErr = e.Query(queryCtx, view.Expr, at)
+	}
 	if ctx.Err() != nil {
 		return view, ctx.Err()
 	} // Shutdown/canceled requests never become alert failures.
@@ -313,6 +383,13 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 		samples := []model.Sample{}
 		seen := map[string]bool{}
 		for _, v := range values {
+			if v.Missing {
+				continue
+			}
+			if math.IsNaN(v.Value) || math.IsInf(v.Value, 0) {
+				queryErr = errors.New("recording rule value must be finite")
+				break
+			}
 			ls := mergedLabels(v.Labels, view.Labels, "")
 			key := instanceKey(ls)
 			if seen[key] {
@@ -322,7 +399,7 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 			seen[key] = true
 			samples = append(samples, model.Sample{Name: view.Record, Labels: ls, Value: v.Value, Timestamp: at.UnixMilli()})
 		}
-		if queryErr == nil {
+		if queryErr == nil && len(samples) > 0 {
 			queryErr = e.Store.Ingest(queryCtx, samples)
 		}
 		if queryErr != nil {

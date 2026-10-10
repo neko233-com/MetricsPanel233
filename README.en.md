@@ -220,7 +220,7 @@ Reduce supports sum/mean/min/max/count/last/median and strict/dropNN/replaceNN m
 
 Use real memory metrics with `metricspanel datasources query --id __expr__ --file examples/queries/classic-conditions.json`; add `--stream` to receive the same match metadata.
 
-Grafana alert rule import still uses the restricted compiler and supports a single classic condition. Compound alert execution remains to be connected to this expression engine.
+Grafana alert rules execute their persisted query graphs through the same backend expression engine, including multiple datasources and compound classic conditions. See alerting below for agent and persistence details.
 
 ```json
 {"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
@@ -369,10 +369,13 @@ Rules support pending and keep-firing periods, no-data/error policies and durabl
 Prometheus-compatible `/prometheus/api/v1/rules` and `/alerts` expose the rules and active instances.
 Set `record` to a metric name to store query results as a recording rule.
 
-Grafana provisioning rule CRUD and group GET accept local Prometheus queries, strict reduce, threshold, single-reference math and one classic condition.
-Map datasource UIDs to `metricspanel` before import. Unknown nodes, query cycles, notification settings and recovery thresholds are rejected.
-The original query graph is preserved for export. Full Grafana alerting compatibility is still incomplete: multiple-reference math and label-subset joins, compound classic conditions, atomic group updates, annotation templates, external notifications and Alertmanager remain outstanding.
-Native expression/condition/record changes discard an obsolete Grafana graph. The CLI accepts GET output directly when updating with `alerts save --id UID --file rule.json`, retaining its optimistic-concurrency version.
+Grafana provisioning rule CRUD and group GET persist new rules with `execution=grafana`. The backend runs the original query graph through the shared expression engine: configured Prometheus, built-in Grafana and SDK backend sources, multi-reference Math and label joins, all Reduce modes, Resample, Threshold and compound Classic conditions. Every query derives its own relative range from one scheduled timestamp, up to 31 days. Plugins receive FromAlert=true, X-Cache-Skip=true and organization headers through the existing encrypted instance settings.
+
+Conditions return one numeric value per labelled frame. Nulls apply per-instance no-data policies; datasource NoData takes priority over a healthy condition. Nonzero NaN/Inf follow Grafana alert truth and persist safely as value_text. Recording rules reject nonfinite values before ingesting any partial batch. Classic match diagnostics persist in runtime.instances[].matches, limited to 1 MiB per frame. Timers, state, matches and graph definitions survive restart.
+
+The bilingual editor provides query mode selection and Grafana JSON editing. Create a native graph with `metricspanel alerts save --file examples/alerts/graph-memory.json`, or import standard provisioning JSON with alerts import-grafana. GET output can be updated with alerts save using its current version. Switching to native PromQL discards the old graph; existing rules without execution=grafana keep their previous PromQL path.
+
+Unavailable datasources, malformed nodes and cycles fail before save. SQL, recovery thresholds, atomic group updates, annotation templates, external notifications/Alertmanager and complete visual query editors remain pending. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and the [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
 
 ## Automated verification
 

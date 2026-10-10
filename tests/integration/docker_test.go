@@ -114,6 +114,38 @@ func (e environment) composeInput(input string, args ...string) (string, error) 
 	output, err := command.CombinedOutput()
 	return strings.TrimSpace(string(output)), err
 }
+
+func (e environment) verifyAlertGraph(address string, restarted bool) {
+	const uid = "docker-sdk-graph"
+	graph := json.RawMessage(`{"uid":"docker-sdk-graph","title":"MySQL and SDK compound alert","condition":"K","data":[{"refId":"A","datasourceUid":"metricspanel","model":{"expr":"mysql_up","instant":true}},{"refId":"B","datasourceUid":"docker-sdk","model":{"value":2,"requireAlert":true}},{"refId":"D","datasourceUid":"__expr__","model":{"type":"reduce","expression":"B","reducer":"mean"}},{"refId":"C","datasourceUid":"__expr__","model":{"type":"math","expression":"$A*$D"}},{"refId":"K","datasourceUid":"__expr__","model":{"type":"classic_conditions","conditions":[{"query":{"params":["C"]},"reducer":{"type":"last"},"evaluator":{"type":"gt","params":[1.5]}},{"query":{"params":["A"]},"reducer":{"type":"last"},"operator":{"type":"and"},"evaluator":{"type":"gt","params":[0]}}]}}]}`)
+	if !restarted {
+		status, raw, err := e.request(address, "POST", "/api/v1/provisioning/alert-rules", graph)
+		require.NoError(e.t, err)
+		require.Equal(e.t, 201, status, string(raw))
+	}
+	var view model.AlertRuleView
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil), &view))
+	assert.Equal(e.t, "grafana", view.Execution)
+	assert.Empty(e.t, view.Expr)
+	if restarted {
+		require.NotEmpty(e.t, view.Runtime.Instances)
+		assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
+		assert.Contains(e.t, string(view.Runtime.Instances[0].Matches), `"value":"2"`)
+	}
+	status, raw, err := e.request(address, "POST", "/api/v1/alerts/rules/"+uid+"/evaluate", nil)
+	require.NoError(e.t, err)
+	if status == 409 {
+		raw = e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil)
+	} else {
+		require.Equal(e.t, 200, status, string(raw))
+	}
+	require.NoError(e.t, json.Unmarshal(raw, &view))
+	require.Equal(e.t, "ok", view.Runtime.Health, view.Runtime.Error)
+	require.Len(e.t, view.Runtime.Instances, 1)
+	assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
+	assert.Equal(e.t, float64(1), *view.Runtime.Instances[0].Value)
+	assert.Contains(e.t, string(view.Runtime.Instances[0].Matches), `"value":"2"`)
+}
 func (e environment) address(service string) string {
 	e.t.Helper()
 	out, err := e.compose("port", service, "7333")
@@ -558,6 +590,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_http_requests_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go exporter not scraped")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
 			e.verifyExpressionGraph(address)
+			e.verifyAlertGraph(address, false)
 			// Duplicate writes replace a sample, including across a full restart.
 			ts := time.Now().UnixMilli()
 			for _, v := range []float64{233, 234} {
@@ -628,6 +661,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifyBuiltinGrafana(address)
 			e.verifySDKPlugin(address, backend.service)
 			e.verifyExpressionGraph(address)
+			e.verifyAlertGraph(address, true)
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false

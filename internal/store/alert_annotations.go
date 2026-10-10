@@ -95,6 +95,9 @@ func insertAlertAnnotation(ctx context.Context, tx *sql.Tx, rule model.AlertRule
 		}
 		data["values"] = map[string]float64{refID: *event.Value}
 		valueText = fmt.Sprintf("%s=%f", refID, *event.Value)
+	} else if event.ValueText != "" {
+		data["valueText"] = event.ValueText
+		valueText = event.ValueText
 	} else {
 		data["values"] = nil
 	}

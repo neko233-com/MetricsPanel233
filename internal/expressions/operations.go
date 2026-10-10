@@ -53,6 +53,17 @@ type operation struct {
 	interval     time.Duration
 }
 
+// Describe validates an expression without querying data, for stored graph
+// validation and dependency checks shared by dashboards and alerting.
+func Describe(raw json.RawMessage) (string, []string, error) {
+	var m queryModel
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", nil, err
+	}
+	op, err := compile(m)
+	return m.Type, slices.Clone(op.dependencies), err
+}
+
 func compile(m queryModel) (operation, error) {
 	o := operation{model: m}
 	switch m.Type {
@@ -81,7 +92,7 @@ func compile(m queryModel) (operation, error) {
 		}
 		if m.Settings != nil {
 			switch m.Settings.Mode {
-			case "": // an omitted mode is strict
+			case "", "strict": // accept the legacy alerting spelling as strict
 			case "dropNN":
 			case "replaceNN":
 				if m.Settings.Replace == nil || nonNumber(m.Settings.Replace) {
@@ -195,7 +206,7 @@ func (o operation) execute(vars map[string]values, from, to time.Time, b *budget
 				return nil, errors.New("reduce requires series or number data, not a math scalar")
 			}
 			points := v.points
-			if settings := o.model.Settings; settings != nil && settings.Mode != "" {
+			if settings := o.model.Settings; settings != nil && settings.Mode != "" && settings.Mode != "strict" {
 				points = make([]*float64, 0, len(v.points))
 				for _, n := range v.points {
 					if err := b.step(); err != nil {

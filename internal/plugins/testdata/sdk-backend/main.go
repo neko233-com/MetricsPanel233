@@ -152,6 +152,7 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			Annotation        bool    `json:"annotation"`
 			AnnotationText    string  `json:"annotationText"`
 			AnnotationDelayMS int     `json:"annotationDelayMS"`
+			RequireAlert      bool    `json:"requireAlert"`
 		}
 		if err := json.Unmarshal(q.JSON, &input); err != nil {
 			return nil, err
@@ -161,6 +162,9 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			continue
 		}
 		settings := r.PluginContext.DataSourceInstanceSettings
+		if input.RequireAlert && (r.Headers["FromAlert"] != "true" || r.Headers["X-Cache-Skip"] != "true" || r.Headers["X-Grafana-Org-Id"] != "1") {
+			return nil, fmt.Errorf("Grafana alert request headers missing")
+		}
 		if settings == nil || settings.DecryptedSecureJSONData["apiKey"] != "test-secret-233" {
 			return nil, fmt.Errorf("decrypted datasource secret missing")
 		}

@@ -304,7 +304,7 @@ Reduce 支持 sum / mean / min / max / count / last / median，以及严格、dr
 
 真实内存指标示例：`metricspanel datasources query --id __expr__ --file examples/queries/classic-conditions.json`，加上 `--stream` 可获取同样的匹配元数据。
 
-Grafana 告警规则导入仍使用受限编译器，目前只支持单个经典条件；复合条件告警执行仍待接入同一表达式引擎。
+Grafana 告警规则使用同一后端表达式引擎执行原始查询图，支持多数据源和复合经典条件；持久化规则与 CLI 见下文告警章节。
 
 ```json
 {"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
@@ -450,13 +450,16 @@ metricspanel alerts import-grafana --file grafana-rule.json
 `condition=nonzero` 使用布尔值，网页默认使用这种方式：`up == bool 0`、`memory_bytes > bool 1073741824`。
 状态包括 Normal / Pending / Firing / Recovering / NoData / Error，无数据与错误策略可选择正常、触发、专用状态或保持上次状态。
 Prometheus 兼容 `/prometheus/api/v1/rules` 与 `/alerts` 可发现规则及活动实例。
-记录规则指定 `record` 指标名，将 PromQL 结果写回当前指标数据库，可供模板查询。
+记录规则指定 `record` 指标名，将原生 PromQL 或 Grafana 图的有限数值结果写回当前指标数据库，可供模板查询。
 
 Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET 可用。
-支持映射到 `metricspanel` 的 Prometheus instant / range 查询，以及严格 reduce（last/min/max/mean/sum/count）、threshold、单查询引用 math、单个 classic condition。
-原始数据查询图保留用于导出；未知数据源、节点、循环依赖、通知设置和恢复阈值明确拒绝。
-通过原生 API 修改表达式 / 判断方式 / 记录指标后，旧 Grafana 查询图会清除；CLI 可直接读取并更新含 `runtime` 的 GET 结果。
-这部分尚未完全覆盖 Grafana 告警语义：多查询引用 / 跨标签集合 math 联合、复合 classic 条件、规则组原子更新、注解模板、外部通知 / Alertmanager 尚待实现。
+新导入规则以 `execution=grafana` 持久化原始查询图，评估时复用服务端 expression 引擎。支持已配置的 Prometheus、内置 Grafana 和 Go SDK 后端数据源，Math 多引用与标签连接、Reduce 各模式、Resample、Threshold、复合 Classic conditions；每条查询按同一评估时刻计算自己的 `relativeTimeRange`，最多 31 天。插件接收 `FromAlert=true`、`X-Cache-Skip=true` 和组织标记，密钥仍通过既有加密设置传递。
+
+条件须返回按标签区分的单数值帧；null 应用对应实例的无数据策略，数据源整体 NoData 优先于健康条件。Grafana 的非零 NaN / Inf 仍触发告警，数值以 `value_text` 保存，避免 JSON 编码失败；记录规则拒绝非有限数值，避免部分写入。经典条件匹配详情持久化在 `runtime.instances[].matches`，每帧最多 1 MiB。计时、状态、匹配详情和原始图在重启后保留。
+
+网页告警编辑器提供中文 / 英文查询模式与 Grafana JSON 编辑。`metricspanel alerts save --file examples/alerts/graph-memory.json` 可直接创建原生图规则；`alerts import-grafana` 接收标准 provisioning JSON。CLI 可直接读取并更新含 `runtime` 的 GET 结果，必须保留当前版本。切换为原生 PromQL 会清除旧图；已有未设置 `execution=grafana` 的规则继续原来的 PromQL 执行路径。
+
+未知数据源、非法节点和循环依赖在保存前拒绝；SQL、状态恢复阈值、规则组原子更新、注解模板、外部通知 / Alertmanager 和完整可视化查询编辑器尚待实现。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

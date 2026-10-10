@@ -26,6 +26,7 @@ type Instance = {
   labels: Labels;
   state: string;
   value: number | null;
+  value_text?: string;
   active_at: number;
   firing_at: number;
   recovering_at: number;
@@ -35,6 +36,7 @@ type Rule = {
   uid: string;
   title: string;
   expr: string;
+  execution?: "promql" | "grafana";
   condition: string;
   interval_seconds: number;
   for_seconds: number;
@@ -297,7 +299,11 @@ export function Alerts({
                       )}
                       <div>
                         <strong>{rule.title}</strong>
-                        <code>{rule.expr}</code>
+                        <code>
+                          {rule.execution === "grafana"
+                            ? t("Grafana query graph")
+                            : rule.expr}
+                        </code>
                       </div>
                     </button>
                     <div className="alert-rule-status">
@@ -411,11 +417,12 @@ export function Alerts({
                                     </span>
                                   </td>
                                   <td className="mono">
-                                    {v.value === null
-                                      ? "—"
-                                      : v.value.toLocaleString(undefined, {
-                                          maximumFractionDigits: 4,
-                                        })}
+                                    {v.value_text ||
+                                      (v.value === null
+                                        ? "—"
+                                        : v.value.toLocaleString(undefined, {
+                                            maximumFractionDigits: 4,
+                                          }))}
                                   </td>
                                   <td>
                                     {v.active_at ? dateText(v.active_at) : "—"}
@@ -569,6 +576,29 @@ function AlertEditor({
 }) {
   const original = rule === "new" ? null : rule;
   const [title, setTitle] = useState(original?.title || ""),
+    [execution, setExecution] = useState(original?.execution || "promql"),
+    [graphJSON, setGraphJSON] = useState(
+      JSON.stringify(
+        original?.grafana || {
+          condition: "C",
+          data: [
+            {
+              refId: "A",
+              datasourceUid: "metricspanel",
+              relativeTimeRange: { from: 60, to: 0 },
+              model: { expr: "sum(metricspanel_memory_bytes)", instant: true },
+            },
+            {
+              refId: "C",
+              datasourceUid: "__expr__",
+              model: { type: "math", expression: "$A > 1073741824" },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    ),
     [expr, setExpr] = useState(
       original?.expr || "metricspanel_memory_bytes > bool 1073741824",
     ),
@@ -601,8 +631,9 @@ function AlertEditor({
             const payload = {
               ...config,
               title,
-              expr,
-              condition,
+              execution,
+              expr: execution === "grafana" ? "" : expr,
+              condition: execution === "grafana" ? "nonzero" : condition,
               interval_seconds: interval,
               for_seconds: pending,
               keep_firing_for_seconds: keep,
@@ -610,10 +641,12 @@ function AlertEditor({
               error_state: errorState,
               labels: JSON.parse(labelJSON),
               annotations: JSON.parse(annotationJSON),
-              ...(original &&
-              (expr !== original.expr || condition !== original.condition)
-                ? { grafana: undefined }
-                : {}),
+              ...(execution === "grafana"
+                ? { grafana: JSON.parse(graphJSON) }
+                : original &&
+                    (expr !== original.expr || condition !== original.condition)
+                  ? { grafana: undefined }
+                  : {}),
             };
             await api(
               original
@@ -641,60 +674,91 @@ function AlertEditor({
           />
         </label>
         <label>
-          {t("PromQL condition")}
-          <textarea
-            className="mono"
-            rows={3}
-            required
-            maxLength={10000}
-            value={expr}
-            onChange={(e) => setExpr(e.target.value)}
-          />
-        </label>
-        <div className="alert-preset-row">
-          <span>{t("Quick start")}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setExpr("up == bool 0");
-              setCondition("nonzero");
-            }}
-          >
-            {t("Exporter down")}
-          </button>
+          {t("Query mode")}
           <select
-            aria-label={t("Insert metric")}
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) {
-                setExpr(`${e.target.value} > bool 0`);
-                setCondition("nonzero");
-                e.target.value = "";
-              }
-            }}
+            aria-label={t("Query mode")}
+            value={execution}
+            onChange={(event) =>
+              setExecution(event.target.value as "promql" | "grafana")
+            }
           >
-            <option value="">{t("Insert metric")}</option>
-            {metrics.map((m) => (
-              <option key={m.name} value={m.name}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <label>
-          {t("Condition behavior")}
-          <select
-            value={condition}
-            onChange={(e) => setCondition(e.target.value)}
-          >
-            <option value="nonzero">
-              {t("Nonzero values fire (use bool comparisons)")}
-            </option>
-            <option value="presence">
-              {t("Returned samples fire (Prometheus rules)")}
-            </option>
+            <option value="promql">PromQL</option>
+            <option value="grafana">{t("Grafana query graph")}</option>
           </select>
         </label>
+        {execution === "grafana" ? (
+          <label>
+            {t("Queries and condition (Grafana JSON)")}
+            <textarea
+              aria-label={t("Queries and condition (Grafana JSON)")}
+              className="mono"
+              rows={12}
+              required
+              maxLength={524288}
+              value={graphJSON}
+              onChange={(event) => setGraphJSON(event.target.value)}
+            />
+          </label>
+        ) : (
+          <>
+            <label>
+              {t("PromQL condition")}
+              <textarea
+                aria-label={t("PromQL condition")}
+                className="mono"
+                rows={3}
+                required
+                maxLength={10000}
+                value={expr}
+                onChange={(e) => setExpr(e.target.value)}
+              />
+            </label>
+            <div className="alert-preset-row">
+              <span>{t("Quick start")}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setExpr("up == bool 0");
+                  setCondition("nonzero");
+                }}
+              >
+                {t("Exporter down")}
+              </button>
+              <select
+                aria-label={t("Insert metric")}
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setExpr(`${e.target.value} > bool 0`);
+                    setCondition("nonzero");
+                    e.target.value = "";
+                  }
+                }}
+              >
+                <option value="">{t("Insert metric")}</option>
+                {metrics.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label>
+              {t("Condition behavior")}
+              <select
+                value={condition}
+                onChange={(e) => setCondition(e.target.value)}
+              >
+                <option value="nonzero">
+                  {t("Nonzero values fire (use bool comparisons)")}
+                </option>
+                <option value="presence">
+                  {t("Returned samples fire (Prometheus rules)")}
+                </option>
+              </select>
+            </label>
+          </>
+        )}
         <div className="form-row">
           <label>
             {t("Evaluate every (s)")}

@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
-	"github.com/prometheus/prometheus/promql/parser"
 )
 
 func ruleError(w http.ResponseWriter, err error) {
@@ -53,26 +51,21 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 			rule.UID = uuid.NewString()
 		}
 		rule.Defaults()
+		if rule.Execution == "grafana" && rule.Expr != "" {
+			rule.Execution = "promql"
+			rule.Grafana = nil
+		}
 		if err := rule.Validate(); err != nil {
 			fail(w, 400, err)
 			return
 		}
-		if len(rule.Grafana) > 0 {
-			var g alerting.GrafanaRule
-			if err := json.Unmarshal(rule.Grafana, &g); err != nil {
+		if rule.Execution == "grafana" {
+			if err := s.validateAlertSources(r.Context(), rule); err != nil {
 				fail(w, 400, err)
 				return
 			}
-			compiled, err := alerting.CompileGrafana(g, rule.IntervalSeconds)
-			if err != nil {
-				fail(w, 400, err)
-				return
-			}
-			original, _ := parser.NewParser(parser.Options{}).ParseExpr(compiled.Expr)
-			executable, _ := parser.NewParser(parser.Options{}).ParseExpr(rule.Expr)
-			if rule.Condition != "nonzero" || compiled.Record != rule.Record || original.String() != executable.String() {
-				rule.Grafana = nil
-			}
+		} else if len(rule.Grafana) > 0 && !alerting.LegacyGraphMatches(rule) {
+			rule.Grafana = nil
 		}
 		value, err := s.Alerts.SaveRule(r.Context(), rule)
 		if err != nil {
@@ -169,6 +162,10 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 			return
 		}
 		rule.Version = version
+		if err := s.validateAlertSources(r.Context(), rule); err != nil {
+			fail(w, 400, err)
+			return
+		}
 		value, err := s.Alerts.SaveRule(r.Context(), rule)
 		if err != nil {
 			ruleError(w, err)
@@ -218,6 +215,9 @@ func (s *Server) promAlertRoutes(mux *http.ServeMux) {
 				continue
 			}
 			value := "NaN"
+			if v.ValueText != "" {
+				value = v.ValueText
+			}
 			if v.Value != nil {
 				value = strconv.FormatFloat(*v.Value, 'g', -1, 64)
 			}

@@ -1,0 +1,39 @@
+{
+  "uid": "graph-memory",
+  "title": "Memory query graph",
+  "execution": "grafana",
+  "interval_seconds": 30,
+  "for_seconds": 30,
+  "no_data_state": "NoData",
+  "error_state": "Error",
+  "grafana": {
+    "condition": "C",
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "metricspanel",
+        "relativeTimeRange": { "from": 60, "to": 0 },
+        "model": { "expr": "sum(metricspanel_memory_bytes)", "instant": true }
+      },
+      {
+        "refId": "MiB",
+        "datasourceUid": "__expr__",
+        "model": { "type": "math", "expression": "$A/1024/1024" }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "type": "classic_conditions",
+          "conditions": [
+            {
+              "query": { "params": ["MiB"] },
+              "reducer": { "type": "avg" },
+              "evaluator": { "type": "gt", "params": [1024] }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
