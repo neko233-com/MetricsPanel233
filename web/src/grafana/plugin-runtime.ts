@@ -58,6 +58,10 @@ const datasourceCache = new Map<
   { version: number; instance: Data.DataSourceApi }
 >();
 let initialized: Promise<Runtime> | undefined;
+let loggersInitialized = false;
+let sourceSettingsCore:
+  | typeof import("metricspanel/sdk-source-settings")
+  | undefined;
 let variableValues: InterpolationValues = {},
   variableRange: TimeSelection = "30m";
 let sources: DataSourceSettings[] = [];
@@ -300,10 +304,27 @@ async function init(): Promise<Runtime> {
       },
       navTree: [],
     };
-    const [runtime, ui] = await Promise.all([
-      import("@grafana/runtime"),
-      import("@grafana/ui"),
-    ]);
+    const [runtime, ui, logging, sourceSettings, sourceLoader] =
+      await Promise.all([
+        import("@grafana/runtime"),
+        import("@grafana/ui"),
+        import("@grafana/runtime/unstable"),
+        import("metricspanel/sdk-source-settings"),
+        import("metricspanel/sdk-source-loader"),
+      ]);
+    if (!loggersInitialized) {
+      logging.initializeLoggersRegistry();
+      loggersInitialized = true;
+    }
+    sourceSettingsCore = sourceSettings;
+    sourceLoader.setDataSourcePluginImporter(async (meta) => {
+      if (meta.id === "prometheus")
+        return new Data.DataSourcePlugin(
+          LocalPrometheus,
+        ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
+      return (await loadPlugin(meta.id))
+        .plugin as Data.DataSourcePlugin<Data.DataSourceApi>;
+    });
     runtime.config.theme2 = Data.createTheme({ colors: { mode: "dark" } });
     runtime.config.buildInfo.version = "13.2.3";
     installAppEvents(runtime);
@@ -471,6 +492,15 @@ async function reloadSources() {
           : ds.meta,
     jsonData: ds.jsonData || {},
   }));
+  sourceSettingsCore?.syncDataSourceInstanceSettings({
+    datasources: Object.fromEntries(
+      sources.map((source) => [source.name, source]),
+    ),
+    defaultDatasource:
+      sources.find((source) => source.isDefault)?.name ||
+      sources[0]?.name ||
+      "",
+  });
 }
 export function setPluginVariables(
   values: InterpolationValues,
@@ -539,9 +569,12 @@ export async function loadPanelPlugin(id: string): Promise<Data.PanelPlugin> {
     throw new Error(`Plugin is not a React panel: ${id}`);
   return plugin;
 }
-export async function getPluginDatasource(uid: string) {
+export async function getPluginDatasource(
+  uid: string,
+  scoped?: Data.ScopedVars,
+) {
   const runtime = await init();
-  return runtime.getDataSourceSrv().get(uid);
+  return runtime.getDataSourceSrv().get(uid, scoped);
 }
 export async function sdkRuntime() {
   return init();

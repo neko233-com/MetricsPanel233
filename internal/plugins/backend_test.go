@@ -67,6 +67,17 @@ func TestRealGrafanaSDKBackendProcessQueryHealthResourcesRestartAndShutdown(t *t
 	require.Len(t, results.Responses["A"].Frames, 1)
 	assert.Equal(t, float64(233), results.Responses["A"].Frames[0].Fields[1].At(0))
 	require.ErrorContains(t, results.Responses["B"].Error, "fixture query failed")
+	annotationQuery := []backend.DataQuery{{RefID: "Anno", JSON: json.RawMessage(`{"annotation":true,"annotationText":"agent deployment"}`), TimeRange: backend.TimeRange{From: time.UnixMilli(1000).UTC(), To: time.UnixMilli(10000).UTC()}}}
+	annotationResult, err := manager.Query(ctx, ds, annotationQuery)
+	require.NoError(t, err)
+	frame := annotationResult.Responses["Anno"].Frames[0]
+	assert.Equal(t, int64(5500), frame.Fields[0].At(0).(time.Time).UnixMilli())
+	assert.Equal(t, int64(6500), frame.Fields[1].At(0).(time.Time).UnixMilli())
+	assert.Equal(t, "agent deployment", frame.Fields[2].At(0))
+	assert.Equal(t, "1", frame.Fields[4].At(0))
+	nativeAnnotations, err := s.Annotations(ctx, model.AnnotationQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, nativeAnnotations, "querying external annotations must not create native records")
 	require.ErrorContains(t, manager.Uninstall(ctx, ds.Type), "datasources")
 	manager.Close()
 	assert.True(t, host.client.Exited(), "plugin subprocess remained alive after shutdown")
@@ -80,6 +91,9 @@ func TestRealGrafanaSDKBackendProcessQueryHealthResourcesRestartAndShutdown(t *t
 	require.NoError(t, err)
 	assert.Equal(t, backend.HealthStatusOk, health.Status)
 	host = manager.processes[ds.Type]
+	restoredAnnotations, err := manager.Query(ctx, ds, annotationQuery)
+	require.NoError(t, err)
+	assert.Equal(t, "agent deployment", restoredAnnotations.Responses["Anno"].Frames[0].Fields[2].At(0), "persisted datasource settings must work after restart")
 	_, err = manager.SetEnabled(ctx, ds.Type, false)
 	require.NoError(t, err)
 	assert.True(t, host.client.Exited())

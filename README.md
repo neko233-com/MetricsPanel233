@@ -128,7 +128,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
 但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。Grafana expression 数据源、
-部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、插件数据源的注释适配、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -242,16 +242,26 @@ metricspanel annotations delete --id 1
 创建文件示例：`{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"部署完成","tags":["deploy"],"idempotencyKey":"deploy-233"}`。
 原生图表的注释按钮提供中英文创建、编辑和删除；标记与区域按当前窗口裁剪，文本使用安全的纯文本提示。
 经典/V1/V2 模板的内置 Grafana 仪表盘与标签查询、变量标签、`enable`、面板 `filter.ids` 会执行；模板的 `hide` 不会隐藏事件。
-SDK 面板通过公开 `PanelData.annotations` 接收官方 `toDataFrame` 转换的帧；注释与指标序列分别传递。
+SDK 面板通过公开 `PanelData.annotations` 接收官方 `arrayToDataFrame` 转换的帧；混合来源保留完整字段，注释与指标序列分别传递。
 每次查询最多 1000 条，前端最多 32 个注释查询/1000 条合并事件，正文最多 8192 字节、标签最多 32 个。
 告警的等待、触发、恢复、无数据/错误，以及规则修改、暂停和删除会自动生成带 `prevState`/`newState` 的时间点注释。
 状态、历史、注释和标签在同一事务中提交；未改变的状态和过期执行不会重复生成，重启后可通过 `type=alert`、`alertUID` 或稳定数值 `alertId` 查询。
 规则注解中的 `__dashboardUid__` 与正整数 `__panelId__` 关联模板面板；无面板关联时，可用公开标签生成的 `key:value` 标签查询。
 原生图表按状态着色，注释列表以中英文显示状态；自动记录在编辑器中只读。SDK 混合注释帧保留状态字段。
 自动注释跟随最近 100000 条告警状态历史保留，手工注释独立保留。升级前的历史不会回填；recording rule 不生成告警注释。
-插件数据源注释适配、周期性时间区间和完整组织权限仍需补齐。
+插件数据源通过公开 `AnnotationSupport` 执行默认查询、预处理、查询准备和自定义事件转换；旧版 `annotationQuery` 入口也会执行。
+默认转换支持字段名（忽略大小写）、固定文本、跳过字段和标签拆分，使用官方 SDK merge 算子合并帧；旧字符串查询模型会迁移到 target。
+模板查询提供面板实际时间范围、时区、变量、interval 和 `__annotation` 上下文，支持数据源 UID 变量。
+流式更新保持订阅；单个查询失败会显示名称和错误，其他注释及指标继续显示。每个查询限 60 秒无更新/10000 帧行/1000 事件，共享缓存最多 200 项。
+离开页面取消可订阅的数据源请求，包括 Go SDK HTTP/gRPC；旧版 Promise 的迟到结果会忽略，并向插件传递可选取消信号。
+不同数据源的事件 ID 分别保留并隔离，外部事件在编辑器中只读，不自动写入本地注释表。`annotations list` 查询本地记录；agent 可用 `datasources query --id UID --file FILE` 读取数据源原始帧，前端 SDK 回调由浏览器执行。
+Testify 和真实浏览器用例验证 Go SDK 帧、重启后的数据源设置、经典/V1/V2 模板、字段映射、同 ID 不同来源、错误隔离、变量和取消。
+注释查询配置编辑器、周期性时间区间和完整组织权限仍需补齐。
 Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
+插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。
+宿主初始化官方日志注册表，并同步 SDK 的数据源设置缓存和插件加载器；数据源服务重新加载时，设置增删改会同步新版与旧版服务。
+缓存启动接口属于固定版本 SDK 的 core 实现，发布包未公开其入口；Vite 使用两个仅供宿主调用的 13.2.3 路径别名，升级 SDK 时必须重新验证这些接口。
 
 ## Dashboard 时间范围
 

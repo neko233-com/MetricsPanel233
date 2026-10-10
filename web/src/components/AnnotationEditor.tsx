@@ -159,7 +159,7 @@ export function AnnotationEditor({
           </form>
           <div className="annotation-list">
             {events.map((event) => (
-              <div key={event.id}>
+              <div key={event.key || event.id}>
                 <span>
                   {event.text}
                   {event.newState && (
@@ -170,7 +170,7 @@ export function AnnotationEditor({
                     </small>
                   )}
                 </span>
-                {!event.alertId && (
+                {!event.readOnly && !event.alertId && (
                   <>
                     <button
                       className="icon-button"

@@ -86,6 +86,453 @@ const test = base.extend<{}, { endpoint: string }>({
   ],
 });
 
+test("Plugin annotation SDK processors and legacy queries render isolated events and cancel backend work", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+    path.join(os.tmpdir(), "metricspanel233-plugin-annotations-e2e-"),
+  );
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    archive = path.join(temp, "annotations.zip"),
+    eventsArchive = path.join(temp, "events.zip"),
+    run = promisify(execFile);
+  const dsUIDs = [
+      "annotation-standard",
+      "annotation-custom",
+      "annotation-legacy",
+    ],
+    errors: string[] = [],
+    consoleProblems: string[] = [],
+    extraUIDs: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (entry) => {
+    if (["error", "warning"].includes(entry.type()))
+      consoleProblems.push(entry.text());
+  });
+  const end = Date.now() - 60000,
+    start = end - 120000;
+  const mappings = {
+    time: { value: "WHEN" },
+    timeEnd: { value: "End" },
+    text: { value: "DETAIL" },
+    tags: { value: "Tags" },
+    id: { value: "EventKey" },
+  };
+  const source = {
+    uid: "plugin-annotation-proof",
+    title: "Plugin annotation proof",
+    timezone: "utc",
+    time: { from: String(start), to: String(end) },
+    refresh: "",
+    templating: {
+      list: [
+        {
+          name: "service",
+          label: "Service",
+          type: "custom",
+          query: "api,db",
+          current: { value: "api" },
+        },
+      ],
+    },
+    annotations: {
+      list: [
+        { name: "Native", builtIn: 1, enable: true },
+        {
+          name: "Standard",
+          datasource: { uid: "$sourceDS", type: "metricspanel-sdk-datasource" },
+          target: { annotationText: "SDK $service / $__range_ms" },
+          mappings,
+          iconColor: "#d3baff",
+        },
+        {
+          name: "Custom",
+          datasource: { uid: dsUIDs[1], type: "metricspanel-sdk-datasource" },
+          target: {},
+          iconColor: "#f6c85f",
+        },
+        {
+          name: "Legacy",
+          datasource: dsUIDs[2],
+          query: "$service",
+          iconColor: "#53c7aa",
+        },
+        {
+          name: "Skipped",
+          datasource: dsUIDs[0],
+          target: { skip: true },
+          mappings,
+        },
+        { name: "Broken", datasource: "missing-annotation-source", target: {} },
+        {
+          name: "Failed",
+          datasource: dsUIDs[0],
+          target: { fail: true },
+          mappings,
+        },
+      ] as any[],
+    },
+    panels: [
+      {
+        id: 1,
+        title: "Plugin annotation SDK",
+        type: "metricspanel-events-panel",
+        targets: [{ refId: "A", expr: "vector(33)", instant: true }],
+        gridPos: { x: 0, y: 0, w: 12, h: 12 },
+      },
+      {
+        id: 2,
+        title: "Plugin annotated curve",
+        type: "timeseries",
+        targets: [{ refId: "A", expr: "vector(33)" }],
+        gridPos: { x: 12, y: 0, w: 12, h: 12 },
+      },
+    ],
+  };
+  source.templating.list.push({
+    name: "sourceDS",
+    label: "Source",
+    type: "custom",
+    query: dsUIDs[0],
+    current: { value: dsUIDs[0] },
+  });
+  const save = async () => {
+    const response = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: { dashboard: source, overwrite: true },
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    await run(fixture, ["--package-annotations", archive], {
+      windowsHide: true,
+    });
+    await run(fixture, ["--package-extension-events", eventsArchive], {
+      windowsHide: true,
+    });
+    for (const file of [archive, eventsArchive]) {
+      const response = await page.request.post(
+        endpoint + "/api/v1/plugins/install",
+        {
+          data: await readFile(file),
+          headers: { "Content-Type": "application/zip" },
+        },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+    for (const [index, uid] of dsUIDs.entries()) {
+      const response = await page.request.post(endpoint + "/api/datasources", {
+        data: {
+          uid,
+          name: uid,
+          type: "metricspanel-sdk-datasource",
+          jsonData: { annotationMode: ["standard", "custom", "legacy"][index] },
+          secureJsonData: { apiKey: "test-secret-233" },
+        },
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+    await save();
+    const native = await page.request.post(endpoint + "/api/annotations", {
+      data: {
+        dashboardUID: source.uid,
+        time: start + 30000,
+        text: "Native note",
+        tags: ["native"],
+      },
+    });
+    expect(native.ok()).toBeTruthy();
+    const nativeID = (await native.json()).id;
+    await page.goto(endpoint + "/d/plugin-annotation-proof/annotations");
+    expect(await page.title()).toContain("MetricsPanel233");
+    expect(new URL(page.url()).pathname).toBe(
+      "/d/plugin-annotation-proof/annotations",
+    );
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "SDK global events", exact: true }),
+    ).toBeVisible();
+    const sdk = page.getByRole("region", {
+        name: "Plugin annotation SDK",
+        exact: true,
+      }),
+      plot = page.getByRole("region", {
+        name: "Plugin annotated curve",
+        exact: true,
+      });
+    await expect(sdk).toContainText("Panel value: 33");
+    await expect(sdk).toContainText("Panel annotations: 4");
+    const annotationStats = async () =>
+      (
+        await page.request.get(
+          endpoint +
+            `/api/datasources/uid/${dsUIDs[0]}/resources/annotation-stats`,
+        )
+      ).json();
+    const beforeRefresh = (await annotationStats()).started;
+    await sdk
+      .getByRole("button", { name: "SDK panel refresh", exact: true })
+      .click();
+    await expect
+      .poll(async () => (await annotationStats()).started)
+      .toBeGreaterThan(beforeRefresh);
+    await expect(sdk).toContainText("Panel annotations: 4");
+    await expect(sdk).toContainText(
+      "Panel annotation titles: Custom annotation",
+    );
+    await expect(plot.locator(".annotation-marker")).toHaveCount(4);
+    await expect(
+      plot.locator(
+        `.annotation-marker[data-annotation-key="native:${nativeID}"]`,
+      ),
+    ).toHaveCount(1);
+    await expect(
+      plot.locator('.annotation-marker[data-annotation-id="1"]'),
+    ).toHaveCount(nativeID === 1 ? 4 : 3);
+    await expect(plot.getByRole("alert")).toContainText("Broken");
+    await expect(plot.getByRole("alert")).toContainText("Failed");
+    await expect(
+      plot
+        .locator(".annotation-marker title")
+        .filter({ hasText: "SDK api / 120000" }),
+    ).toHaveCount(2);
+    const exported = await (
+      await page.request.get(endpoint + "/api/dashboards/uid/" + source.uid)
+    ).json();
+    expect(exported.dashboard.annotations.list[1].target).toEqual(
+      source.annotations.list[1].target,
+    );
+    source.annotations.list = source.annotations.list.filter(
+      (query) => !["Broken", "Failed"].includes(query.name),
+    );
+    await save();
+    await page.reload();
+    await expect(sdk).toContainText("Panel annotations: 4");
+    await expect(plot.getByRole("alert")).toHaveCount(0);
+    await plot
+      .getByRole("button", { name: "Annotations", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Annotations",
+      exact: true,
+    });
+    await expect(dialog.locator(".annotation-list > div")).toHaveCount(4);
+    await expect(
+      dialog.getByRole("button", { name: "Edit annotation", exact: true }),
+    ).toHaveCount(1);
+    await page.screenshot({
+      path: testInfo.outputPath("plugin-annotations-desktop.png"),
+      animations: "disabled",
+    });
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await page.goto(
+      endpoint + "/d/plugin-annotation-proof/annotations?var-service=db",
+    );
+    await expect(
+      plot
+        .locator(".annotation-marker title")
+        .filter({ hasText: "SDK db / 120000" }),
+    ).toHaveCount(2);
+    await expect(
+      plot
+        .locator(".annotation-marker title")
+        .filter({ hasText: "Legacy plugin-annotation-proof db" }),
+    ).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("group", { name: "Plugin annotated curve", exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(plot.locator(".annotation-marker")).toHaveCount(4);
+    await plot.getByRole("button", { name: "注释", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "注释", exact: true }),
+    ).toContainText("注释内容");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("plugin-annotations-mobile.png"),
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const v1UID = "plugin-annotation-v1",
+      v2UID = "plugin-annotation-v2";
+    extraUIDs.push(v1UID, v2UID);
+    const resources = [
+      {
+        apiVersion: "dashboard.grafana.app/v1beta1",
+        kind: "Dashboard",
+        metadata: { name: v1UID },
+        spec: {
+          ...source,
+          uid: v1UID,
+          annotations: { list: [source.annotations.list[1]] },
+        },
+      },
+      {
+        apiVersion: "dashboard.grafana.app/v2beta1",
+        kind: "Dashboard",
+        metadata: { name: v2UID },
+        spec: {
+          title: "V2 plugin annotation proof",
+          timeSettings: {
+            from: String(start),
+            to: String(end),
+            timezone: "utc",
+            autoRefresh: "",
+          },
+          annotations: [
+            {
+              kind: "AnnotationQuery",
+              spec: {
+                name: "V2 SDK",
+                enable: true,
+                legacyOptions: { mappings },
+                query: {
+                  kind: "DataQuery",
+                  group: "metricspanel-sdk-datasource",
+                  datasource: { name: dsUIDs[0] },
+                  spec: { annotationText: "V2 mapped" },
+                },
+              },
+            },
+          ],
+          elements: {
+            proof: {
+              kind: "Panel",
+              spec: {
+                id: 2,
+                title: "V2 plugin curve",
+                data: {
+                  kind: "QueryGroup",
+                  spec: {
+                    queries: [
+                      {
+                        kind: "PanelQuery",
+                        spec: {
+                          refId: "A",
+                          query: {
+                            kind: "DataQuery",
+                            group: "prometheus",
+                            spec: { expr: "vector(33)" },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+                vizConfig: { kind: "VizConfig", group: "timeseries", spec: {} },
+              },
+            },
+          },
+        },
+      },
+    ];
+    for (const [index, resource] of resources.entries()) {
+      const response = await page.request.post(
+        endpoint + "/api/v1/import/grafana",
+        { data: resource },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+      await page.goto(endpoint + "/d/" + extraUIDs[index] + "/annotations");
+      const curve = page.getByRole("region", {
+        name: index === 0 ? "Plugin annotated curve" : "V2 plugin curve",
+        exact: true,
+      });
+      await expect(curve.locator(".annotation-marker")).toHaveCount(1);
+      await expect(curve.locator(".annotation-marker title")).toContainText(
+        index === 0 ? "SDK api / 120000" : "V2 mapped",
+      );
+    }
+    source.annotations.list = [
+      source.annotations.list[0],
+      {
+        name: "Slow",
+        datasource: dsUIDs[0],
+        target: { annotationDelayMS: 1500 },
+        mappings,
+        filter: { ids: [2] },
+      },
+    ];
+    await save();
+    await page.goto(endpoint + "/d/plugin-annotation-proof/annotations");
+    const stats = async () =>
+      (
+        await page.request.get(
+          endpoint +
+            `/api/datasources/uid/${dsUIDs[0]}/resources/annotation-stats`,
+        )
+      ).json();
+    await expect.poll(async () => (await stats()).active).toBeGreaterThan(0);
+    await page.goto(endpoint + "/#overview");
+    await expect.poll(async () => (await stats()).cancelled).toBeGreaterThan(0);
+    await expect.poll(async () => (await stats()).active).toBe(0);
+    expect(errors).toEqual([]);
+    expect(
+      consoleProblems.filter(
+        (message) =>
+          !/fixture query failed|Datasource not found: missing-annotation-source/.test(
+            message,
+          ),
+      ),
+    ).toEqual([]);
+  } finally {
+    await page.goto(endpoint + "/#overview", { timeout: 5000 }).catch(() => {});
+    for (const uid of dsUIDs)
+      await page.request
+        .delete(endpoint + "/api/datasources/uid/" + uid, { timeout: 5000 })
+        .catch(() => {});
+    const annotations = await page.request
+      .get(endpoint + "/api/annotations?dashboardUID=" + source.uid, {
+        timeout: 5000,
+      })
+      .then((response) => response.json())
+      .catch(() => []);
+    for (const annotation of annotations)
+      await page.request
+        .delete(endpoint + "/api/annotations/" + annotation.id, {
+          timeout: 5000,
+        })
+        .catch(() => {});
+    await page.request
+      .delete(endpoint + "/api/dashboards/uid/" + source.uid, { timeout: 5000 })
+      .catch(() => {});
+    for (const uid of extraUIDs)
+      await page.request
+        .delete(endpoint + "/api/dashboards/uid/" + uid, { timeout: 5000 })
+        .catch(() => {});
+    for (const id of ["metricspanel-sdk-datasource", "metricspanel-events-app"])
+      await page.request
+        .delete(endpoint + "/api/v1/plugins/" + id, { timeout: 5000 })
+        .catch(() => {});
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path
+        .basename(resolved)
+        .startsWith("metricspanel233-plugin-annotations-e2e-")
+    )
+      throw new Error("Unsafe plugin annotation fixture cleanup target");
+    await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("Durable annotations query template filters, reach SDK frames and support bilingual chart editing", async ({
   page,
   endpoint,

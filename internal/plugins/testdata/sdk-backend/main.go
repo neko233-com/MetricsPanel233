@@ -57,6 +57,7 @@ _export('plugin',new data.DataSourcePlugin(Fixture))
 
 var liveStarted, liveActive, liveCancelled, staticQueries atomic.Int64
 var chunkedStarted, chunkedActive, chunkedCancelled atomic.Int64
+var annotationStarted, annotationActive, annotationCancelled atomic.Int64
 var chunkedRefs sync.Map
 
 func (fixture) QueryChunkedData(ctx context.Context, r *backend.QueryChunkedDataRequest, writer backend.ChunkedDataWriter) error {
@@ -145,9 +146,12 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 	out := backend.NewQueryDataResponse()
 	for _, q := range r.Queries {
 		var input struct {
-			Value float64 `json:"value"`
-			Fail  bool    `json:"fail"`
-			Live  bool    `json:"live"`
+			Value             float64 `json:"value"`
+			Fail              bool    `json:"fail"`
+			Live              bool    `json:"live"`
+			Annotation        bool    `json:"annotation"`
+			AnnotationText    string  `json:"annotationText"`
+			AnnotationDelayMS int     `json:"annotationDelayMS"`
 		}
 		if err := json.Unmarshal(q.JSON, &input); err != nil {
 			return nil, err
@@ -159,6 +163,27 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 		settings := r.PluginContext.DataSourceInstanceSettings
 		if settings == nil || settings.DecryptedSecureJSONData["apiKey"] != "test-secret-233" {
 			return nil, fmt.Errorf("decrypted datasource secret missing")
+		}
+		if input.Annotation {
+			annotationStarted.Add(1)
+			annotationActive.Add(1)
+			defer annotationActive.Add(-1)
+			if input.AnnotationDelayMS < 0 || input.AnnotationDelayMS > 5000 {
+				return nil, fmt.Errorf("invalid annotation fixture delay")
+			}
+			if input.AnnotationDelayMS > 0 {
+				select {
+				case <-time.After(time.Duration(input.AnnotationDelayMS) * time.Millisecond):
+				case <-ctx.Done():
+					annotationCancelled.Add(1)
+					return nil, ctx.Err()
+				}
+			}
+			at := q.TimeRange.From.Add(q.TimeRange.To.Sub(q.TimeRange.From) / 2)
+			frame := data.NewFrame("sdk-annotation", data.NewField("When", nil, []time.Time{at}), data.NewField("End", nil, []time.Time{at.Add(time.Second)}), data.NewField("Detail", nil, []string{input.AnnotationText}), data.NewField("Tags", nil, []string{"service:api,plugin"}), data.NewField("EventKey", nil, []string{"1"}))
+			frame.RefID = q.RefID
+			out.Responses[q.RefID] = backend.DataResponse{Frames: data.Frames{frame}}
+			continue
 		}
 		frame := data.NewFrame("sdk-fixture", data.NewField("Time", nil, []time.Time{q.TimeRange.To}), data.NewField("Value", data.Labels{"source": settings.UID}, []float64{input.Value}))
 		frame.RefID = q.RefID
@@ -199,6 +224,9 @@ func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest,
 		})
 		body, _ = json.Marshal(counters)
 	}
+	if r.Path == "annotation-stats" {
+		body, _ = json.Marshal(map[string]int64{"started": annotationStarted.Load(), "active": annotationActive.Load(), "cancelled": annotationCancelled.Load()})
+	}
 	return sender.Send(&backend.CallResourceResponse{Status: 200, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
 }
 func main() {
@@ -209,8 +237,8 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app" || os.Args[1] == "--package-legacy") {
-		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app", os.Args[1] == "--package-legacy"); err != nil {
+	if len(os.Args) == 3 && (os.Args[1] == "--package" || os.Args[1] == "--package-app" || os.Args[1] == "--package-legacy" || os.Args[1] == "--package-annotations") {
+		if err := packageVariant(os.Args[2], os.Args[1] == "--package-app", os.Args[1] == "--package-legacy", os.Args[1] == "--package-annotations"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -267,7 +295,7 @@ func (fixture) RunStream(ctx context.Context, r *backend.RunStreamRequest, sende
 	}
 }
 
-func packageVariant(destination string, app, legacy bool) error {
+func packageVariant(destination string, app, legacy, annotations bool) error {
 	prefix := "fixture"
 	if legacy {
 		prefix += "_legacy"
@@ -291,7 +319,17 @@ func packageVariant(destination string, app, legacy bool) error {
 	defer file.Close()
 	archive := zip.NewWriter(file)
 	module := datasourceModule
+	if annotations {
+		contents, err := extensionFixtures.ReadFile("extensions/annotations-datasource.js")
+		if err != nil {
+			return err
+		}
+		module = string(contents)
+	}
 	files := map[string][]byte{"plugin.json": []byte(`{"id":"metricspanel-sdk-datasource","name":"SDK Fixture","type":"datasource","backend":true,"executable":"fixture","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=12"}}`), "module.js": []byte(module), name: binary}
+	if annotations {
+		files["plugin.json"] = []byte(strings.ReplaceAll(string(files["plugin.json"]), `"backend":true`, `"annotations":true,"backend":true`))
+	}
 	if legacy {
 		files["plugin.json"] = []byte(strings.ReplaceAll(string(files["plugin.json"]), `"executable":"fixture"`, `"executable":"fixture_legacy"`))
 	}

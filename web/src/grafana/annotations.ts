@@ -1,5 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { toDataFrame, type DataFrame } from "@grafana/data";
+import { arrayToDataFrame, type DataFrame } from "@grafana/data";
+import {
+  Observable,
+  defer,
+  of,
+  combineLatest,
+  map,
+  switchMap,
+  catchError,
+  startWith,
+  shareReplay,
+  timeout,
+} from "rxjs";
+import {
+  runDatasourceAnnotationQuery,
+  type AnnotationQueryResult,
+} from "./annotation-query";
+import { t } from "../i18n";
 import {
   api,
   dashboardUID,
@@ -12,7 +29,9 @@ import {
 import { resolveTimeRange, type TimeSelection } from "./time-range";
 
 export type Annotation = {
-  id: number;
+  id?: number | string;
+  key?: string;
+  readOnly?: boolean;
   dashboardUID?: string;
   panelId?: number;
   time: number;
@@ -57,6 +76,7 @@ export function annotationStateLabel(
   );
 }
 type Query = {
+  [key: string]: any;
   enable?: boolean;
   builtIn?: number;
   name?: string;
@@ -67,6 +87,7 @@ type Query = {
   matchAny?: boolean;
   limit?: number;
   target?: {
+    [key: string]: any;
     type?: string;
     tags?: string[];
     matchAny?: boolean;
@@ -103,7 +124,69 @@ function queries(dashboard?: Dashboard): Query[] {
     },
   ];
 }
-const cache = new Map<string, Promise<Annotation[]>>();
+type Result = { events: Annotation[]; error?: string };
+const cache = new Map<string, Observable<Result>>();
+function cached(key: string, create: () => Observable<Result>) {
+  let stream = cache.get(key);
+  if (!stream) {
+    stream = defer(create).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+    cache.set(key, stream);
+    if (cache.size > 200) cache.delete(cache.keys().next().value!);
+  }
+  return stream;
+}
+function nativeQuery(params: URLSearchParams) {
+  return new Observable<Result>((subscriber) => {
+    const controller = new AbortController();
+    api<Annotation[]>("/api/annotations?" + params, {
+      signal: controller.signal,
+    })
+      .then((events) => {
+        subscriber.next({
+          events: events.map((event) => ({
+            ...event,
+            key: `native:${event.id}`,
+            readOnly: Boolean(event.alertId),
+          })),
+        });
+        subscriber.complete();
+      })
+      .catch((error) => subscriber.error(error));
+    return () => controller.abort();
+  });
+}
+function externalEvents(result: AnnotationQueryResult, uid: string): Result {
+  const events: Annotation[] = [];
+  for (const raw of result.events) {
+    const time = Number(raw.time),
+      end = raw.timeEnd == null ? time : Number(raw.timeEnd);
+    if (
+      !Number.isSafeInteger(time) ||
+      time <= 0 ||
+      !Number.isSafeInteger(end) ||
+      end < time
+    )
+      continue;
+    const text = String(raw.text ?? raw.title ?? ""),
+      tags = Array.isArray(raw.tags)
+        ? raw.tags.filter((tag) => typeof tag === "string")
+        : [];
+    const key = JSON.stringify([
+      uid,
+      raw.id ?? [time, end, text, tags, raw.newState],
+    ]);
+    events.push({
+      ...raw,
+      time,
+      timeEnd: end,
+      text,
+      tags,
+      key: "plugin:" + key,
+      readOnly: true,
+    } as Annotation);
+  }
+  return { events, error: result.error };
+}
 let revision = 0;
 export function annotationsChanged() {
   revision++;
@@ -119,7 +202,9 @@ export function useAnnotations(
   disabled = false,
 ) {
   const [events, setEvents] = useState<Annotation[]>([]),
-    [error, setError] = useState(""),
+    [problems, setProblems] = useState<{ query: string; message: string }[]>(
+      [],
+    ),
     [change, setChange] = useState(0);
   useEffect(() => {
     const update = () => setChange(revision);
@@ -129,14 +214,14 @@ export function useAnnotations(
   }, []);
   const scope = JSON.stringify([dashboard, values, range]);
   useEffect(() => {
-    let active = true;
     if (!dashboard || disabled) {
       setEvents([]);
-      setError("");
+      setProblems([]);
       return;
     }
     const uid = dashboardUID(dashboard);
-    const load = async () => {
+    let subscription: { unsubscribe(): void } | undefined;
+    try {
       const resolved = resolveTimeRange(range),
         fixed = {
           from: resolved.start,
@@ -154,80 +239,175 @@ export function useAnnotations(
       );
       if (configured.length > 32)
         throw new Error("At most 32 annotation queries");
-      const results = await Promise.all(
-        configured.map(async (q) => {
-          const ref = q.datasource;
-          if (
-            ref &&
-            (typeof ref === "string"
-              ? !["-- Grafana --", "grafana"].includes(ref)
-              : ref.type && ref.type !== "grafana")
-          )
-            throw new Error(
-              "Annotation datasource requires a plugin annotation adapter",
+      const streams = configured.map((q) => {
+        const source = defer(() => {
+          const ref =
+            typeof q.datasource === "string"
+              ? interpolate(q.datasource, values, fixed)
+              : q.datasource
+                ? {
+                    ...q.datasource,
+                    uid: interpolate(q.datasource.uid || "", values, fixed),
+                  }
+                : undefined;
+          let sourceUID = typeof ref === "string" ? ref : ref?.uid || "";
+          if (sourceUID === "prometheus") sourceUID = "metricspanel";
+          if (sourceUID === "default") sourceUID = "";
+          const builtin =
+            Boolean(q.builtIn) ||
+            !ref ||
+            ["-- Grafana --", "grafana"].includes(sourceUID) ||
+            (!sourceUID &&
+              typeof ref === "object" &&
+              ["grafana", "datasource"].includes(ref.type || ""));
+          let stream: Observable<Result>;
+          if (!builtin) {
+            const key = JSON.stringify([
+              uid,
+              dashboard.updated_at,
+              ref,
+              q,
+              fixed,
+              values,
+              tick,
+              change,
+              sessionStorage.getItem("metricspanel-token") || "",
+            ]);
+            stream = cached(key, () =>
+              defer(async () => {
+                const runtime = await import("./plugin-runtime");
+                runtime.setPluginVariables(values, fixed);
+                return {
+                  runtime,
+                  datasource: await runtime.getPluginDatasource(
+                    sourceUID,
+                    Object.fromEntries(
+                      Object.entries(values).map(([name, value]) => [
+                        name,
+                        { text: value, value },
+                      ]),
+                    ),
+                  ),
+                };
+              }).pipe(
+                switchMap(({ runtime, datasource }) => {
+                  runtime.setPluginVariables(values, fixed);
+                  const original = dashboard.grafana as
+                    | Record<string, any>
+                    | undefined;
+                  return runDatasourceAnnotationQuery(datasource, q as any, {
+                    range: resolved.sdk,
+                    timezone: resolved.timezone,
+                    variables: values,
+                    dashboard: {
+                      uid,
+                      title: dashboard.name,
+                      ...(original?.dashboard ||
+                        original?.spec ||
+                        original ||
+                        {}),
+                      timezone: resolved.timezone,
+                    },
+                    width: window.innerWidth,
+                  }).pipe(
+                    map((result) => externalEvents(result, datasource.uid)),
+                  );
+                }),
+              ),
             );
-          const target = q.target || q;
-          const params = new URLSearchParams({
-            from: String(resolved.start),
-            to: String(resolved.end),
-            limit: String(target.limit || 100),
-          });
-          if (q.builtIn || target.type === "dashboard" || !target.type)
-            params.set("dashboardUID", uid);
-          else {
-            const tags = (target.tags || []).flatMap((tag) => {
-              const exact = tag.match(/^\$\{?(\w+)\}?$/);
-              const selected = exact && values[exact[1]];
-              return Array.isArray(selected)
-                ? selected
-                : [interpolate(tag, values, fixed)];
+          } else {
+            const target = q.target || q;
+            const params = new URLSearchParams({
+              from: String(resolved.start),
+              to: String(resolved.end),
+              limit: String(target.limit || 100),
             });
-            if (!tags.length) return [];
-            for (const tag of tags) params.append("tags", tag);
-            params.set("matchAny", String(Boolean(target.matchAny)));
+            if (q.builtIn || target.type === "dashboard" || !target.type)
+              params.set("dashboardUID", uid);
+            else {
+              const tags = (target.tags || []).flatMap((tag) => {
+                const exact = tag.match(/^\$\{?(\w+)\}?$/);
+                const selected = exact && values[exact[1]];
+                return Array.isArray(selected)
+                  ? selected
+                  : [interpolate(tag, values, fixed)];
+              });
+              if (!tags.length) return of({ events: [] } as Result);
+              for (const tag of tags) params.append("tags", tag);
+              params.set("matchAny", String(Boolean(target.matchAny)));
+            }
+            const key = `${params}:${tick}:${change}:${sessionStorage.getItem("metricspanel-token") || ""}`;
+            stream = cached(key, () => nativeQuery(params));
           }
-          const key = `${params}:${tick}:${change}:${sessionStorage.getItem("metricspanel-token") || ""}`;
-          let response = cache.get(key);
-          if (!response) {
-            response = api<Annotation[]>("/api/annotations?" + params);
-            cache.set(key, response);
-            if (cache.size > 200) cache.delete(cache.keys().next().value!);
-            response.catch(() => cache.delete(key));
-          }
-          return (await response).map((event) => ({
-            ...event,
-            color: alertColor(event.newState) || q.iconColor || "#5ac8de",
-            queryName: q.name || "Annotations",
-          }));
-        }),
-      );
-      const unique = new Map<number, Annotation>();
-      for (const event of results.flat())
-        if (!event.panelId || event.panelId === panelID)
-          unique.set(event.id, event);
-      if (unique.size > 1000)
-        throw new Error("At most 1000 visible annotations");
-      if (active) {
+          return stream;
+        });
+        return source.pipe(
+          timeout({ first: 60000, each: 60000 }),
+          map((result) => ({
+            ...result,
+            events: result.events.map((event) => ({
+              ...event,
+              color:
+                alertColor(event.newState) ||
+                q.iconColor ||
+                event.color ||
+                "#5ac8de",
+              queryName: q.name || "Annotations",
+            })),
+          })),
+          catchError((error) =>
+            of({
+              events: [],
+              error:
+                error?.name === "TimeoutError"
+                  ? "Annotation query timed out"
+                  : message(error),
+            } as Result),
+          ),
+          startWith({ events: [] } as Result),
+          map((result) => ({ ...result, query: q.name || "Annotations" })),
+        );
+      });
+      subscription = (
+        streams.length ? combineLatest(streams) : of([])
+      ).subscribe((results) => {
+        const unique = new Map<string, Annotation>();
+        for (const result of results)
+          for (const event of result.events)
+            if (
+              (!event.panelId || Number(event.panelId) === panelID) &&
+              event.time <= resolved.end &&
+              event.timeEnd >= resolved.start
+            )
+              unique.set(event.key || `native:${event.id}`, event);
+        if (unique.size > 1000) {
+          setEvents([]);
+          setProblems([
+            { query: "", message: "At most 1000 visible annotations" },
+          ]);
+          return;
+        }
         setEvents([...unique.values()]);
-        setError("");
-      }
-    };
-    load().catch((e) => {
-      if (active) {
-        setEvents([]);
-        setError(message(e));
-      }
-    });
+        setProblems(
+          results
+            .filter((result) => result.error)
+            .map((result) => ({ query: result.query, message: result.error! })),
+        );
+      });
+    } catch (e) {
+      setEvents([]);
+      setProblems([{ query: "", message: message(e) }]);
+    }
     return () => {
-      active = false;
+      subscription?.unsubscribe();
     };
   }, [scope, tick, change, disabled, panel.config?.id]);
   const frames = useMemo<DataFrame[]>(
     () =>
       events.length
         ? [
-            toDataFrame(
-              events.map((event) => ({
+            arrayToDataFrame(
+              events.map(({ key: _key, readOnly: _readOnly, ...event }) => ({
                 ...event,
                 alertId: event.alertId || 0,
                 alertUID: event.alertUID || "",
@@ -235,10 +415,33 @@ export function useAnnotations(
                 prevState: event.prevState || "",
                 newState: event.newState || "",
               })),
+              [
+                ...new Set([
+                  "id",
+                  "alertId",
+                  "alertUID",
+                  "alertName",
+                  "prevState",
+                  "newState",
+                  ...events.flatMap((event) =>
+                    Object.keys(event).filter(
+                      (key) => key !== "key" && key !== "readOnly",
+                    ),
+                  ),
+                ]),
+              ],
             ),
           ]
         : [],
     [events],
   );
-  return { events, frames, error };
+  return {
+    events,
+    frames,
+    error: problems
+      .map((problem) =>
+        [problem.query, t(problem.message)].filter(Boolean).join(": "),
+      )
+      .join("; "),
+  };
 }

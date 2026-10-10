@@ -227,6 +227,13 @@ const zh: Record<string, string> = {
   OK: "正常",
   Alerting: "触发告警",
   "Alert state": "告警状态",
+  "Annotation query timed out": "注释查询超时",
+  "Annotation results require time and text fields":
+    "注释结果需要时间和文本字段",
+  "At most 10000 annotation frame rows": "注释数据帧最多包含 10000 行",
+  "At most 1000 annotation events per query": "每个查询最多返回 1000 条注释",
+  "At most 32 annotation queries": "最多配置 32 个注释查询",
+  "At most 1000 visible annotations": "最多显示 1000 条注释",
   "Pending alert": "等待触发",
   Updated: "已修改",
   Deleted: "已删除",

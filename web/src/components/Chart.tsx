@@ -427,7 +427,8 @@ export function Chart({
                 end = chart.x(Math.min(event.timeEnd, chart.end));
               return (
                 <g
-                  key={event.id}
+                  key={event.key || event.id}
+                  data-annotation-key={event.key}
                   className="annotation-marker"
                   data-annotation-id={event.id}
                   data-alert-state={event.newState?.split(" (")[0]}

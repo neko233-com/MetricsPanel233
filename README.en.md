@@ -70,7 +70,7 @@ Version conflicts and overwrite are supported. Datasource discovery, health and 
 These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
 
 **Full Grafana ecosystem parity remains unfinished.** Additional core UI extension points, some app core services, legacy Angular plugins,
-plugin datasource annotation adapters, folders/organizations/permissions, library panels and the full backend API remain unfinished.
+folders/organizations/permissions, library panels and the full backend API remain unfinished.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
 Full compatibility remains an objective, not a claim for this release.
@@ -158,16 +158,26 @@ metricspanel annotations delete --id 1
 Example creation JSON: `{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"Deployment complete","tags":["deploy"],"idempotencyKey":"deploy-233"}`.
 Native charts offer a Chinese/English editor, point markers and clipped regions with plain-text tooltips.
 Classic/V1/V2 builtin Grafana dashboard/tag queries execute with variable tags, enabled state and panel filter IDs. Template `hide` preserves visible events.
-SDK panels receive public `PanelData.annotations` frames through official `toDataFrame`; annotation frames are separate from metric series.
+SDK panels receive public `PanelData.annotations` frames through official `arrayToDataFrame`; mixed sources retain all fields and annotation frames stay separate from metric series.
 Queries return at most 1000 events; the frontend permits 32 annotation queries and 1000 merged events, text 8192 bytes and 32 tags.
 Pending, firing, recovery, no-data/error transitions, and rule update/pause/deletion create point annotations with `prevState`/`newState`.
 State, history, annotations and tags commit together. Unchanged states and stale evaluations produce no duplicates; queries by `type=alert`, `alertUID` and stable numeric `alertId` survive restarts.
 Rule annotations `__dashboardUid__` and a positive `__panelId__` link events to template panels. Unlinked events can be queried by public label tags in `key:value` form.
 Native charts use state colors and bilingual state labels; automatic rows are read-only in the editor. Mixed public SDK annotation frames retain the state fields.
 Automatic annotations follow the newest 100000 transitions, while manual annotations are retained independently. Pre-upgrade history is not backfilled, and recording rules create no alert annotations.
-Plugin datasource annotation adapters, recurring time regions and full organization permissions remain pending.
+Plugin sources execute public `AnnotationSupport` defaults, preparation, query and custom event processing, plus the legacy `annotationQuery` entrypoint.
+Standard conversion supports case-insensitive fields, constant text, skipped fields and split tags; the official SDK merge operator combines frames, and old string queries migrate to targets.
+Requests carry the actual panel window, timezone, variables, interval and `__annotation` scope, including variable datasource UIDs.
+Streaming updates remain subscribed. Named query failures preserve other annotations and metric data. Limits are 60 seconds without an update, 10000 frame rows and 1000 events per query, with 200 shared cache entries.
+Leaving the page cancels observable datasource work, including Go SDK HTTP/gRPC calls. Late legacy Promise results are ignored; plugins also receive an optional cancellation signal.
+IDs from different sources remain separate. External rows are read-only and are not automatically ingested into local annotations. `annotations list` reads local records; agents use `datasources query --id UID --file FILE` to inspect raw datasource frames. Frontend SDK callbacks execute in the browser.
+Testify and real browser coverage verify Go SDK frames, datasource settings after restart, classic/V1/V2 templates, mappings, colliding source IDs, isolated errors, variables and cancellation.
+Annotation query configuration editors, recurring time regions and full organization permissions remain pending.
 Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and mobile layout.
 See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
+Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) and [standard annotation converter](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts).
+The host initializes official loggers, synchronizes the SDK datasource settings cache and registers its plugin importer; datasource service reloads synchronize edits across both SDK generations.
+The published package omits the core boot export. Two host-only Vite aliases bind the pinned 13.2.3 core modules; these bindings must be revalidated when upgrading the SDK.
 
 ## Dashboard time ranges
 
