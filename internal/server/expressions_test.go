@@ -17,6 +17,7 @@ const expressionGraph = `{"from":"1000","to":"4000","queries":[
  {"refId":"B","hide":true,"datasource":{"uid":"grafana"},"queryType":"randomWalk","intervalMs":1000,"startValue":3,"spread":0},
  {"refId":"Reduced","hide":true,"datasource":{"type":"__expr__"},"type":"reduce","expression":"B","reducer":"mean"},
  {"refId":"D","datasource":{"uid":"-100"},"type":"threshold","expression":"C","conditions":[{"evaluator":{"type":"gt","params":[233]}}]},
+ {"refId":"Classic","datasource":{"uid":"__expr__"},"type":"classic_conditions","conditions":[{"query":{"params":["C","5m","now"]},"reducer":{"type":"avg"},"evaluator":{"type":"gt","params":[233]}}]},
  {"refId":"Missing","datasource":{"uid":"__expr__"},"type":"math","expression":"$NotFound"}
  ]}`
 
@@ -30,6 +31,13 @@ func TestExpressionsMixedGraphHiddenDependenciesAndErrorIsolation(t *testing.T) 
 	require.Len(t, result.Responses["C"].Frames, 1)
 	assert.Equal(t, float64(236), *result.Responses["C"].Frames[0].Fields[0].At(0).(*float64))
 	assert.Equal(t, float64(1), *result.Responses["D"].Frames[0].Fields[0].At(0).(*float64))
+	require.NoError(t, result.Responses["Classic"].Error)
+	assert.Equal(t, float64(1), *result.Responses["Classic"].Frames[0].Fields[0].At(0).(*float64))
+	assert.Empty(t, result.Responses["Classic"].Frames[0].Fields[0].Labels)
+	metadata, err := json.Marshal(result.Responses["Classic"].Frames[0].Meta.Custom)
+	require.NoError(t, err)
+	assert.Contains(t, string(metadata), `"value":"236"`)
+	assert.Contains(t, string(metadata), `"metric":"C"`)
 	assert.ErrorContains(t, result.Responses["Missing"].Error, "missing query reference")
 	require.Len(t, result.Responses["A"].Frames, 1)
 	assert.Equal(t, float64(233), *result.Responses["A"].Frames[0].Fields[0].At(0).(*float64))

@@ -127,7 +127,7 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
-但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL / 经典条件 / 状态恢复阈值、
+但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL / 状态恢复阈值、
 部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
@@ -296,9 +296,15 @@ Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化
 
 只读 expression 实例使用 UID / 类型 `__expr__`，兼容旧 ID `-100` 和名称 `Expression`，不作为可安装数据源显示。两代 SDK 共享同一个实例；经典、V1、V2 模板和未知字段保留。隐藏输入参与计算但不会渲染，跨数据源请求合并为后端依赖图。
 
-支持 Math、Reduce、Resample、Threshold。Math 包含文档运算符及 13 个函数，引用写作 `$A` 或 `${query name}`；幂按 Grafana 13.2.3 解析器左结合，一元运算优先于幂。标签按相等、子集或无标签广播匹配，序列仅计算共同时间戳；各只有一个且标签不匹配时，结果去掉标签。相同标签键使用索引，测试覆盖 10,000 组维度。
+支持 Math、Reduce、Resample、Threshold、Classic conditions。Math 包含文档运算符及 13 个函数，引用写作 `$A` 或 `${query name}`；幂按 Grafana 13.2.3 解析器左结合，一元运算优先于幂。标签按相等、子集或无标签广播匹配，序列仅计算共同时间戳；各只有一个且标签不匹配时，结果去掉标签。相同标签键使用索引，测试覆盖 10,000 组维度。
 
 Reduce 支持 sum / mean / min / max / count / last / median，以及严格、dropNN、replaceNN 模式。Resample 支持 sum / mean / min / max / last 降采样和 pad / backfilling / fillna 填充；从窗口起点推进，包含可到达的结束点。Threshold 支持比较和包含／不包含边界的范围检查，保留数字、序列和空值类型。
+
+`classic_conditions` 从各条件的 `query.params[0]` 获取输入引用，旧时间范围参数和未知字段保留。12 个经典归约函数包括 avg、diff / diff_abs、percent_diff / percent_diff_abs 和 count_non_null；序列跳过 null / NaN，保留 Inf，instant 数字直接比较。AND / OR 按文档顺序组合，logic-or 在已触发时停止后续条件计算；支持 no_value、反向范围以及包含边界的比较。最终输出单个无标签的 1 / 0 / null，`frame.meta.custom` 包含匹配数值（字符串）、指标和标签。比较窗口同时重命名条件引用，Classic / V1 / V2 模板均有浏览器测试。
+
+真实内存指标示例：`metricspanel datasources query --id __expr__ --file examples/queries/classic-conditions.json`，加上 `--stream` 可获取同样的匹配元数据。
+
+Grafana 告警规则导入仍使用受限编译器，目前只支持单个经典条件；复合条件告警执行仍待接入同一表达式引擎。
 
 ```json
 {"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
@@ -308,8 +314,8 @@ Reduce 支持 sum / mean / min / max / count / last / median，以及严格、dr
 
 输入为宽时间序列、单数值列加字符串维度的数字表、Prometheus instant vector；null / NaN / Inf 使用官方 DataFrame JSON 保留。比较窗口重命名表达式依赖并保持历史时间戳。每请求最多 32 个查询、10,000 个匹配项、1,000,000 个工作点（输入和中间结果合计）、20 秒及 32 MiB 响应。
 
-SQL、classic_conditions、状态恢复阈值和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
-契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
+SQL、状态恢复阈值和完整 expression 查询编辑器仍待补齐；不支持的操作明确报错。Testify、真实 SDK 浏览器用例、中文／英文手机布局、SQLite / ClickHouse 两轮重启测试持续验证。
+契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
 

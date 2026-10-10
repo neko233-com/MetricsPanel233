@@ -29,3 +29,45 @@ export function remapExpressionInput(
     },
   );
 }
+
+// A classic query holds input RefIDs in condition.query.params[0]. Keep its
+// legacy range parameters and unknown fields intact when building comparisons.
+export function remapExpressionQuery<
+  T extends {
+    refId?: string;
+    type?: string;
+    expression?: string;
+    conditions?: Array<{
+      query?: { params?: string[]; [key: string]: unknown };
+      [key: string]: unknown;
+    }>;
+  },
+>(query: T, refs: Map<string, string>): T {
+  return {
+    ...query,
+    ...(typeof query.expression === "string"
+      ? { expression: remapExpressionInput(query.expression, refs) }
+      : {}),
+    ...(query.type === "classic_conditions" && Array.isArray(query.conditions)
+      ? {
+          conditions: query.conditions.map((condition) => {
+            if (!condition || typeof condition !== "object") return condition;
+            const params = condition.query?.params;
+            if (
+              !Array.isArray(params) ||
+              !params.length ||
+              !refs.has(params[0])
+            )
+              return condition;
+            return {
+              ...condition,
+              query: {
+                ...condition.query,
+                params: [refs.get(params[0])!, ...params.slice(1)],
+              },
+            };
+          }),
+        }
+      : {}),
+  };
+}

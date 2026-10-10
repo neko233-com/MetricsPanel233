@@ -93,11 +93,19 @@ func (e environment) verifyExpressionGraph(address string) {
 		map[string]any{"refId": "A", "hide": true, "expr": "mysql_up", "instant": true, "datasource": map[string]string{"uid": "metricspanel"}},
 		map[string]any{"refId": "B", "hide": true, "value": 2, "datasource": map[string]string{"uid": "docker-sdk"}},
 		map[string]any{"refId": "D", "hide": true, "type": "reduce", "expression": "B", "reducer": "mean", "datasource": map[string]string{"uid": "__expr__"}},
+		map[string]any{"refId": "Classic", "type": "classic_conditions", "datasource": map[string]string{"uid": "__expr__"}, "conditions": []any{
+			map[string]any{"query": map[string]any{"params": []string{"C"}}, "reducer": map[string]string{"type": "avg"}, "evaluator": map[string]any{"type": "gt", "params": []float64{1.5}}},
+		}},
 	}}
 	require.NoError(e.t, json.Unmarshal(e.must(address, "POST", "/api/ds/query", payload), &result))
 	require.NoError(e.t, result.Responses["C"].Error)
 	require.NotEmpty(e.t, result.Responses["C"].Frames)
 	assert.Equal(e.t, float64(2), *result.Responses["C"].Frames[0].Fields[0].At(0).(*float64))
+	require.NoError(e.t, result.Responses["Classic"].Error)
+	assert.Equal(e.t, float64(1), *result.Responses["Classic"].Frames[0].Fields[0].At(0).(*float64))
+	metadata, err := json.Marshal(result.Responses["Classic"].Frames[0].Meta.Custom)
+	require.NoError(e.t, err)
+	assert.Contains(e.t, string(metadata), `"value":"2"`)
 }
 func (e environment) composeInput(input string, args ...string) (string, error) {
 	command := exec.Command("docker", append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)

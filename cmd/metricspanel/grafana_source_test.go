@@ -67,7 +67,7 @@ func TestExpressionAgentGraphJSONAndNDJSON(t *testing.T) {
 	defer srv.Live.Close()
 	host := httptest.NewServer(srv.Handler())
 	defer host.Close()
-	payload := []byte(`{"from":"1000","to":"4000","queries":[{"refId":"A","hide":true,"expr":"vector(233)","instant":true,"datasource":{"uid":"metricspanel"}},{"refId":"B","type":"math","expression":"$A * 2"},{"refId":"Bad","type":"math","expression":"$Missing"}]}`)
+	payload := []byte(`{"from":"1000","to":"4000","queries":[{"refId":"A","hide":true,"expr":"vector(233)","instant":true,"datasource":{"uid":"metricspanel"}},{"refId":"B","type":"math","expression":"$A * 2"},{"refId":"C","type":"classic_conditions","conditions":[{"query":{"params":["B"]},"reducer":{"type":"avg"},"evaluator":{"type":"gt","params":[400]}}]},{"refId":"Bad","type":"math","expression":"$Missing"}]}`)
 	file := filepath.Join(t.TempDir(), "expression.json")
 	require.NoError(t, os.WriteFile(file, payload, 0600))
 	raw, err := capture(t, "datasources", "query", "--id", "__expr__", "--file", file, "--server", host.URL)
@@ -76,13 +76,15 @@ func TestExpressionAgentGraphJSONAndNDJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &result))
 	require.NoError(t, result.Responses["B"].Error)
 	assert.Equal(t, float64(466), *result.Responses["B"].Frames[0].Fields[0].At(0).(*float64))
+	require.NoError(t, result.Responses["C"].Error)
+	assert.Equal(t, float64(1), *result.Responses["C"].Frames[0].Fields[0].At(0).(*float64))
 	var output bytes.Buffer
 	client := apiClient{endpoint: host.URL}
 	err = client.queryDatasource(context.Background(), "__expr__", payload, true, &output)
 	require.ErrorContains(t, err, "1 datasource queries failed")
 	records := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
-	require.Len(t, records, 3)
-	good := false
+	require.Len(t, records, 4)
+	good, classic := false, false
 	for _, line := range records {
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
@@ -90,6 +92,12 @@ func TestExpressionAgentGraphJSONAndNDJSON(t *testing.T) {
 			good = true
 			assert.Contains(t, string(line), "466")
 		}
+		if record["refId"] == "C" {
+			classic = true
+			assert.Contains(t, string(line), `"value":"466"`)
+			assert.Contains(t, string(line), `"metric":"B"`)
+		}
 	}
 	require.True(t, good)
+	require.True(t, classic)
 }

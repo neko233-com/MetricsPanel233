@@ -34,3 +34,42 @@ test("comparison dependency names use braces and preserve ordinary variables", (
   assert.equal(exported.remapExpressionInput("A", refs), "A-compare");
   assert.equal(exported.remapExpressionInput("$A", refs), "$" + "{A-compare}");
 });
+
+test("classic comparison references preserve range parameters and unknown fields without mutations", () => {
+  const query = {
+    refId: "C",
+    type: "classic_conditions",
+    unknown: 233,
+    conditions: [
+      {
+        query: { params: ["long name", "5m", "now"], unknown: "keep" },
+        reducer: { type: "avg" },
+        evaluator: { type: "gt", params: [2] },
+      },
+      { query: { params: ["missing"] } },
+    ],
+  };
+  const result = exported.remapExpressionQuery(
+    query,
+    new Map([["long name", "long name-compare"]]),
+  );
+  assert.equal(result.unknown, 233);
+  assert.deepEqual(Array.from(result.conditions[0].query.params), [
+    "long name-compare",
+    "5m",
+    "now",
+  ]);
+  assert.equal(result.conditions[0].query.unknown, "keep");
+  assert.equal(query.conditions[0].query.params[0], "long name");
+  assert.equal(result.conditions[1], query.conditions[1]);
+  const malformed = exported.remapExpressionQuery(
+    {
+      type: "classic_conditions",
+      conditions: [null, 233, { query: { params: "A" } }],
+    },
+    new Map([["A", "A-compare"]]),
+  );
+  assert.equal(malformed.conditions[0], null);
+  assert.equal(malformed.conditions[1], 233);
+  assert.equal(malformed.conditions[2].query.params, "A");
+});

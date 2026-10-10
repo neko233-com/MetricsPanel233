@@ -24,13 +24,24 @@ type queryModel struct {
 		Mode    string   `json:"mode"`
 		Replace *float64 `json:"replaceWithValue"`
 	} `json:"settings"`
-	Conditions []struct {
-		UnloadEvaluator json.RawMessage `json:"unloadEvaluator"`
-		Evaluator       struct {
-			Type   string    `json:"type"`
-			Params []float64 `json:"params"`
-		} `json:"evaluator"`
-	} `json:"conditions"`
+	Conditions []conditionModel `json:"conditions"`
+}
+
+type conditionModel struct {
+	UnloadEvaluator json.RawMessage `json:"unloadEvaluator"`
+	Evaluator       struct {
+		Type   string    `json:"type"`
+		Params []float64 `json:"params"`
+	} `json:"evaluator"`
+	Operator struct {
+		Type string `json:"type"`
+	} `json:"operator"`
+	Query struct {
+		Params []string `json:"params"`
+	} `json:"query"`
+	Reducer struct {
+		Type string `json:"type"`
+	} `json:"reducer"`
 }
 
 var reducers = map[string]bool{"sum": true, "mean": true, "min": true, "max": true, "count": true, "last": true, "median": true}
@@ -45,6 +56,8 @@ type operation struct {
 func compile(m queryModel) (operation, error) {
 	o := operation{model: m}
 	switch m.Type {
+	case "classic_conditions":
+		return compileClassic(m)
 	case "math":
 		root, refs, err := parseMath(m.Expression)
 		o.root = root
@@ -164,6 +177,9 @@ func reduced(points []*float64, reducer string) *float64 {
 	panic("unvalidated expression reducer")
 }
 func (o operation) execute(vars map[string]values, from, to time.Time, b *budget) (values, error) {
+	if o.model.Type == "classic_conditions" {
+		return o.executeClassic(vars, b)
+	}
 	if o.root != nil {
 		return o.root.evaluate(vars, b)
 	}

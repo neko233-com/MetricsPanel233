@@ -118,6 +118,14 @@ func Execute(ctx context.Context, groups map[string][]backend.DataQuery, source 
 			if err != nil {
 				failure = err
 			} else {
+				if op.model.Type != "classic_conditions" {
+					// A math variable can return its input slice directly. Assigning
+					// diagnostic names must not rename that shared dependency.
+					output = slices.Clone(output)
+					for i := range output {
+						output[i].name = ref
+					}
+				}
 				vars[ref] = output
 				response.Responses[ref] = backend.DataResponse{Frames: toFrames(ref, output)}
 			}

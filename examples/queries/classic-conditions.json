@@ -1,0 +1,24 @@
+{
+  "from": "now-1m",
+  "to": "now",
+  "queries": [
+    {
+      "refId": "A",
+      "hide": true,
+      "datasource": { "uid": "metricspanel" },
+      "expr": "sum(metricspanel_memory_bytes)",
+      "instant": true
+    },
+    {
+      "refId": "C",
+      "type": "classic_conditions",
+      "conditions": [
+        {
+          "query": { "params": ["A"] },
+          "reducer": { "type": "avg" },
+          "evaluator": { "type": "gt", "params": [0] }
+        }
+      ]
+    }
+  ]
+}

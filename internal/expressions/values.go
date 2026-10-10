@@ -19,6 +19,8 @@ const MaxPoints = 1000000
 const MaxItems = 10000
 
 type value struct {
+	name   string // original numeric field name, used in classic match diagnostics
+	meta   any
 	labels data.Labels
 	times  []time.Time // nil identifies a number; non-nil identifies a series
 	points []*float64
@@ -117,7 +119,11 @@ func fromFrames(frames data.Frames, sourceType string, b *budget) (values, error
 				if err != nil {
 					return nil, err
 				}
-				result = append(result, value{labels: labels, points: []*float64{n}})
+				name := numbers[0].Name
+				if vector {
+					name = frame.Name
+				}
+				result = append(result, value{name: name, labels: labels, points: []*float64{n}})
 			}
 		} else {
 			if len(numbers) == 0 || len(strings) > 0 {
@@ -153,7 +159,7 @@ func fromFrames(frames data.Frames, sourceType string, b *budget) (values, error
 				if sourceType == "prometheus" {
 					delete(labels, "__name__")
 				}
-				result = append(result, value{labels: labels, times: times, points: points})
+				result = append(result, value{name: field.Name, labels: labels, times: times, points: points})
 			}
 		}
 		if len(result) > MaxItems {
@@ -179,6 +185,7 @@ func toFrames(ref string, input values) data.Frames {
 			f.Meta = &data.FrameMeta{Type: data.FrameTypeTimeSeriesMulti, TypeVersion: data.FrameTypeVersion{0, 1}}
 		}
 		f.RefID = ref
+		f.Meta.Custom = v.meta
 		result = append(result, f)
 	}
 	return result

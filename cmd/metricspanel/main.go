@@ -807,17 +807,18 @@ func schema() any {
 		"pending":              []string{"Grafana scopes annotation queries", "remaining core datasource query editors"},
 	}
 	result["expressions"] = map[string]any{
-		"identity":   map[string]any{"uid": "__expr__", "type": "__expr__", "id": -100, "name": "Expression", "readOnly": true, "discovery": "separate from installable datasources"},
-		"operations": []string{"math", "reduce", "resample", "threshold"},
-		"math":       map[string]any{"references": "$RefID or ${query name}", "operators": []string{"+", "-", "*", "/", "%", "**", "==", "!=", ">", "<", ">=", "<=", "&&", "||", "!"}, "functions": []string{"abs", "log", "round", "ceil", "floor", "is_nan", "is_inf", "is_null", "is_number", "nan", "inf", "infn", "null"}, "precedence": "Grafana 13.2.3 left-associative exponent; unary binds more tightly", "joins": "equal/subset/unlabelled labels; unmatched single pair strips labels; indexed equal-key joins; series timestamp intersection"},
-		"reduce":     map[string]any{"functions": []string{"sum", "mean", "min", "max", "count", "last", "median"}, "modes": []string{"strict (settings omitted)", "dropNN", "replaceNN plus finite replaceWithValue"}},
-		"resample":   map[string]any{"downsamplers": []string{"sum", "mean", "min", "max", "last"}, "upsamplers": []string{"pad", "backfilling", "fillna"}, "window": "positive SDK duration; range start through reachable inclusive endpoint"},
-		"inputs":     "wide time series, one numeric column with string dimensions, Prometheus instant vectors",
-		"graph":      "order-independent backend DAG; hidden inputs execute; named errors preserve independent branches; comparison references remapped",
-		"agent":      "datasources query --id __expr__ --file FILE|- [--stream]; JSON and NDJSON preserve results and exit nonzero for partial errors",
-		"storage":    "no input mutation or ingestion; official SDK frames retain null/NaN/Inf",
-		"limits":     map[string]int{"queries": 32, "joined_items": 10000, "working_points": 1000000, "math_tokens": 2048, "parse_steps": 1024, "syntax_depth": 64, "work_steps": 2000000, "seconds": 20, "response_MiB": 32},
-		"pending":    []string{"SQL expressions", "classic_conditions", "stateful hysteresis thresholds", "full expression query editor", "remaining Grafana core services"},
+		"identity":           map[string]any{"uid": "__expr__", "type": "__expr__", "id": -100, "name": "Expression", "readOnly": true, "discovery": "separate from installable datasources"},
+		"operations":         []string{"math", "reduce", "resample", "threshold", "classic_conditions"},
+		"classic_conditions": map[string]any{"functions": []string{"avg", "sum", "min", "max", "count", "last", "median", "diff", "diff_abs", "percent_diff", "percent_diff_abs", "count_non_null"}, "operators": []string{"and", "or", "logic-or"}, "input": "condition.query.params[0] is the RefID; legacy range params retained", "output": "one unlabelled number: 1, 0 or null; frame.meta.custom match diagnostics have string value, metric and labels", "semantics": "ordered fold without precedence; logic-or short-circuits when firing; series reducers skip null/NaN and retain infinities; numbers bypass reducers; no_value checks null or empty input"},
+		"math":               map[string]any{"references": "$RefID or ${query name}", "operators": []string{"+", "-", "*", "/", "%", "**", "==", "!=", ">", "<", ">=", "<=", "&&", "||", "!"}, "functions": []string{"abs", "log", "round", "ceil", "floor", "is_nan", "is_inf", "is_null", "is_number", "nan", "inf", "infn", "null"}, "precedence": "Grafana 13.2.3 left-associative exponent; unary binds more tightly", "joins": "equal/subset/unlabelled labels; unmatched single pair strips labels; indexed equal-key joins; series timestamp intersection"},
+		"reduce":             map[string]any{"functions": []string{"sum", "mean", "min", "max", "count", "last", "median"}, "modes": []string{"strict (settings omitted)", "dropNN", "replaceNN plus finite replaceWithValue"}},
+		"resample":           map[string]any{"downsamplers": []string{"sum", "mean", "min", "max", "last"}, "upsamplers": []string{"pad", "backfilling", "fillna"}, "window": "positive SDK duration; range start through reachable inclusive endpoint"},
+		"inputs":             "wide time series, one numeric column with string dimensions, Prometheus instant vectors",
+		"graph":              "order-independent backend DAG; hidden inputs execute; named errors preserve independent branches; comparison references remapped",
+		"agent":              "datasources query --id __expr__ --file FILE|- [--stream]; JSON and NDJSON preserve results and exit nonzero for partial errors",
+		"storage":            "no input mutation or ingestion; official SDK frames retain null/NaN/Inf",
+		"limits":             map[string]int{"queries": 32, "joined_items": 10000, "working_points": 1000000, "math_tokens": 2048, "parse_steps": 1024, "syntax_depth": 64, "work_steps": 2000000, "seconds": 20, "response_MiB": 32},
+		"pending":            []string{"SQL expressions", "stateful hysteresis thresholds", "full expression query editor", "compound classic alert provisioning (restricted compiler)", "remaining Grafana core services"},
 	}
 	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")

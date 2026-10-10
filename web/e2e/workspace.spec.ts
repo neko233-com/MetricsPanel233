@@ -262,6 +262,34 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
           targets: [],
           gridPos: { x: 12, y: 8, w: 12, h: 12 },
         },
+        {
+          id: 5,
+          title: "Classic condition",
+          type: "stat",
+          timeCompare: "1s",
+          targets: [
+            ...graph.map((q) => ({ ...q, hide: true })),
+            {
+              refId: "K",
+              datasource: { uid: "__expr__" },
+              type: "classic_conditions",
+              conditions: [
+                {
+                  query: { params: ["C", "5m", "now"], unknown: 233 },
+                  reducer: { type: "avg" },
+                  evaluator: { type: "gt", params: [400] },
+                },
+                {
+                  query: { params: ["A"] },
+                  reducer: { type: "last" },
+                  evaluator: { type: "gt", params: [200] },
+                  operator: { type: "and" },
+                },
+              ],
+            },
+          ],
+          gridPos: { x: 0, y: 16, w: 12, h: 8 },
+        },
       ],
     };
     expect(
@@ -282,6 +310,27 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
     });
     await expect(total).toContainText("466");
     await expect(total).not.toContainText("233");
+    const classicCondition = page.getByRole("region", {
+      name: "Classic condition",
+      exact: true,
+    });
+    await classicCondition.scrollIntoViewIfNeeded();
+    await expect(classicCondition.getByText("1", { exact: true })).toHaveCount(
+      2,
+    );
+    await expect
+      .poll(() =>
+        requests.some((request) =>
+          request.queries?.some(
+            (q: any) =>
+              q.refId === "K-compare" &&
+              q.conditions[0].query.params[0] === "C-compare" &&
+              q.conditions[0].query.params[1] === "5m" &&
+              q.conditions[1].query.params[0] === "A-compare",
+          ),
+        ),
+      )
+      .toBe(true);
     await expect(
       page.getByRole("region", { name: "Expression threshold", exact: true }),
     ).toContainText("1");
@@ -348,6 +397,7 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
     await page.screenshot({
       path: testInfo.outputPath("expressions-desktop.png"),
       animations: "disabled",
+      fullPage: true,
     });
     const v1 = {
       apiVersion: "dashboard.grafana.app/v1beta1",
@@ -356,7 +406,10 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
         ...classic,
         uid: undefined,
         title: "Expression V1",
-        panels: [{ ...classic.panels[0], timeCompare: "" }],
+        panels: [
+          { ...classic.panels[0], timeCompare: "" },
+          { ...classic.panels[4], timeCompare: "" },
+        ],
       },
     };
     const v2 = {
@@ -407,6 +460,26 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
                             type: "math",
                             expression: "$A*2",
                             unknown: 233,
+                          },
+                        },
+                      },
+                    },
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "K",
+                        query: {
+                          kind: "DataQuery",
+                          group: "__expr__",
+                          spec: {
+                            type: "classic_conditions",
+                            conditions: [
+                              {
+                                query: { params: ["C"], unknown: 233 },
+                                reducer: { type: "avg" },
+                                evaluator: { type: "gt", params: [400] },
+                              },
+                            ],
                           },
                         },
                       },
@@ -463,6 +536,20 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
       await expect(
         page.getByRole("region", { name: label, exact: true }),
       ).toContainText("466");
+      if (uid === "expression-v1") {
+        const condition = page.getByRole("region", {
+          name: "Classic condition",
+          exact: true,
+        });
+        await condition.scrollIntoViewIfNeeded();
+        await expect(condition.getByText("1", { exact: true })).toHaveCount(1);
+      } else {
+        await expect(
+          page
+            .getByRole("region", { name: label, exact: true })
+            .getByText("1", { exact: true }),
+        ).toHaveCount(1);
+      }
     }
     await page
       .getByRole("button", { name: "Switch language", exact: true })
