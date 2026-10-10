@@ -24,6 +24,9 @@ func packageExtensions(destination, mode string) error {
 	if mode == "--package-extension-events" {
 		variant = "events"
 	}
+	if mode == "--package-extension-core" {
+		variant = "core"
+	}
 	file, err := os.Create(destination)
 	if err != nil {
 		return err

@@ -38,6 +38,7 @@ type DataSource struct {
 	BasicAuth        bool            `json:"basicAuth"`
 	BasicAuthUser    string          `json:"basicAuthUser,omitempty"`
 	IsDefault        bool            `json:"isDefault"`
+	ReadOnly         bool            `json:"readOnly,omitempty"`
 	JSONData         json.RawMessage `json:"jsonData"`
 	SecureJSONFields map[string]bool `json:"secureJsonFields"`
 	Version          int             `json:"version"`
@@ -60,7 +61,7 @@ func (d *DataSource) Defaults() {
 	}
 }
 func (d DataSourceInput) Validate() error {
-	if !alertUID.MatchString(d.UID) || d.UID == "metricspanel" || !PluginID.MatchString(d.Type) || len(d.Name) == 0 || len(d.Name) > 256 || d.OrgID != 1 || d.Access != "proxy" {
+	if !alertUID.MatchString(d.UID) || d.UID == "metricspanel" || d.UID == "grafana" || d.UID == "-1" || d.Name == "-- Grafana --" || d.Type == "grafana" || d.ReadOnly || !PluginID.MatchString(d.Type) || len(d.Name) == 0 || len(d.Name) > 256 || d.OrgID != 1 || d.Access != "proxy" {
 		return errors.New("datasource needs a unique UID, name, plugin type and proxy access in organization 1")
 	}
 	if len(d.URL) > 4096 || len(d.User) > 512 || len(d.Database) > 512 || len(d.BasicAuthUser) > 512 {

@@ -27,6 +27,7 @@ type Source = {
   jsonData: Record<string, unknown>;
   secureJsonFields: Record<string, boolean>;
   isDefault: boolean;
+  readOnly?: boolean;
   basicAuth: boolean;
   basicAuthUser?: string;
 };
@@ -253,30 +254,32 @@ export function Plugins({ notify }: { notify: Notify }) {
                       >
                         <Check size={17} />
                       </button>
-                      {ds.uid !== "metricspanel" && (
-                        <>
-                          <button
-                            className="icon-button"
-                            aria-label={`${t("Edit")} ${ds.name}`}
-                            onClick={() => setEditing(ds)}
-                          >
-                            <Pencil size={17} />
-                          </button>
-                          <button
-                            className="icon-button"
-                            aria-label={`${t("Delete")} ${ds.name}`}
-                            onClick={() =>
-                              setRemoving({
-                                kind: "source",
-                                id: ds.uid,
-                                name: ds.name,
-                              })
-                            }
-                          >
-                            <Trash2 size={17} />
-                          </button>
-                        </>
-                      )}
+                      {!ds.readOnly &&
+                        ds.uid !== "metricspanel" &&
+                        ds.uid !== "grafana" && (
+                          <>
+                            <button
+                              className="icon-button"
+                              aria-label={`${t("Edit")} ${ds.name}`}
+                              onClick={() => setEditing(ds)}
+                            >
+                              <Pencil size={17} />
+                            </button>
+                            <button
+                              className="icon-button"
+                              aria-label={`${t("Delete")} ${ds.name}`}
+                              onClick={() =>
+                                setRemoving({
+                                  kind: "source",
+                                  id: ds.uid,
+                                  name: ds.name,
+                                })
+                              }
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </>
+                        )}
                     </div>
                   </td>
                 </tr>

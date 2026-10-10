@@ -215,7 +215,13 @@ export default function AnnotationQueriesEditor({
     void sdkRuntime()
       .then(async (runtime) => {
         await runtime.getDataSourceSrv().reload();
-        if (active) setSources(runtime.getDataSourceSrv().getList());
+        if (active)
+          setSources(
+            runtime
+              .getDataSourceSrv()
+              .getList({ all: true })
+              .filter((source) => source.type !== "grafana"),
+          );
       })
       .catch((error) => {
         if (active) setLoadError(message(error));

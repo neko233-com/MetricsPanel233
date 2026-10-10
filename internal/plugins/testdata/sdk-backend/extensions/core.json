@@ -1,0 +1,1 @@
+{"id":"metricspanel-core-app","name":"Core SDK Probe","type":"panel","info":{"version":"1.0.0"},"dependencies":{"grafanaDependency":">=13"}}

@@ -194,6 +194,15 @@ export function TemplateView({
       [key, dashboard.id],
     );
   useEffect(() => {
+    let active = true;
+    void import("../grafana/plugin-runtime").then((runtime) => {
+      if (active) runtime.setPluginVariables(effective, range, variables);
+    });
+    return () => {
+      active = false;
+    };
+  }, [key, range, dashboard.id, JSON.stringify(variables)]);
+  useEffect(() => {
     const params = new URLSearchParams(location.search);
     for (const [name, value] of Object.entries(values)) {
       params.delete(`var-${name}`);
@@ -307,7 +316,6 @@ export function TemplateView({
             .filter(
               (v) =>
                 v.type !== "constant" &&
-                v.type !== "datasource" &&
                 v.config?.hide !== 2 &&
                 v.config?.hide !== "hideVariable",
             )

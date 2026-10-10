@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
@@ -221,11 +222,14 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 }
 
 func builtinDataSource() model.DataSource {
-	return model.DataSource{ID: 1, UID: "metricspanel", OrgID: 1, Name: "MetricsPanel233", Type: "prometheus", Access: "proxy", URL: "/prometheus", IsDefault: true, JSONData: json.RawMessage(`{"httpMethod":"POST","timeInterval":"5s"}`), SecureJSONFields: map[string]bool{}, Version: 1}
+	return model.DataSource{ID: 1, UID: "metricspanel", OrgID: 1, Name: "MetricsPanel233", Type: "prometheus", Access: "proxy", URL: "/prometheus", IsDefault: true, ReadOnly: true, JSONData: json.RawMessage(`{"httpMethod":"POST","timeInterval":"5s"}`), SecureJSONFields: map[string]bool{}, Version: 1}
 }
 func (s *Server) dataSource(ctx context.Context, uid string) (model.DataSource, error) {
 	if uid == "metricspanel" {
 		return builtinDataSource(), nil
+	}
+	if uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
+		return builtinGrafanaDataSource(), nil
 	}
 	return s.Store.DataSource(ctx, uid)
 }
@@ -242,7 +246,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 				builtin.IsDefault = false
 			}
 		}
-		writeJSON(w, 200, append([]model.DataSource{builtin}, items...))
+		writeJSON(w, 200, append([]model.DataSource{builtin, builtinGrafanaDataSource()}, items...))
 	})
 	api.HandleFunc("GET /api/datasources/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		ds, err := s.dataSource(r.Context(), r.PathValue("uid"))
@@ -253,6 +257,10 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 		writeJSON(w, 200, ds)
 	})
 	save := func(w http.ResponseWriter, r *http.Request) {
+		if uid := r.PathValue("uid"); uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
+			fail(w, 400, errors.New("built-in datasource is read-only"))
+			return
+		}
 		var input model.DataSourceInput
 		if err := decode(w, r, &input); err != nil {
 			fail(w, 400, err)
@@ -292,7 +300,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 	api.HandleFunc("POST /api/datasources", save)
 	api.HandleFunc("PUT /api/datasources/uid/{uid}", save)
 	api.HandleFunc("DELETE /api/datasources/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("uid") == "metricspanel" {
+		if uid := r.PathValue("uid"); uid == "metricspanel" || uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
 			fail(w, 400, errors.New("built-in datasource cannot be deleted"))
 			return
 		}
@@ -309,7 +317,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			resourceError(w, err)
 			return
 		}
-		if ds.UID == "metricspanel" {
+		if ds.UID == "metricspanel" || ds.Type == "grafana" {
 			if err := s.Store.Health(r.Context()); err != nil {
 				fail(w, 503, err)
 				return
@@ -473,6 +481,26 @@ func (s *Server) queryDataSources(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
+	// listFiles is a core SDK query without a time range. Only public file-list
+	// requests may omit both endpoints; metric and plugin queries remain strict.
+	if input.From == "" && input.To == "" && len(input.Queries) > 0 {
+		onlyLists := true
+		for _, raw := range input.Queries {
+			var query struct {
+				QueryType  string `json:"queryType"`
+				Datasource struct {
+					UID string `json:"uid"`
+				} `json:"datasource"`
+			}
+			if json.Unmarshal(raw, &query) != nil || query.QueryType != "list" || (query.Datasource.UID != "grafana" && query.Datasource.UID != "-- Grafana --" && query.Datasource.UID != "-1") {
+				onlyLists = false
+				break
+			}
+		}
+		if onlyLists {
+			input.From, input.To = "0", "0"
+		}
+	}
 	from, err := strconv.ParseInt(input.From, 10, 64)
 	if err != nil {
 		fail(w, 400, errors.New("from must be Unix milliseconds"))
@@ -551,9 +579,15 @@ func (s *Server) writeQueryGroups(w http.ResponseWriter, r *http.Request, groups
 			resourceError(w, err)
 			return
 		}
-		if ds.Type == "prometheus" {
+		if ds.Type == "prometheus" || ds.Type == "grafana" {
 			for _, q := range queries {
-				frames, err := s.queryPrometheusSource(ctx, ds, q)
+				var frames data.Frames
+				var err error
+				if ds.Type == "grafana" {
+					frames, err = s.queryGrafanaSource(ctx, q)
+				} else {
+					frames, err = s.queryPrometheusSource(ctx, ds, q)
+				}
 				results.Responses[q.RefID] = backend.DataResponse{Frames: frames, Error: err}
 				if err != nil {
 					value := results.Responses[q.RefID]

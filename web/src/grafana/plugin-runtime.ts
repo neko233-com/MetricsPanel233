@@ -11,6 +11,8 @@ import moment from "moment";
 import i18next from "i18next";
 import { registerOptionEditors } from "./option-editors";
 import { createLiveService } from "./live-runtime";
+import { grafanaMeta } from "./grafana-meta";
+import { filterSourceSettings, resolveSourceSettings } from "./source-settings";
 import { installAppEvents } from "./app-events";
 import {
   installExtensionServices,
@@ -18,7 +20,12 @@ import {
   observableExtensionLinks,
   observableExtensionComponents,
 } from "./extensions";
-import { api, interpolate, type InterpolationValues } from "../api";
+import {
+  api,
+  interpolate,
+  type InterpolationValues,
+  type Variable,
+} from "../api";
 import { getLocale } from "../i18n";
 import { rawSelection, type TimeSelection } from "./time-range";
 import type {
@@ -65,6 +72,11 @@ let sourceSettingsCore:
 let variableValues: InterpolationValues = {},
   variableRange: TimeSelection = "30m";
 let sources: DataSourceSettings[] = [];
+let variableDefinitions: Variable[] = [];
+const runtimeSources = new Map<
+  string,
+  import("@grafana/runtime").RuntimeDataSource
+>();
 
 async function fetchResponse(
   options: BackendSrvRequest,
@@ -304,14 +316,21 @@ async function init(): Promise<Runtime> {
       },
       navTree: [],
     };
-    const [runtime, ui, logging, sourceSettings, sourceLoader] =
-      await Promise.all([
-        import("@grafana/runtime"),
-        import("@grafana/ui"),
-        import("@grafana/runtime/unstable"),
-        import("metricspanel/sdk-source-settings"),
-        import("metricspanel/sdk-source-loader"),
-      ]);
+    const [
+      runtime,
+      ui,
+      logging,
+      sourceSettings,
+      sourceLoader,
+      { LocalGrafana },
+    ] = await Promise.all([
+      import("@grafana/runtime"),
+      import("@grafana/ui"),
+      import("@grafana/runtime/unstable"),
+      import("metricspanel/sdk-source-settings"),
+      import("metricspanel/sdk-source-loader"),
+      import("./grafana-source"),
+    ]);
     if (!loggersInitialized) {
       logging.initializeLoggersRegistry();
       loggersInitialized = true;
@@ -321,6 +340,10 @@ async function init(): Promise<Runtime> {
       if (meta.id === "prometheus")
         return new Data.DataSourcePlugin(
           LocalPrometheus,
+        ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
+      if (meta.id === "grafana")
+        return new Data.DataSourcePlugin(
+          LocalGrafana,
         ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
       return (await loadPlugin(meta.id))
         .plugin as Data.DataSourcePlugin<Data.DataSourceApi>;
@@ -334,8 +357,12 @@ async function init(): Promise<Runtime> {
     runtime.setTemplateSrv({
       getVariables: () =>
         Object.entries(variableValues).map(([name, value]) => ({
+          ...variableDefinitions.find((variable) => variable.name === name)
+            ?.config,
           name,
-          type: "custom",
+          type:
+            variableDefinitions.find((variable) => variable.name === name)
+              ?.type || "custom",
           current: { value },
         })) as Data.TypedVariableModel[],
       replace: (text = "", scoped, format) => {
@@ -373,6 +400,19 @@ async function init(): Promise<Runtime> {
     await import("systemjs/dist/extras/amd.js");
     await import("systemjs/dist/extras/module-types.js");
     const loader = bootWindow.System;
+    const registerRuntimeSource = (
+      entry: import("@grafana/runtime").RuntimeDataSourceRegistration,
+    ) => {
+      if (
+        sources.some((source) => source.uid === entry.dataSource.uid) ||
+        runtimeSources.has(entry.dataSource.uid)
+      )
+        throw new Error(
+          `A data source with uid ${entry.dataSource.uid} has already been registered`,
+        );
+      logging.registerRuntimeDataSourceInstance(entry);
+      runtimeSources.set(entry.dataSource.uid, entry.dataSource);
+    };
     const dependencies: Record<string, Record<string, unknown>> = {
       react: React,
       "react-dom": ReactDOM,
@@ -386,6 +426,10 @@ async function init(): Promise<Runtime> {
         getObservablePluginComponents: observableExtensionComponents,
       },
       "react-router": ReactRouter,
+      "@grafana/runtime/unstable": {
+        ...logging,
+        registerRuntimeDataSourceInstance: registerRuntimeSource,
+      },
       "react-router-dom": ReactRouter,
       "react-router-dom-v5-compat": ReactRouter,
       "@emotion/css": EmotionCSS,
@@ -408,21 +452,49 @@ async function init(): Promise<Runtime> {
     });
     const service: DataSourceSrv = {
       get: async (ref, scoped) => {
+        const known = resolveSourceSettings(
+          [
+            ...sources,
+            ...Array.from(
+              runtimeSources.values(),
+              (source) => source.instanceSettings,
+            ),
+          ],
+          ref,
+          (value) => runtime.getTemplateSrv().replace(value, scoped),
+        );
+        if (known && runtimeSources.has(known.uid))
+          return runtimeSources.get(known.uid)!;
+        // Immutable builtin settings do not need a network reload per query.
+        // Both public SDK generations return the same core instance.
+        if (known?.type === "grafana")
+          return logging.getDataSourceInstance(known.uid);
         await reloadSources();
-        const id =
-          typeof ref === "string"
-            ? runtime.getTemplateSrv().replace(ref, scoped)
-            : ref?.uid;
-        const settings =
-          sources.find((s) => s.uid === id || s.name === id) ||
-          (id ? undefined : sources.find((s) => s.isDefault));
-        if (!settings) throw new Error(`Datasource not found: ${id}`);
-        const version = settings.version || 0;
+        const settings = resolveSourceSettings(
+          [
+            ...sources,
+            ...Array.from(
+              runtimeSources.values(),
+              (source) => source.instanceSettings,
+            ),
+          ],
+          ref,
+          (value) => runtime.getTemplateSrv().replace(value, scoped),
+        );
+        if (!settings)
+          throw new Error(
+            `Datasource not found: ${typeof ref === "string" ? ref : ref?.uid}`,
+          );
+        const registered = runtimeSources.get(settings.uid);
+        if (registered) return registered;
+        const version = (settings as DataSourceSettings).version || 0;
         const cached = datasourceCache.get(settings.uid);
-        if (cached?.version === version) return cached.instance;
+        if (cached && cached.version === version) return cached.instance;
         let instance: Data.DataSourceApi;
         if (settings.type === "prometheus") {
           instance = new LocalPrometheus(settings);
+        } else if (settings.type === "grafana") {
+          instance = new LocalGrafana(settings);
         } else {
           const module = await loadPlugin(settings.type);
           const plugin =
@@ -435,33 +507,53 @@ async function init(): Promise<Runtime> {
         datasourceCache.set(settings.uid, { version, instance });
         return instance;
       },
-      getList: (filters) =>
-        sources.filter(
-          (s) =>
-            (!filters?.type ||
-              (Array.isArray(filters.type)
-                ? filters.type.includes(s.type)
-                : filters.type === s.type)) &&
-            (!filters?.pluginId || filters.pluginId === s.type) &&
-            (!filters?.filter || filters.filter(s)),
-        ),
+      getList: (filters) => {
+        const listed = filterSourceSettings(
+          [
+            ...sources,
+            ...Array.from(
+              runtimeSources.values(),
+              (source) => source.instanceSettings,
+            ),
+          ],
+          filters,
+        );
+        if (filters?.variables)
+          for (const variable of variableDefinitions.filter(
+            (v) => v.type === "datasource",
+          )) {
+            const value = variableValues[variable.name];
+            const selected = Array.isArray(value)
+              ? value[0]
+              : typeof value === "string"
+                ? value
+                : "";
+            const settings = resolveSourceSettings(sources, selected);
+            if (settings)
+              listed.push({
+                ...settings,
+                isDefault: false,
+                name: `\${${variable.name}}`,
+                uid: `\${${variable.name}}`,
+              });
+          }
+        return listed;
+      },
       getInstanceSettings: (ref, scoped) => {
-        const id =
-          typeof ref === "string"
-            ? runtime.getTemplateSrv().replace(ref, scoped)
-            : ref?.uid;
-        return (
-          sources.find((s) => s.uid === id || s.name === id) ||
-          (id ? undefined : sources.find((s) => s.isDefault))
+        return resolveSourceSettings(
+          [
+            ...sources,
+            ...Array.from(
+              runtimeSources.values(),
+              (source) => source.instanceSettings,
+            ),
+          ],
+          ref,
+          (value) => runtime.getTemplateSrv().replace(value, scoped),
         );
       },
       reload: reloadSources,
-      registerRuntimeDataSource: (entry) => {
-        datasourceCache.set(entry.dataSource.uid, {
-          version: 0,
-          instance: entry.dataSource,
-        });
-      },
+      registerRuntimeDataSource: registerRuntimeSource,
     };
     runtime.setDataSourceSrv(service);
     await reloadSources();
@@ -481,16 +573,22 @@ async function reloadSources() {
   sources = items.map((ds) => ({
     ...ds,
     meta:
-      ds.type === "prometheus"
-        ? ({
-            id: "prometheus",
-            name: "Prometheus",
-            type: Data.PluginType.datasource,
-            info: { version: "13.2.3" },
-          } as Data.PluginMeta)
-        : plugins.find((p) => p.id === ds.type)
-          ? pluginMeta(plugins.find((p) => p.id === ds.type)!)
-          : ds.meta,
+      ds.type === "grafana"
+        ? grafanaMeta
+        : ds.type === "prometheus"
+          ? {
+              ...grafanaMeta,
+              id: "prometheus",
+              name: "Prometheus",
+              type: Data.PluginType.datasource,
+              metrics: true,
+              annotations: true,
+              alerting: true,
+              builtIn: false,
+            }
+          : plugins.find((p) => p.id === ds.type)
+            ? pluginMeta(plugins.find((p) => p.id === ds.type)!)
+            : ds.meta,
     jsonData: ds.jsonData || {},
   }));
   sourceSettingsCore?.syncDataSourceInstanceSettings({
@@ -506,9 +604,11 @@ async function reloadSources() {
 export function setPluginVariables(
   values: InterpolationValues,
   range: TimeSelection,
+  definitions?: Variable[],
 ) {
   variableValues = values;
   variableRange = range;
+  if (definitions) variableDefinitions = definitions;
 }
 export async function loadPlugin(id: string): Promise<Record<string, unknown>> {
   const runtime = await init();

@@ -56,6 +56,36 @@ func (e environment) docker(args ...string) (string, error) {
 func (e environment) compose(args ...string) (string, error) {
 	return e.docker(append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
 }
+
+func (e environment) verifyBuiltinGrafana(address string) {
+	var sources []model.DataSource
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/datasources", nil), &sources))
+	core, defaults := 0, 0
+	for _, source := range sources {
+		if source.UID == "grafana" {
+			core++
+			assert.Equal(e.t, int64(-1), source.ID)
+			assert.True(e.t, source.ReadOnly)
+		}
+		if source.IsDefault {
+			defaults++
+			assert.Equal(e.t, "metricspanel", source.UID)
+		}
+	}
+	require.Equal(e.t, 1, core, "builtin discovery duplicated after restart")
+	require.Equal(e.t, 1, defaults)
+	var result backend.QueryDataResponse
+	raw := e.must(address, "POST", "/api/ds/query", map[string]any{"queries": []any{map[string]any{"refId": "L", "queryType": "list", "path": "", "datasource": map[string]string{"uid": "grafana"}}}})
+	require.NoError(e.t, json.Unmarshal(raw, &result))
+	require.NoError(e.t, result.Responses["L"].Error)
+	assert.Contains(e.t, string(raw), "index.html")
+	raw = e.must(address, "POST", "/apis/grafana.datasource.grafana.app/v0alpha1/namespaces/default/connections/grafana/query", map[string]any{"from": "1000", "to": "4000", "queries": []any{map[string]any{"refId": "R", "queryType": "randomWalk", "intervalMs": 1000, "startValue": 233, "spread": 0}}})
+	require.NoError(e.t, json.Unmarshal(raw, &result))
+	require.NoError(e.t, result.Responses["R"].Error)
+	require.Len(e.t, result.Responses["R"].Frames, 1)
+	assert.Equal(e.t, 3, result.Responses["R"].Frames[0].Rows())
+	assert.Equal(e.t, float64(233), result.Responses["R"].Frames[0].Fields[1].At(2))
+}
 func (e environment) composeInput(input string, args ...string) (string, error) {
 	command := exec.Command("docker", append([]string{"compose", "-p", project, "-f", "compose.test.yml"}, args...)...)
 	command.Dir = e.root
@@ -492,6 +522,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.t = t
 			address := e.address(backend.service)
 			e.must(address, "GET", "/api/v1/health", nil)
+			e.verifyBuiltinGrafana(address)
 			first := e.installPlugin(address, clockArchive)
 			assert.JSONEq(t, string(first), string(e.installPlugin(address, clockArchive)))
 			first = e.installPlugin(address, sdkArchive)
@@ -572,6 +603,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, err)
 			address = e.address(backend.service)
 			require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 40*time.Second, 500*time.Millisecond, "restart lost or duplicated an acknowledged sample")
+			e.verifyBuiltinGrafana(address)
 			e.verifySDKPlugin(address, backend.service)
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))

@@ -192,6 +192,22 @@ Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/gr
 The host initializes official loggers, synchronizes the SDK datasource settings cache and registers its plugin importer; datasource service reloads synchronize edits across both SDK generations.
 The published package omits the core boot export. Two host-only Vite aliases bind the pinned 13.2.3 core modules; these bindings must be revalidated when upgrading the SDK.
 
+## Builtin Grafana datasource
+
+Discovery and both public SDK generations expose the read-only `-- Grafana --` instance with UID `grafana` and numeric ID `-1`. UID, name, numeric ID and type-only `grafana` references resolve it; `metricspanel` remains the default metric source. Datasource variables discover actual instances, filter by plugin type/name regex and expose their UIDs in the selector.
+
+The frontend executes `randomWalk`, `snapshot`, `timeRegions`, `annotations` and `measurements`. Random walks support start/min/max/spread/noise/dropPercent; snapshots use official DataFrame JSON conversion and retain original refIds. Live measurements support channel variables, field filters and buffering; the final unsubscribe cancels backend work. Native and classic/V1/V2 panels can mix these frames with Prometheus queries.
+
+The backend and agent execute `randomWalk` and `list`, following the [Grafana 13.2.3 core backend split](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go). `listFiles` only lists embedded public web assets and rejects absolute/traversal paths; list queries may omit the time range. Generated sequences, snapshots and recurring regions never enter metric or annotation storage. Random walks allow 10,000 points/frame, 128 frames and 1,000,000 points/query; invalid inputs and non-finite output produce explicit errors.
+
+```json
+{"from":"now-5m","to":"now","queries":[{"refId":"A","queryType":"randomWalk","intervalMs":1000,"startValue":233,"spread":0}]}
+```
+
+Save this as `query.json` and run `metricspanel datasources query --id grafana --file query.json`; add `--stream` for NDJSON. Frontend callbacks execute in the browser. Grafana scopes annotation queries remain unsupported and return an explicit error.
+
+Legacy `DataSourceSrv.registerRuntimeDataSource` and the public `@grafana/runtime/unstable` registration share runtime instances, preserve discovery after settings reload and reject duplicate UIDs. These instances live in the browser session rather than durable collectors. Real SDK browser tests cover discovery, variables, registration, mixed frames and stream cancellation; Testify and two SQLite/ClickHouse Docker rounds verify agent output and restart behavior.
+
 ## Dashboard time ranges
 
 Saved `time` / `timeSettings` and timezone defaults from classic, V1 and V2 dashboards drive real queries.

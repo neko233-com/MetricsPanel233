@@ -282,6 +282,8 @@ export function watchFrames(
         range,
       );
       if (uid === "prometheus") uid = "metricspanel";
+      if (!uid && typeof ref === "object" && ref.type === "grafana")
+        uid = "grafana";
       if (uid === "default") uid = "";
       const existing = groups.get(uid) || [];
       existing.push({

@@ -794,6 +794,18 @@ func schema() any {
 		"limits":               map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32},
 		"pending_capabilities": []string{"additional core UI extension points and app core services", "Angular legacy plugins", "full Grafana core services"},
 	}
+	result["builtin_grafana_datasource"] = map[string]any{
+		"identity":             map[string]any{"uid": "grafana", "id": -1, "name": "-- Grafana --", "type": "grafana", "readOnly": true, "default_metrics": "metricspanel"},
+		"frontend_queries":     []string{"randomWalk", "snapshot", "timeRegions", "annotations", "measurements", "list"},
+		"backend_queries":      []string{"randomWalk", "list"},
+		"files":                "listFiles returns embedded public web assets only; relative folder, optional time range for list queries",
+		"agent":                "datasources query --id grafana --file FILE|- [--stream]; frontend callbacks execute in the browser",
+		"variables":            "actual instance UIDs filtered by plugin type and name regex; visible datasource selector; both SDK generations resolve variable UID references",
+		"runtime_registration": "legacy DataSourceSrv and public runtime/unstable share transient instances; duplicate UID rejected; settings reload retains runtime registrations",
+		"limits":               map[string]int{"random_frames": 128, "points_per_frame": 10000, "generated_points_per_query": 1000000, "snapshot_frames": 128, "snapshot_fields": 1024, "files_default": 500, "files_max": 10000},
+		"storage":              "generated visualization data is never ingested or persisted",
+		"pending":              []string{"Grafana scopes annotation queries", "remaining core datasource query editors"},
+	}
 	result["commands"] = append(result["commands"].([]string), "live channels", "live watch --channel ds/UID/path [--metadata JSON --limit 10 --duration 1m] (NDJSON)", "live publish --channel ds/UID/path --file FILE|-")
 	routes["GET"] = append(routes["GET"], "/api/live/channels", "/api/live/ws (Centrifuge WebSocket)")
 	routes["POST"] = append(routes["POST"], "/api/live/session", "/api/live/publish")

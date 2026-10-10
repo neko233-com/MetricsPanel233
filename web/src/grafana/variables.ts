@@ -30,8 +30,31 @@ export async function variableOptions(
   range: TimeSelection,
   signal: AbortSignal,
 ): Promise<string[]> {
-  if (variable.type === "datasource") return ["prometheus"];
   let result = variable.options;
+  if (variable.type === "datasource") {
+    const sources = await api<{ uid: string; name: string; type: string }[]>(
+      "/api/datasources",
+      { signal },
+    );
+    const type = variable.query;
+    const pattern = variable.config?.regex
+      ? interpolate(variable.config.regex, values, range)
+      : undefined;
+    const regex = pattern
+      ? new RegExp(
+          pattern.startsWith("/")
+            ? pattern.slice(1, pattern.lastIndexOf("/"))
+            : pattern,
+        )
+      : undefined;
+    result = sources
+      .filter(
+        (source) =>
+          (!type || source.type === type) &&
+          (!regex || regex.test(source.name)),
+      )
+      .map((source) => source.uid);
+  }
   if (variable.type === "query") {
     const { start, end } = resolveTimeRange(range);
     const query = interpolate(variable.query, values, range),
@@ -84,7 +107,7 @@ export async function variableOptions(
     } else
       throw new Error(`Variable ${variable.name}: unsupported query ${query}`);
   }
-  if (variable.config?.regex) {
+  if (variable.type !== "datasource" && variable.config?.regex) {
     const raw = interpolate(variable.config.regex, values, range);
     const pattern = raw.startsWith("/")
       ? raw.slice(1, raw.lastIndexOf("/"))

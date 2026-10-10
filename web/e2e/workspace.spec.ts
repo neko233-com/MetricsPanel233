@@ -34,7 +34,7 @@ const test = base.extend<{}, { endpoint: string }>({
           "--db",
           path.join(temp, "control.db"),
           "--allow-unsigned-plugin",
-          "metricspanel-sdk-datasource,metricspanel-sdk-app,metricspanel-ext-provider-app,metricspanel-ext-provider-two-app,metricspanel-ext-consumer-app,metricspanel-events-app",
+          "metricspanel-sdk-datasource,metricspanel-sdk-app,metricspanel-ext-provider-app,metricspanel-ext-provider-two-app,metricspanel-ext-consumer-app,metricspanel-events-app,metricspanel-core-app",
         ],
         {
           cwd: root,
@@ -84,6 +84,401 @@ const test = base.extend<{}, { endpoint: string }>({
     },
     { scope: "worker" },
   ],
+});
+
+test("Builtin Grafana queries render real SDK frames, discover both service generations and cancel measurements", async ({
+  page,
+  endpoint,
+}, testInfo) => {
+  test.setTimeout(120000);
+  page.setDefaultTimeout(15000);
+  const temp = await mkdtemp(
+      path.join(os.tmpdir(), "metricspanel233-core-grafana-e2e-"),
+    ),
+    run = promisify(execFile);
+  const fixture = path.join(
+      temp,
+      process.platform === "win32" ? "fixture.exe" : "fixture",
+    ),
+    coreArchive = path.join(temp, "core.zip"),
+    dsArchive = path.join(temp, "source.zip");
+  const ids: string[] = [],
+    annotationIds: number[] = [],
+    errors: string[] = [],
+    warnings: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (entry) => {
+    if (["error", "warning"].includes(entry.type()))
+      warnings.push(entry.text());
+  });
+  const snapshot = {
+    schema: {
+      refId: "Original",
+      name: "Saved values",
+      fields: [{ name: "Value", type: "number", config: {} }],
+    },
+    data: { values: [[233, 234]] },
+  };
+  try {
+    await run(
+      "go",
+      ["build", "-o", fixture, "./internal/plugins/testdata/sdk-backend"],
+      { cwd: repoRoot, timeout: 60000 },
+    );
+    await run(fixture, ["--package-extension-core", coreArchive], {
+      cwd: repoRoot,
+    });
+    await run(fixture, ["--package", dsArchive], { cwd: repoRoot });
+    for (const file of [coreArchive, dsArchive]) {
+      const response = await page.request.post(
+        endpoint + "/api/v1/plugins/install",
+        {
+          data: await readFile(file),
+          headers: { "Content-Type": "application/zip" },
+        },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+    expect(
+      (
+        await page.request.post(endpoint + "/api/datasources", {
+          data: {
+            uid: "core-live",
+            name: "Core measurements",
+            type: "metricspanel-sdk-datasource",
+            secureJsonData: { apiKey: "test-secret-233" },
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const annotationResponse = await page.request.post(
+      endpoint + "/api/annotations",
+      {
+        data: {
+          time: Date.now(),
+          text: "Core SDK native event",
+          tags: ["core-sdk-233"],
+        },
+      },
+    );
+    expect(
+      annotationResponse.ok(),
+      await annotationResponse.text(),
+    ).toBeTruthy();
+    annotationIds.push((await annotationResponse.json()).id);
+    const model = {
+      uid: "core-grafana",
+      title: "Core Grafana queries",
+      time: { from: "2026-10-05T08:00:00Z", to: "2026-10-05T18:00:00Z" },
+      timezone: "utc",
+      refresh: "",
+      templating: {
+        list: [
+          {
+            name: "source",
+            type: "datasource",
+            query: "grafana",
+            current: { value: "grafana" },
+          },
+        ],
+      },
+      panels: [
+        {
+          id: 1,
+          title: "Core random",
+          type: "stat",
+          datasource: { type: "grafana", uid: "$source" },
+          targets: [
+            {
+              refId: "R",
+              queryType: "randomWalk",
+              startValue: 233,
+              spread: 0,
+              noise: 0,
+            },
+          ],
+          gridPos: { x: 0, y: 0, w: 12, h: 8 },
+        },
+        {
+          id: 2,
+          title: "Core snapshot",
+          type: "table",
+          datasource: { type: "grafana" },
+          targets: [
+            { refId: "S", queryType: "snapshot", snapshot: [snapshot] },
+          ],
+          gridPos: { x: 12, y: 0, w: 12, h: 8 },
+        },
+        {
+          id: 3,
+          title: "Core periods",
+          type: "table",
+          datasource: "-- Grafana --",
+          targets: [
+            {
+              refId: "T",
+              queryType: "timeRegions",
+              timeRegion: { from: "09:00", to: "17:00", timezone: "utc" },
+            },
+          ],
+          gridPos: { x: 0, y: 8, w: 12, h: 8 },
+        },
+        {
+          id: 4,
+          title: "Core mixed",
+          type: "table",
+          targets: [
+            {
+              refId: "R",
+              datasource: { uid: "grafana", type: "grafana" },
+              queryType: "randomWalk",
+              startValue: 42,
+              spread: 0,
+            },
+            {
+              refId: "P",
+              datasource: { uid: "metricspanel" },
+              expr: "vector(300)",
+              instant: true,
+              format: "table",
+            },
+          ],
+          gridPos: { x: 12, y: 8, w: 12, h: 8 },
+        },
+        {
+          id: 5,
+          title: "Core SDK runtime",
+          type: "metricspanel-core-app",
+          targets: [],
+          gridPos: { x: 0, y: 16, w: 24, h: 10 },
+        },
+      ],
+    };
+    const imported = await page.request.post(endpoint + "/api/dashboards/db", {
+      data: { dashboard: model },
+    });
+    expect(imported.ok(), await imported.text()).toBeTruthy();
+    const saved = (
+      await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
+    ).find((dashboard: any) => dashboard.grafana?.uid === model.uid);
+    ids.push(saved.id);
+    await page.goto(endpoint + "/d/core-grafana/core");
+    const random = page.getByRole("region", {
+        name: "Core random",
+        exact: true,
+      }),
+      snap = page.getByRole("region", { name: "Core snapshot", exact: true }),
+      periods = page.getByRole("region", { name: "Core periods", exact: true }),
+      mixed = page.getByRole("region", { name: "Core mixed", exact: true });
+    await expect(random).toContainText("233");
+    await expect(snap).toContainText("234");
+    await expect(periods.locator("tbody tr")).toHaveCount(1);
+    await expect(mixed).toContainText("300");
+    await expect(mixed).toContainText("42");
+    await expect(page.getByLabel("source", { exact: true })).toHaveValue(
+      "grafana",
+    );
+    const probe = page.getByRole("region", {
+      name: "Core SDK probe",
+      exact: true,
+    });
+    await expect(probe).toBeVisible();
+    await probe
+      .getByRole("button", { name: "Inspect core source", exact: true })
+      .click();
+    const parse = async (prefix: string) =>
+      JSON.parse(
+        (await probe.getByText(new RegExp("^" + prefix)).innerText()).slice(
+          prefix.length,
+        ),
+      );
+    await expect
+      .poll(async () => {
+        try {
+          return (await parse("Core discovery: ")).same;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
+    const discovery = await parse("Core discovery: ");
+    expect(discovery.uid).toBe("grafana");
+    expect(discovery.id).toBe(-1);
+    expect(discovery.default).toBe("metricspanel");
+    expect(discovery.query.queryType).toBe("randomWalk");
+    expect(discovery.modernList).toContain("grafana");
+    expect(discovery.legacyList).toContain("grafana");
+    expect(discovery.variableList).toContain("${source}");
+    expect(discovery.annotations).toHaveLength(1);
+    expect(discovery.annotations[0].length).toBe(1);
+    expect(
+      discovery.annotations[0].fields.find(
+        (field: any) => field.name === "text",
+      ).values,
+    ).toEqual(["Core SDK native event"]);
+    expect(
+      discovery.annotations[0].fields.find(
+        (field: any) => field.name === "created",
+      ).type,
+    ).toBe("number");
+    await expect(probe.getByText(/^Core files:/)).toContainText("index.html");
+    await probe
+      .getByRole("button", { name: "Register runtime sources", exact: true })
+      .click();
+    await expect
+      .poll(async () => {
+        try {
+          return (await parse("Core discovery: ")).runtime;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
+    expect((await parse("Core discovery: ")).duplicate).toBe(true);
+    await probe
+      .getByRole("button", { name: "Start core measurements", exact: true })
+      .click();
+    await expect
+      .poll(async () => {
+        const frames = await parse("Core frames: ");
+        return Object.values(frames).some(
+          (chunk: any) =>
+            chunk.state === "Streaming" &&
+            chunk.frames.some(
+              (frame: any) => frame.refId === "Stream" && frame.value >= 233,
+            ),
+        );
+      })
+      .toBe(true);
+    const streamed = await parse("Core frames: ");
+    expect(streamed.Static.frames[0].refId).toBe("Static");
+    expect(streamed.Static.frames[0].value).toBe(233);
+    const stats = async () =>
+      await (
+        await page.request.get(
+          endpoint + "/api/datasources/uid/core-live/resources/stream-stats",
+        )
+      ).json();
+    await expect.poll(async () => (await stats()).active).toBe(1);
+    await probe
+      .getByRole("button", { name: "Stop core measurements", exact: true })
+      .click();
+    await expect.poll(async () => (await stats()).active).toBe(0);
+    await page.screenshot({
+      path: testInfo.outputPath("core-grafana-desktop.png"),
+      animations: "disabled",
+    });
+    // V2 type-only group references resolve the builtin even without a UID.
+    const v2 = {
+      apiVersion: "dashboard.grafana.app/v2beta1",
+      metadata: { name: "core-v2", unknown: 233 },
+      spec: {
+        title: "Core V2",
+        timeSettings: {
+          from: model.time.from,
+          to: model.time.to,
+          timezone: "utc",
+          autoRefresh: "",
+        },
+        elements: {
+          proof: {
+            kind: "Panel",
+            spec: {
+              id: 1,
+              title: "Core V2 snapshot",
+              data: {
+                kind: "QueryGroup",
+                spec: {
+                  queries: [
+                    {
+                      kind: "PanelQuery",
+                      spec: {
+                        refId: "S",
+                        query: {
+                          kind: "DataQuery",
+                          group: "grafana",
+                          spec: {
+                            queryType: "snapshot",
+                            snapshot: [snapshot],
+                            unknown: 233,
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              vizConfig: { kind: "VizConfig", group: "table", spec: {} },
+            },
+          },
+        },
+      },
+    };
+    const importedV2 = await page.request.post(
+      endpoint + "/api/v1/import/grafana",
+      { data: v2 },
+    );
+    expect(importedV2.ok(), await importedV2.text()).toBeTruthy();
+    ids.push((await importedV2.json()).dashboard.id);
+    await page.goto(endpoint + "/d/core-v2/core");
+    await expect(
+      page.getByRole("region", { name: "Core V2 snapshot", exact: true }),
+    ).toContainText("234");
+    await page
+      .getByRole("button", { name: "Switch language", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: testInfo.outputPath("core-grafana-mobile.png"),
+      animations: "disabled",
+    });
+    await page.goto(endpoint + "/#plugins");
+    const builtin = page
+      .locator(".plugin-sources tbody tr")
+      .filter({ hasText: "-- Grafana --" });
+    await expect(builtin).toHaveCount(1);
+    await expect(
+      builtin.getByRole("button", { name: /编辑|删除/ }),
+    ).toHaveCount(0);
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+  } finally {
+    const resolved = path.resolve(temp);
+    if (
+      !resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(resolved).startsWith("metricspanel233-core-grafana-e2e-")
+    )
+      throw new Error("Unsafe core fixture cleanup");
+    try {
+      await page.goto("about:blank", { timeout: 5000 }).catch(() => {});
+      for (const id of annotationIds)
+        await fetch(endpoint + "/api/annotations/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+      for (const id of ids)
+        await fetch(endpoint + "/api/v1/dashboards/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+      await fetch(endpoint + "/api/datasources/uid/core-live", {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10000),
+      });
+      for (const id of ["metricspanel-core-app", "metricspanel-sdk-datasource"])
+        await fetch(endpoint + "/api/v1/plugins/" + id, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(10000),
+        });
+    } finally {
+      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }
 });
 
 test("Recurring time regions render SDK frames and native bands, preserve all dashboard formats and never store generated events", async ({

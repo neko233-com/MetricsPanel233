@@ -276,6 +276,22 @@ Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化
 宿主初始化官方日志注册表，并同步 SDK 的数据源设置缓存和插件加载器；数据源服务重新加载时，设置增删改会同步新版与旧版服务。
 缓存启动接口属于固定版本 SDK 的 core 实现，发布包未公开其入口；Vite 使用两个仅供宿主调用的 13.2.3 路径别名，升级 SDK 时必须重新验证这些接口。
 
+## 内置 Grafana 数据源
+
+发现 API 与两代公开 SDK 都提供只读 `-- Grafana --` 数据源，UID 为 `grafana`、数字 ID 为 `-1`；按名称、UID、ID 或仅 `type: grafana` 引用均可解析。默认指标数据源仍为 `metricspanel`。数据源变量读取实际实例并按插件类型和名称正则筛选，界面可选择其 UID。
+
+前端执行 `randomWalk`、`snapshot`、`timeRegions`、`annotations` 和 `measurements`。随机序列支持初始值、上下限、spread、noise 和 dropPercent；快照使用官方 DataFrame JSON 转换并保留原始 refId。Live measurements 支持变量通道、字段筛选和缓冲，最后一个订阅结束会取消后端流。原生与经典/V1/V2 面板可以和 Prometheus 查询混用。
+
+后端与 agent 提供 `randomWalk` 和 `list`，沿用 [Grafana 13.2.3 内置后端分工](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go)。`listFiles` 只列出程序内嵌的公共网页文件，拒绝绝对路径和路径穿越；`list` 可省略时间范围。生成序列、快照和周期区域不会写入指标或注释存储。随机序列每帧最多 10,000 点、128 帧、每查询合计 1,000,000 点，非法配置和非有限数值返回具体错误。
+
+```json
+{"from":"now-5m","to":"now","queries":[{"refId":"A","queryType":"randomWalk","intervalMs":1000,"startValue":233,"spread":0}]}
+```
+
+将上述 JSON 保存为文件后，运行 `metricspanel datasources query --id grafana --file query.json`，加 `--stream` 输出 NDJSON。前端 SDK 回调仍由浏览器执行；Grafana scopes 注释查询暂未实现，会明确报错。
+
+旧版 `DataSourceSrv.registerRuntimeDataSource` 与公开 `@grafana/runtime/unstable` 注册入口共享运行时实例，重载设置后仍可发现，重复 UID 明确拒绝。此类临时实例随浏览器会话结束，不作为持久采集器。真实 SDK 浏览器用例验证发现、变量、注册、混合帧和流取消；Testify 与两轮 SQLite/ClickHouse Docker 测试验证 agent 输出及重启行为。
+
 ## Dashboard 时间范围
 
 经典 JSON、V1 和 V2 resource 的 `time` / `timeSettings` 默认时间与时区会应用到实际查询。
