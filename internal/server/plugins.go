@@ -71,6 +71,7 @@ func (s *Server) validAssetSession(r *http.Request) bool {
 	return hmac.Equal([]byte(cookie.Value), []byte(s.assetSession(expires)))
 }
 func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
+	s.pluginCatalogRoutes(api, plugins.NewCatalogClient(nil))
 	api.HandleFunc("GET /api/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
 		items, err := s.Store.Plugins(r.Context())
 		if err != nil {

@@ -20,8 +20,13 @@ export function resolveSourceSettings(
       : sources;
     return candidates.find((s) => s.isDefault) || candidates[0];
   }
-  return sources.find(
-    (s) => s.uid === id || s.name === id || String(s.id) === id,
+  return (
+    sources.find((s) => s.uid === id) ||
+    sources.find((s) => s.name === id) ||
+    sources.find((s) => s.id != null && String(s.id) === id) ||
+    (id === "prometheus"
+      ? sources.find((s) => s.uid === "metricspanel")
+      : undefined)
   );
 }
 

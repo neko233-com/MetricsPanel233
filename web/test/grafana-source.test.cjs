@@ -456,3 +456,38 @@ test("SDK source discovery resolves names, IDs, type-only references and capabil
     ["logs", "prom"],
   );
 });
+
+test("SDK source UIDs take precedence over another source name or legacy numeric ID", () => {
+  const { resolveSourceSettings } = load("source-settings");
+  const source = (id, uid, name, type = "prometheus", isDefault = false) => ({
+    id,
+    uid,
+    name,
+    type,
+    isDefault,
+    meta: { id: type, metrics: true },
+  });
+  const earlier = source(233, "cluster-a", "cluster-b"),
+    selected = source(234, "cluster-b", "Production B", "prometheus", true),
+    numericUID = source(235, "233", "Numeric UID"),
+    namedRuntime = source(236, "other", "registered"),
+    registered = source(undefined, "registered", "SDK runtime", "custom-datasource");
+  const items = [earlier, selected, numericUID, namedRuntime, registered];
+  assert.equal(resolveSourceSettings(items, { uid: "cluster-b" }), selected);
+  assert.equal(resolveSourceSettings(items, "cluster-b"), selected);
+  assert.equal(resolveSourceSettings(items, "233"), numericUID);
+  assert.equal(resolveSourceSettings(items, "registered"), registered);
+  assert.equal(
+    resolveSourceSettings(items, { uid: "$source" }, () => "registered"),
+    registered,
+  );
+  assert.equal(resolveSourceSettings(items, "Production B"), selected);
+  assert.equal(resolveSourceSettings(items, "234"), selected);
+  assert.equal(resolveSourceSettings(items, "default"), selected);
+  assert.equal(resolveSourceSettings(items, { type: "custom-datasource" }), registered);
+  assert.equal(resolveSourceSettings(items, "missing"), undefined);
+  const builtin = source(1, "metricspanel", "Local");
+  const external = source(240, "prometheus", "External Prometheus");
+  assert.equal(resolveSourceSettings([builtin], "prometheus"), builtin);
+  assert.equal(resolveSourceSettings([builtin, external], "prometheus"), external);
+});

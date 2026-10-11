@@ -196,7 +196,6 @@ export function annotationSource(
         ? { ...saved, uid: interpolate(saved.uid || "", values, range) }
         : undefined;
   let uid = typeof ref === "string" ? ref : ref?.uid || "";
-  if (uid === "prometheus") uid = "metricspanel";
   if (uid === "default") uid = "";
   const native =
     Boolean(config.builtIn) ||

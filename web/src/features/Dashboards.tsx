@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { ArrowRight, Download, Plus, Trash2, Upload } from "lucide-react";
 import { api, download, jsonBody, message, type Dashboard } from "../api";
 import { Dialog } from "../components/Dialog";
+import { DashboardImport } from "./DashboardImport";
 export function Dashboards({
   dashboards,
   open,
@@ -18,7 +19,8 @@ export function Dashboards({
     [name, setName] = useState(""),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
-    [removing, setRemoving] = useState<Dashboard | null>(null);
+    [removing, setRemoving] = useState<Dashboard | null>(null),
+    [importing, setImporting] = useState<{ initial?: unknown } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -28,6 +30,10 @@ export function Dashboards({
           <p>{tr("Create dashboards, edit panels or import Grafana JSON.")}</p>
         </div>
         <div className="toolbar">
+          <button onClick={() => setImporting({})}>
+            <Upload size={17} />
+            {tr("Import dashboard")}
+          </button>
           <button onClick={() => input.current?.click()}>
             <Upload size={17} />
             {tr("Import JSON")}
@@ -63,6 +69,17 @@ export function Dashboards({
             };
             let imported: Dashboard;
             if (data.title || data.dashboard || data.spec) {
+              const preview = await api<{ inputs: unknown[] }>(
+                "/import/grafana-preview",
+                {
+                  method: "POST",
+                  body: jsonBody({ dashboard: data }),
+                },
+              );
+              if (preview.inputs.length) {
+                setImporting({ initial: data });
+                return;
+              }
               const result = await api<{
                 dashboard: Dashboard;
                 warnings: string[];
@@ -88,6 +105,19 @@ export function Dashboards({
           }
         }}
       />
+      {importing && (
+        <DashboardImport
+          initial={importing.initial}
+          close={() => setImporting(null)}
+          imported={async (dashboard, warnings) => {
+            await reload();
+            setImporting(null);
+            open(dashboard);
+            notify(tr("Dashboard imported"));
+            if (warnings.length) notify(warnings.join("\n"), true);
+          }}
+        />
+      )}
       <section className="list-panel">
         <div className="table-scroll">
           <table>

@@ -133,6 +133,17 @@ PromQL 聚合、正则 selector、rate、histogram_quantile、子查询和常用
 
 网页“仪表盘 → 导入 JSON”或 CLI 可以导入 Grafana Classic、V1 / V2 资源 JSON：
 
+“导入仪表盘”支持输入 Grafana.com 社区 ID 或 URL、选择修订版本，也支持粘贴和上传 JSON。先加载预览，再选择数据源、填写常量、修改名称和 UID，确认后保存。未指定 UID 时生成新 UID；同名 UID 返回冲突，避免重复链接。`__inputs`、数据源变量与 V2 公共导出标签可以绑定已有数据源；常量按字面值替换。查询变量使用绑定的数据源，Prometheus 走对应代理，插件数据源调用公开 `metricFindQuery` 接口。下载仅访问 Grafana.com，限时 20 秒、JSON 最多 4 MiB。
+
+```sh
+metricspanel dashboards community --id 1860 --community-revision 42
+metricspanel dashboards import-community --url https://grafana.com/grafana/dashboards/1860-node-exporter-full/ --community-revision 42 --inputs '{"ds_prometheus":"metricspanel"}' --name "Nodes" --uid company-nodes
+metricspanel dashboards preview-grafana --file dashboard.json
+metricspanel dashboards import-grafana --file dashboard.json --inputs '{"DS_PROMETHEUS":"metricspanel"}'
+```
+
+The import dialog and CLI load Grafana.com IDs or URLs, select a revision, preview required inputs and bind datasource UIDs or constants before saving. Classic/V1/V2 envelopes and unknown fields survive binding; only requested input references and identity change. An omitted UID creates a new one; explicit duplicates return HTTP 409. Folder and library-panel imports, and Grafana's native `gnet` / interpolation routes remain pending.
+
 - 保留原始 JSON、targets、refId、instant / range、legendFormat、24 列 gridPos、fieldConfig 和 transformations；最多 500 面板，每面板 32 查询。
 - timeseries / graph、stat / singlestat、table、gauge、bargauge、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
 - 使用 **Grafana 官方 `@grafana/data`** 的标准转换算子、reducer、单位、阈值颜色和 value mapping；未知转换会明确报错。
@@ -186,7 +197,16 @@ ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一�
 
 ## Grafana 插件与数据源
 
-网页「插件」支持安装、启用 / 停用、卸载插件和管理数据源。可从官方目录指定准确版本，也可以上传原始 ZIP。
+网页「插件 → 插件库」读取 Grafana 官方目录，支持搜索、按面板 / 数据源 / 应用筛选、查看详情及历史版本。详情显示已安装版本、Grafana 版本要求、Angular 检测和当前服务器的平台包；选择精确版本后使用已有的签名验证流程安装或更新。已安装插件支持启用 / 停用、卸载和配置；也可上传原始 ZIP。目录可发现 Renderer 条目，当前安装器不支持该包类型。
+
+```sh
+metricspanel plugins search --query clock --kind panel
+metricspanel plugins info --id grafana-clock-panel
+metricspanel plugins versions --id grafana-clock-panel
+metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
+```
+
+The plugin library reads the official Grafana catalog, with search, type filters, details and exact-version selection. CLI discovery and installation return JSON. Catalog requirements describe published packages; they do not establish runtime compatibility. Reads use a bounded five-minute cache, a 12-second timeout and a 4 MiB response limit. Installation continues to verify Grafana signatures and file hashes.
 默认验证 Grafana 官方 PGP 签名及所有文件的 SHA-256；相同安装包重复安装保留原安装时间，不增加目录。
 React 面板通过共享的 Grafana 13.2.3 `data` / `runtime` / `ui` SDK 运行，支持 AMD 与 SystemJS 包。
 已用未修改的官方 Clock 3.2.4 签名安装包验证实际渲染、时钟更新、页面刷新和移动布局。

@@ -32,6 +32,8 @@ export type Variable = {
   multi: boolean;
   include_all: boolean;
   config?: {
+    datasource?: string | { uid?: string; type?: string };
+    query?: unknown;
     label?: string;
     hide?: number | string;
     regex?: string;

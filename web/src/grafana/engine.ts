@@ -288,7 +288,6 @@ export function watchFrames(
         values,
         range,
       );
-      if (uid === "prometheus") uid = "metricspanel";
       if (!uid && typeof ref === "object" && ref.type === "grafana")
         uid = "grafana";
       if (isExpressionRef(ref)) uid = "__expr__";

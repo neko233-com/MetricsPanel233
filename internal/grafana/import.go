@@ -73,6 +73,9 @@ func Import(data []byte) (ImportResult, error) {
 			}
 			v.Spec["type"] = types[v.Kind]
 			if query, ok := v.Spec["query"].(map[string]any); ok {
+				if name, _ := object(query["datasource"])["name"].(string); name != "" {
+					v.Spec["datasource"] = map[string]any{"uid": name, "type": query["group"]}
+				}
 				v.Spec["query"] = query["spec"]
 			}
 			b, _ := json.Marshal(v.Spec)

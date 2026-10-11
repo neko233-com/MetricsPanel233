@@ -14,6 +14,7 @@ import { Dialog } from "../components/Dialog";
 import { t } from "../i18n";
 import type { InstalledPlugin } from "../grafana/plugin-runtime";
 import { AppSettingsEditor } from "./AppSettingsEditor";
+import { PluginCatalog } from "./PluginCatalog";
 
 type Source = {
   id: number;
@@ -36,6 +37,7 @@ export function Plugins({ notify }: { notify: Notify }) {
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]),
     [sources, setSources] = useState<Source[]>([]),
     [error, setError] = useState(""),
+    [tab, setTab] = useState<"installed" | "catalog">("installed"),
     [install, setInstall] = useState(false),
     [app, setApp] = useState<InstalledPlugin | null>(null),
     [editing, setEditing] = useState<Source | "new" | null>(null),
@@ -82,9 +84,8 @@ export function Plugins({ notify }: { notify: Notify }) {
         <div>
           <h1>{t("Plugins & datasources")}</h1>
           <p>
-            {t(
-              "Install Grafana plugins and connect the data behind your dashboards.",
-            )}
+            {t("Installed plugins")}: {plugins.length} · {t("Datasources")}:{" "}
+            {sources.length}
           </p>
         </div>
         <button className="primary" onClick={() => setInstall(true)}>
@@ -97,89 +98,145 @@ export function Plugins({ notify }: { notify: Notify }) {
           {error}
         </p>
       )}
-      <section className="list-panel">
-        <div className="section-heading">
-          <h2>
-            {t("Installed plugins")}
-            <span>{plugins.length}</span>
-          </h2>
-          <span className="subtle">
-            <ShieldCheck size={15} /> {t("Signatures verified")}
-          </span>
-        </div>
-        {plugins.length === 0 ? (
-          <div className="empty-workspace">
-            <Puzzle size={32} />
-            <h2>{t("Add a visualization or datasource")}</h2>
-            <p>
-              {t(
-                "Use a plugin ID and exact version, or upload its original ZIP package.",
-              )}
-            </p>
-            <button onClick={() => setInstall(true)}>
-              <Plus size={17} />
-              {t("Install plugin")}
-            </button>
+      <div
+        className="plugin-tabs"
+        role="tablist"
+        aria-label={t("Plugins")}
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+            return;
+          event.preventDefault();
+          const next =
+            event.key === "Home"
+              ? "installed"
+              : event.key === "End"
+                ? "catalog"
+                : tab === "installed"
+                  ? "catalog"
+                  : "installed";
+          setTab(next);
+          event.currentTarget
+            .querySelector<HTMLButtonElement>(
+              `#${next === "installed" ? "installed-plugins" : "plugin-library"}-tab`,
+            )
+            ?.focus();
+        }}
+      >
+        <button
+          role="tab"
+          id="installed-plugins-tab"
+          aria-selected={tab === "installed"}
+          tabIndex={tab === "installed" ? 0 : -1}
+          aria-controls="installed-plugins-panel"
+          onClick={() => setTab("installed")}
+        >
+          {t("Installed plugins")}
+        </button>
+        <button
+          role="tab"
+          id="plugin-library-tab"
+          aria-selected={tab === "catalog"}
+          tabIndex={tab === "catalog" ? 0 : -1}
+          aria-controls="plugin-library-panel"
+          onClick={() => setTab("catalog")}
+        >
+          {t("Plugin library")}
+        </button>
+      </div>
+      {tab === "catalog" ? (
+        <PluginCatalog plugins={plugins} onInstalled={reload} notify={notify} />
+      ) : (
+        <section
+          className="list-panel"
+          id="installed-plugins-panel"
+          role="tabpanel"
+          aria-labelledby="installed-plugins-tab"
+        >
+          <div className="section-heading">
+            <h2>
+              {t("Installed plugins")}
+              <span>{plugins.length}</span>
+            </h2>
+            <span className="subtle">
+              <ShieldCheck size={15} /> {t("Signatures verified")}
+            </span>
           </div>
-        ) : (
-          <div className="plugin-list">
-            {plugins.map((p) => (
-              <article className="plugin-row" key={p.id}>
-                <div className="plugin-icon">
-                  <Puzzle size={22} />
-                </div>
-                <div className="plugin-description">
-                  <strong>{p.name}</strong>
-                  <code>
-                    {p.id} · {p.version}
-                  </code>
-                  <div className="plugin-meta">
-                    <span>{t(p.type)}</span>
-                    <span>
-                      {p.signature === "unsigned"
-                        ? t("Development package")
-                        : t("Signed package")}
-                    </span>
-                    {p.backend && <span>{t("Backend")}</span>}
-                  </div>
-                </div>
-                <label className="plugin-enabled">
-                  <input
-                    type="checkbox"
-                    checked={p.enabled}
-                    disabled={busy === p.id}
-                    onChange={() => void toggle(p)}
-                  />
-                  {t("Enabled")}
-                </label>
-                {p.type === "app" && (
-                  <div className="plugin-app-actions">
-                    <button onClick={() => setApp(p)}>{t("Configure")}</button>
-                    {p.enabled && (
-                      <a href={`/a/${encodeURIComponent(p.id)}/`}>
-                        {t("Open application")}
-                      </a>
-                    )}
-                  </div>
+          {plugins.length === 0 ? (
+            <div className="empty-workspace">
+              <Puzzle size={32} />
+              <h2>{t("Add a visualization or datasource")}</h2>
+              <p>
+                {t(
+                  "Use a plugin ID and exact version, or upload its original ZIP package.",
                 )}
-                <button
-                  className="icon-button"
-                  aria-label={`${t("Uninstall")} ${p.name}`}
-                  onClick={() =>
-                    setRemoving({
-                      kind: "plugin",
-                      id: p.package_id,
-                      name: p.name,
-                    })
-                  }
-                >
-                  <Trash2 size={17} />
-                </button>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+              </p>
+              <button onClick={() => setInstall(true)}>
+                <Plus size={17} />
+                {t("Install plugin")}
+              </button>
+            </div>
+          ) : (
+            <div className="plugin-list">
+              {plugins.map((p) => (
+                <article className="plugin-row" key={p.id}>
+                  <div className="plugin-icon">
+                    <Puzzle size={22} />
+                  </div>
+                  <div className="plugin-description">
+                    <strong>{p.name}</strong>
+                    <code>
+                      {p.id} · {p.version}
+                    </code>
+                    <div className="plugin-meta">
+                      <span>{t(p.type)}</span>
+                      <span>
+                        {p.signature === "unsigned"
+                          ? t("Development package")
+                          : t("Signed package")}
+                      </span>
+                      {p.backend && <span>{t("Backend")}</span>}
+                    </div>
+                  </div>
+                  <label className="plugin-enabled">
+                    <input
+                      type="checkbox"
+                      checked={p.enabled}
+                      disabled={busy === p.id}
+                      onChange={() => void toggle(p)}
+                    />
+                    {t("Enabled")}
+                  </label>
+                  {p.type === "app" && (
+                    <div className="plugin-app-actions">
+                      <button onClick={() => setApp(p)}>
+                        {t("Configure")}
+                      </button>
+                      {p.enabled && (
+                        <a href={`/a/${encodeURIComponent(p.id)}/`}>
+                          {t("Open application")}
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    className="icon-button"
+                    aria-label={`${t("Uninstall")} ${p.name}`}
+                    onClick={() =>
+                      setRemoving({
+                        kind: "plugin",
+                        id: p.package_id,
+                        name: p.name,
+                      })
+                    }
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {app && (
         <AppSettingsEditor
           id={app.id}

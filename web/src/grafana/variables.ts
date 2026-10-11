@@ -56,56 +56,125 @@ export async function variableOptions(
       .map((source) => source.uid);
   }
   if (variable.type === "query") {
-    const { start, end } = resolveTimeRange(range);
-    const query = interpolate(variable.query, values, range),
-      params = new URLSearchParams({
-        start: String(start / 1000),
-        end: String(end / 1000),
-      });
-    const labels = /^label_values\(\s*(?:(.*),\s*)?([a-zA-Z_][\w]*)\s*\)$/.exec(
-      query,
-    );
-    const names = /^label_names\((.*)\)$/.exec(query),
-      metrics = /^metrics\((.*)\)$/.exec(query),
-      prom = /^query_result\((.*)\)$/s.exec(query);
-    if (labels) {
-      if (labels[1]) params.append("match[]", labels[1].trim());
-      result = (
-        await api<{ data: string[] }>(
-          `/prometheus/api/v1/label/${encodeURIComponent(labels[2])}/values?${params}`,
-          { signal },
-        )
-      ).data;
-    } else if (names) {
-      if (names[1]) params.append("match[]", names[1]);
-      result = (
-        await api<{ data: string[] }>(`/prometheus/api/v1/labels?${params}`, {
+    let prefix = "/prometheus";
+    let prometheusQuery = true;
+    const ref = variable.config?.datasource;
+    if (ref) {
+      const raw = typeof ref === "string" ? ref : ref.uid || "";
+      const uid = interpolate(raw, values, range);
+      const sources = await api<
+        { uid: string; name: string; type: string; isDefault?: boolean }[]
+      >("/api/datasources", { signal });
+      const source =
+        uid && uid !== "default"
+          ? sources.find((source) => source.uid === uid) ||
+            sources.find((source) => source.name === uid) ||
+            (uid === "prometheus"
+              ? sources.find((source) => source.uid === "metricspanel")
+              : undefined)
+          : sources.find(
+              (source) =>
+                source.isDefault &&
+                (typeof ref === "string" ||
+                  !ref.type ||
+                  source.type === ref.type),
+            ) ||
+            sources.find(
+              (source) =>
+                typeof ref === "object" && ref.type && source.type === ref.type,
+            );
+      if (!source)
+        throw new Error(
+          `Variable ${variable.name}: datasource not found: ${uid}`,
+        );
+      if (source.type === "prometheus")
+        prefix = `/api/datasources/proxy/uid/${encodeURIComponent(source.uid)}`;
+      else {
+        prometheusQuery = false;
+        const runtime = await import("./plugin-runtime");
+        runtime.setPluginVariables(values, range);
+        const scopedVars = Object.fromEntries(
+          Object.entries(values).map(([name, value]) => [
+            name,
+            { text: value, value },
+          ]),
+        );
+        const datasource = await runtime.getPluginDatasource(
+          source.uid,
+          scopedVars,
+        );
+        if (!datasource.metricFindQuery)
+          throw new Error(
+            `Variable ${variable.name}: datasource does not support variable queries`,
+          );
+        signal.throwIfAborted();
+        const queryOptions = {
+          range: resolveTimeRange(range).sdk,
+          scopedVars,
+          variable,
           signal,
-        })
-      ).data;
-    } else if (metrics) {
-      result = (
-        await api<{ data: string[] }>(
-          `/prometheus/api/v1/label/__name__/values?${params}`,
+        };
+        const options = await datasource.metricFindQuery(
+          variable.config?.query ?? variable.query,
+          queryOptions,
+        );
+        signal.throwIfAborted();
+        result = options.map((option) => String(option.value ?? option.text));
+      }
+    }
+    if (prometheusQuery) {
+      const { start, end } = resolveTimeRange(range);
+      const query = interpolate(variable.query, values, range),
+        params = new URLSearchParams({
+          start: String(start / 1000),
+          end: String(end / 1000),
+        });
+      const labels =
+        /^label_values\(\s*(?:(.*),\s*)?([a-zA-Z_][\w]*)\s*\)$/.exec(query);
+      const names = /^label_names\((.*)\)$/.exec(query),
+        metrics = /^metrics\((.*)\)$/.exec(query),
+        prom = /^query_result\((.*)\)$/s.exec(query);
+      if (labels) {
+        if (labels[1]) params.append("match[]", labels[1].trim());
+        result = (
+          await api<{ data: string[] }>(
+            `${prefix}/api/v1/label/${encodeURIComponent(labels[2])}/values?${params}`,
+            { signal },
+          )
+        ).data;
+      } else if (names) {
+        if (names[1]) params.append("match[]", names[1]);
+        result = (
+          await api<{ data: string[] }>(`${prefix}/api/v1/labels?${params}`, {
+            signal,
+          })
+        ).data;
+      } else if (metrics) {
+        result = (
+          await api<{ data: string[] }>(
+            `${prefix}/api/v1/label/__name__/values?${params}`,
+            { signal },
+          )
+        ).data.filter((name) => new RegExp(metrics[1]).test(name));
+      } else if (prom) {
+        const data = await api<{
+          data: { result: { metric: Labels; value: [number, string] }[] };
+        }>(
+          `${prefix}/api/v1/query?${new URLSearchParams({ query: prom[1], time: String(end / 1000) })}`,
           { signal },
-        )
-      ).data.filter((name) => new RegExp(metrics[1]).test(name));
-    } else if (prom) {
-      const data = await api<{
-        data: { result: { metric: Labels; value: [number, string] }[] };
-      }>(
-        `/prometheus/api/v1/query?${new URLSearchParams({ query: prom[1], time: String(end / 1000) })}`,
-        { signal },
-      );
-      result = data.data.result.map(
-        (s) =>
-          `${s.metric.__name__ || ""}{${Object.entries(s.metric)
-            .filter(([k]) => k !== "__name__")
-            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-            .join(",")}} ${s.value[1]} ${s.value[0] * 1000}`,
-      );
-    } else
-      throw new Error(`Variable ${variable.name}: unsupported query ${query}`);
+        );
+        result = data.data.result.map(
+          (s) =>
+            `${s.metric.__name__ || ""}{${Object.entries(s.metric)
+              .filter(([k]) => k !== "__name__")
+              .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+              .join(",")}} ${s.value[1]} ${s.value[0] * 1000}`,
+        );
+      } else
+        throw new Error(
+          `Variable ${variable.name}: unsupported query ${query}`,
+        );
+    }
   }
   if (variable.type !== "datasource" && variable.config?.regex) {
     const raw = interpolate(variable.config.regex, values, range);

@@ -777,6 +777,26 @@ Object.assign(zh, {
     "请选择已有查询作为告警条件",
   "Cannot identify a unique source panel": "无法确定唯一的原始面板",
 });
+Object.assign(zh, {
+  "Plugin library": "插件库", "Grafana plugin library": "Grafana 插件库",
+  "Renderer packages are not supported.": "当前不支持 Renderer 安装包。", "Unsupported plugin type": "不支持的插件类型", renderer: "渲染器",
+  "Search plugins": "搜索插件", "All types": "全部类型", Search: "搜索", Retry: "重试",
+  "No plugins match this filter": "没有符合筛选的插件", Version: "版本",
+  "Latest version": "最新版本", "Installed version": "已安装版本", "Available version": "可用版本",
+  Author: "作者", Downloads: "下载次数", Details: "详情", Deprecated: "已弃用",
+  Angular: "Angular", "Grafana requirement": "Grafana 版本要求", "Platform package": "平台安装包",
+  Available: "可用", Unavailable: "不可用", Included: "包含", "Not included": "不包含",
+  "Update plugin": "更新插件", "Angular code detected; this version is not supported.": "检测到 Angular 代码，当前不支持此版本。",
+  "No package is available for the server platform.": "此版本没有适合服务器平台的安装包。",
+  "Catalog metadata does not confirm runtime compatibility. Installation verifies the package signature.": "目录信息不代表运行时兼容性，安装时会验证安装包签名。",
+  "Plugin details": "插件详情", "View on grafana.com": "在 grafana.com 查看", "Version availability": "版本可用性",
+  "Import dashboard": "导入仪表盘", "Import source": "导入来源", "Grafana.com URL or ID": "Grafana.com 地址或 ID",
+  "Dashboard JSON": "仪表盘 JSON", "Upload JSON file": "上传 JSON 文件", "Load dashboard": "加载仪表盘",
+  "Community revision": "社区版本", "Dashboard UID (optional)": "仪表盘 UID（可选）", "Generate new UID": "生成新 UID",
+  "Choose datasource": "选择数据源", "Importing…": "正在导入…", "Import must be under 4 MiB": "导入文件不能超过 4 MiB",
+  "Enter a Grafana.com dashboard ID or HTTPS URL": "请输入 Grafana.com 仪表盘 ID 或 HTTPS 地址",
+  "Add a matching datasource in Plugins & datasources before importing.": "请先在“插件与数据源”中添加对应类型的数据源。",
+});
 export function t(text: string): string {
   return locale === "zh" ? zh[text] || text : text;
 }

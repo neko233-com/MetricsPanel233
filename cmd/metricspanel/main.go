@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
+	"github.com/neko233-com/MetricsPanel233/internal/grafana"
 	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
@@ -64,11 +65,12 @@ Usage: metricspanel <command> [flags]
   query        Query a metric (--metric NAME --range 30m --aggregation last)
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
   targets      catalog | exporters | list | add | set | delete | scrape
-  dashboards   list | save | export | delete
+  dashboards   list | save | export | delete | community | import-community
+               preview-grafana | import-grafana
   annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | preview | evaluate | history | delete | group-get | group-save | group-delete
-  plugins      list | get | install | catalog | enable | disable | delete
+  plugins      list | get | search | info | versions | install | catalog | enable | disable | delete
                settings | configure (Grafana application settings)
   datasources  list | get | save | query | health | delete
   live         channels | watch | publish (watch emits NDJSON)
@@ -146,6 +148,10 @@ func run(args []string) error {
 	annotationAlert := f.String("alert-uid", "", "annotation alert rule UID")
 	annotationAlertID := f.Int64("alert-id", 0, "annotation legacy alert numeric ID")
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
+	catalogQuery := f.String("query", "", "plugin catalog search text")
+	communityRevision := f.Int("community-revision", 0, "Grafana.com dashboard revision; 0 loads latest")
+	importUID := f.String("uid", "", "imported Grafana dashboard UID override")
+	importInputs := f.String("inputs", "{}", "Grafana import input bindings as a JSON string map; datasource values are UIDs")
 	channel := f.String("channel", "", "Grafana Live channel: ds/UID/path or plugin/ID/path")
 	metadata := f.String("metadata", "null", "Live subscription metadata (JSON)")
 	duration := f.Duration("duration", time.Minute, "Live watch / datasource query duration (0 disables client deadline)")
@@ -264,6 +270,26 @@ func run(args []string) error {
 		}
 	case "plugins":
 		switch action {
+		case "search":
+			kind := ""
+			f.Visit(func(option *flag.Flag) {
+				if option.Name == "kind" {
+					kind = *targetKind
+				}
+			})
+			if kind != "" && kind != "panel" && kind != "datasource" && kind != "app" {
+				return errors.New("plugin --kind must be panel, datasource or app")
+			}
+			return request("GET", "/api/v1/plugins/catalog?"+url.Values{"q": {*catalogQuery}, "type": {kind}}.Encode(), nil)
+		case "info", "versions":
+			if !model.PluginID.MatchString(*id) {
+				return errors.New("valid plugin --id required")
+			}
+			path := "/api/v1/plugin-catalog/" + url.PathEscape(*id)
+			if action == "versions" {
+				path += "/versions"
+			}
+			return request("GET", path, nil)
 		case "settings":
 			if *id == "" {
 				return errors.New("--id required")
@@ -325,7 +351,7 @@ func run(args []string) error {
 			}
 			return output(result)
 		default:
-			return errors.New("plugins requires list, get, install, catalog, enable, disable or delete")
+			return errors.New("plugins requires list, get, search, info, versions, install, catalog, enable, disable, delete, settings or configure")
 		}
 	case "datasources":
 		switch action {
@@ -571,6 +597,56 @@ func run(args []string) error {
 		}
 	case "dashboards":
 		switch action {
+		case "community", "import-community":
+			reference := *id
+			if *targetURL != "" {
+				if reference != "" {
+					return errors.New("use either --id or --url for the community dashboard")
+				}
+				reference = *targetURL
+			}
+			catalogID, embeddedRevision, err := grafana.ParseCommunityReference(reference)
+			if err != nil {
+				return err
+			}
+			if *communityRevision < 0 {
+				return errors.New("--community-revision must be nonnegative")
+			}
+			revision := *communityRevision
+			if revision == 0 {
+				revision = embeddedRevision
+			}
+			if action == "community" {
+				path := "/api/v1/dashboards/community/" + strconv.Itoa(catalogID)
+				if revision > 0 {
+					path += "?revision=" + strconv.Itoa(revision)
+				}
+				return request("GET", path, nil)
+			}
+			var bindings map[string]string
+			if err := json.Unmarshal([]byte(*importInputs), &bindings); err != nil {
+				return fmt.Errorf("invalid --inputs: %w", err)
+			}
+			return request("POST", "/api/v1/import/grafana-community", map[string]any{"id": catalogID, "revision": revision, "name": *name, "uid": *importUID, "inputs": bindings})
+		case "preview-grafana", "import-grafana":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("dashboard file must be JSON")
+			}
+			path := "/api/v1/import/grafana-preview"
+			payload := map[string]any{"dashboard": json.RawMessage(data)}
+			if action == "import-grafana" {
+				var bindings map[string]string
+				if err := json.Unmarshal([]byte(*importInputs), &bindings); err != nil {
+					return fmt.Errorf("invalid --inputs: %w", err)
+				}
+				path = "/api/v1/import/grafana-bound"
+				payload["name"], payload["uid"], payload["inputs"] = *name, *importUID, bindings
+			}
+			return request("POST", path, payload)
 		case "list":
 			return request("GET", "/api/v1/dashboards", nil)
 		case "save":
@@ -896,6 +972,11 @@ func schema() any {
 		"limits":               map[string]int{"archive_MiB": 64, "expanded_MiB": 256, "queries": 32, "response_MiB": 32},
 		"pending_capabilities": []string{"additional core UI extension points and app core services", "Angular legacy plugins", "full Grafana core services"},
 	}
+	routes["GET"] = append(routes["GET"], "/api/v1/plugins/catalog", "/api/v1/plugin-catalog/{id}", "/api/v1/plugin-catalog/{id}/versions", "/api/v1/dashboards/community/{id}")
+	routes["POST"] = append(routes["POST"], "/api/v1/import/grafana-community", "/api/v1/import/grafana-preview", "/api/v1/import/grafana-bound")
+	result["commands"] = append(result["commands"].([]string), "plugins search [--query TEXT --kind panel|datasource|app]", "plugins info --id ID", "plugins versions --id ID", "dashboards community --id NUMBER|--url GRAFANA_URL [--community-revision NUMBER]", "dashboards import-community --id NUMBER|--url GRAFANA_URL [--community-revision NUMBER --inputs '{}' --name NAME --uid UID]", "dashboards preview-grafana --file FILE|-", "dashboards import-grafana --file FILE|- [--inputs '{}' --name NAME --uid UID]")
+	result["plugin_catalog"] = map[string]any{"source": "official Grafana.com catalog", "operations": []string{"search and type filter", "details", "exact version discovery", "signed installation and update"}, "compatibility": "catalog metadata describes upstream requirements, Angular detection and server platform package availability; runtime compatibility requires validation of the installed plugin", "agent": "plugins search, info, versions and catalog return JSON"}
+	result["community_dashboards"] = map[string]any{"source": "Grafana.com dashboard ID or HTTPS URL; latest or pinned revision", "preview": "read-only load and explicit input discovery", "import": "datasource UID and constant bindings; datasource variable defaults; optional name and UID; Classic/V1/V2 resources retain opaque fields", "agent": "dashboards community, import-community, preview-grafana and import-grafana return JSON", "limits": "4 MiB JSON; official-host downloads only"}
 	result["dashboard_snapshots"] = map[string]any{
 		"capture": "Create snapshot captures every visible/repeated panel at one fixed clock through the browser SDK; first real Live frame releases its subscription; query failures save no partial dashboard",
 		"format":  "independent Grafana dashboard with builtin snapshot queries, fixed bounds and refresh disabled; values live in the durable control DB and never enter monitoring samples; legacy snapshotData DTO imports normalize runtime queries and retain original export",

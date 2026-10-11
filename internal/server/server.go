@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,16 +34,18 @@ import (
 )
 
 type Server struct {
-	Store         *store.Store
-	Collector     *collector.Collector
-	Alerts        *alerting.Engine
-	Prometheus    *promcompat.API
-	Plugins       *plugins.Manager
-	Live          *live.Hub
-	Token         string
-	RetentionDays int
-	Started       time.Time
-	requests      atomic.Uint64
+	Store             *store.Store
+	Collector         *collector.Collector
+	Alerts            *alerting.Engine
+	Prometheus        *promcompat.API
+	Plugins           *plugins.Manager
+	Live              *live.Hub
+	Community         *grafana.CommunityClient
+	Token             string
+	RetentionDays     int
+	Started           time.Time
+	requests          atomic.Uint64
+	dashboardImportMu sync.Mutex
 }
 
 func New(s *store.Store, token string, retention int) *Server {
@@ -108,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	s.promAlertRoutes(promRoutes)
 	promRoutes.Handle("/", prom.Handler())
 	s.grafanaRoutes(api, promRoutes)
+	s.dashboardCatalogRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
