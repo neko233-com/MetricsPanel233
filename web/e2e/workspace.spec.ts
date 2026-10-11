@@ -703,10 +703,18 @@ test("Native collector forms preserve credentials, scrape Redis, and use plain C
     await dialog.getByRole("button",{name:"Save collector",exact:true}).click();
     await expect(dialog).not.toBeVisible();
     const row=page.getByRole("row").filter({hasText:"Native cache"});
-    await row.getByRole("button",{name:"Scrape Native cache",exact:true}).click();
-    await expect.poll(()=>authenticated).toBe(1);
     const targets=async()=> (await page.request.get(endpoint+"/api/v1/targets")).json();
     let cache=(await targets()).find((target:any)=>target.name==="Native cache");
+    const scrapeCache=async()=> {
+      const response=page.waitForResponse(response=>response.url()===`${endpoint}/api/v1/targets/${cache.id}/scrape` && response.request().method()==="POST");
+      await row.getByRole("button",{name:"Scrape Native cache",exact:true}).click();
+      const completed=await response;
+      expect(completed.status()).toBe(200);
+      expect(await completed.json()).toEqual({accepted:6});
+    };
+    await scrapeCache();
+    await expect.poll(()=>authenticated).toBe(1);
+    cache=(await targets()).find((target:any)=>target.name==="Native cache");
     expect(cache.kind).toBe("redis"); expect(cache.samples).toBe(6); expect(cache.secure_fields.password).toBe(true); expect(JSON.stringify(cache)).not.toContain(secret);
     await row.getByRole("button",{name:"Edit Native cache",exact:true}).click();
     dialog=page.getByRole("dialog",{name:"Edit collector",exact:true});
@@ -714,7 +722,7 @@ test("Native collector forms preserve credentials, scrape Redis, and use plain C
     await expect(dialog.getByLabel("Password",{exact:true})).toHaveAttribute("placeholder","Configured; leave blank to keep");
     await dialog.getByRole("button",{name:"Save collector",exact:true}).click();
     await expect(dialog).not.toBeVisible();
-    await row.getByRole("button",{name:"Scrape Native cache",exact:true}).click(); await expect.poll(()=>authenticated).toBe(2);
+    await scrapeCache(); await expect.poll(()=>authenticated).toBe(2);
     await page.getByRole("button",{name:"Command line",exact:true}).click();
     await expect(page.getByRole("heading",{name:"Usage",exact:true})).toBeVisible();
     await expect(page.getByRole("heading",{name:"Native collectors",exact:true})).toBeVisible();
