@@ -685,29 +685,10 @@ func run(args []string) error {
 			if *id == "" {
 				return errors.New("--id is required")
 			}
-			data, err := client.call("GET", "/api/v1/dashboards", nil)
-			if err != nil {
-				return err
+			if *format != "native" && *format != "grafana" {
+				return errors.New("--format must be native or grafana")
 			}
-			var dashboards []model.Dashboard
-			if err = json.Unmarshal(data, &dashboards); err != nil {
-				return err
-			}
-			for _, d := range dashboards {
-				if d.ID == *id {
-					if *format == "grafana" {
-						if len(d.Grafana) == 0 {
-							return errors.New("dashboard has no original Grafana source")
-						}
-						return output(d.Grafana)
-					}
-					if *format != "native" {
-						return errors.New("--format must be native or grafana")
-					}
-					return output(d)
-				}
-			}
-			return errors.New("dashboard not found")
+			return request("GET", "/api/v1/dashboard-exports/"+url.PathEscape(*id)+"?format="+*format, nil)
 		case "delete":
 			if *id == "" {
 				return errors.New("--id is required")
@@ -932,6 +913,7 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
 	routes := result["api"].(map[string][]string)
+	routes["GET"] = append(routes["GET"], "/api/v1/dashboard-exports/{id}?format=native|grafana")
 	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
 	result["commands"] = append(result["commands"].([]string), "targets exporters")
 	result["prometheus_exporters"] = collector.Exporters()

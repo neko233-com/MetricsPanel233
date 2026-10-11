@@ -116,7 +116,7 @@ func PreviewInputs(data []byte) (string, []DashboardInput, error) {
 			}
 			if kind == "datasource" {
 				current, _ := variable["current"].(map[string]any)
-				return add(DashboardInput{Name: inputString(variable["name"]), Label: inputString(variable["label"]), Type: "datasource", PluginID: inputString(variable["query"]), Value: inputString(current["value"]), Required: false})
+				return add(DashboardInput{Name: inputString(variable["name"]), Label: inputString(variable["label"]), Type: "datasource", PluginID: datasourceVariablePlugin(node, variable), Value: inputString(current["value"]), Required: false})
 			}
 			if node["kind"] == "ConstantVariable" {
 				return add(DashboardInput{Name: inputString(variable["name"]), Label: inputString(variable["label"]), Type: "constant", Value: inputString(variable["query"]), Required: false})
@@ -169,7 +169,12 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 	if err != nil {
 		return nil, err
 	}
+	edits, variableBindings, err := planDatasourceRebindings(document, bindings)
+	if err != nil {
+		return nil, err
+	}
 	replacements := map[string]string{}
+	inputValues := []datasourceFieldEdit{}
 	for _, raw := range array(document["__inputs"]) {
 		definition := object(raw)
 		key := inputString(definition["name"])
@@ -178,9 +183,7 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 		} else {
 			replacements[key] = bindings[key]
 		}
-		// Keep the portable input declaration for export, with its chosen value
-		// so reimport can offer the same binding instead of losing that context.
-		definition["value"] = replacements[key]
+		inputValues = append(inputValues, datasourceFieldEdit{definition, "value", replacements[key]})
 	}
 	var replaceValue func(any) any
 	replaceValue = func(value any) any {
@@ -204,7 +207,11 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 		return value
 	}
 	replaceValue(root)
-	variableBindings := map[string]string{}
+	// Apply changes selected from the original references once, after placeholder
+	// expansion. Newly chosen UIDs and literal input defaults must not expand again.
+	for _, edit := range append(edits, inputValues...) {
+		edit.owner[edit.key] = edit.value
+	}
 	if err := walkInputObjects(document, func(node map[string]any) error {
 		labels, _ := node["labels"].(map[string]any)
 		label := inputString(labels["grafana.app/export-label"])
@@ -233,10 +240,10 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 	}); err != nil {
 		return nil, err
 	}
-	_ = walkInputObjects(document, func(node map[string]any) error {
+	for _, node := range dashboardVariableNodes(document) {
 		variable := variableObject(node)
 		if variable == nil {
-			return nil
+			continue
 		}
 		key := inputString(variable["name"])
 		value, exists := bindings[key]
@@ -244,7 +251,7 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 			value, exists = variableBindings[key]
 		}
 		if !exists {
-			return nil
+			continue
 		}
 		current := object(variable["current"])
 		current["text"], current["value"] = value, value
@@ -264,8 +271,7 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 			options = append(options, map[string]any{"text": value, "value": value, "selected": true})
 		}
 		variable["options"] = options
-		return nil
-	})
+	}
 	if name != "" {
 		if len(name) > 100 {
 			return nil, errors.New("dashboard name must contain 1–100 bytes")
@@ -306,6 +312,189 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 }
 
 func inputString(value any) string { text, _ := value.(string); return text }
+
+func datasourceVariablePlugin(node, variable map[string]any) string {
+	if node["kind"] == "DatasourceVariable" {
+		if pluginID := inputString(variable["pluginId"]); pluginID != "" {
+			return pluginID
+		}
+	}
+	return inputString(variable["query"])
+}
+
+func dashboardVariableNodes(document map[string]any) []map[string]any {
+	nodes := []map[string]any{}
+	for _, raw := range array(object(document["templating"])["list"]) {
+		nodes = append(nodes, object(raw))
+	}
+	for _, raw := range array(document["variables"]) {
+		nodes = append(nodes, object(raw))
+	}
+	return nodes
+}
+
+type datasourceFieldEdit struct {
+	owner map[string]any
+	key   string
+	value string
+}
+
+// Retained declarations identify previously bound sources. Only schema-defined
+// references may follow that mapping; queries and opaque plugin fields never do.
+func planDatasourceRebindings(document map[string]any, bindings map[string]string) ([]datasourceFieldEdit, map[string]string, error) {
+	type sourceMapping struct{ pluginID, old, value string }
+	mappings := []sourceMapping{}
+	for _, raw := range array(document["__inputs"]) {
+		definition := object(raw)
+		value, exists := bindings[inputString(definition["name"])]
+		old := inputString(definition["value"])
+		if exists && definition["type"] == "datasource" && old != "" {
+			mappings = append(mappings, sourceMapping{inputString(definition["pluginId"]), old, value})
+		}
+	}
+	resolve := func(old, pluginID string) (string, bool, error) {
+		if old == "" || strings.HasPrefix(old, "$") {
+			return "", false, nil
+		}
+		value, found := "", false
+		for _, mapping := range mappings {
+			if mapping.old != old || (pluginID != "" && mapping.pluginID != pluginID) {
+				continue
+			}
+			if found && mapping.value != value {
+				return "", false, fmt.Errorf("ambiguous datasource reference %q: inputs select different UIDs", old)
+			}
+			value, found = mapping.value, true
+		}
+		return value, found, nil
+	}
+	edits := []datasourceFieldEdit{}
+	variables := []map[string]any{}
+	labeledVariables := map[string]bool{}
+	variableBindings := map[string]string{}
+	ref := func(node map[string]any, key, pluginID string) error {
+		owner, field := node, "datasource"
+		old := inputString(node[field])
+		if source, ok := node[field].(map[string]any); ok {
+			owner, field = source, key
+			old = inputString(source[field])
+			if key == "uid" {
+				if kind := inputString(source["type"]); kind != "" {
+					pluginID = kind
+				}
+			}
+		}
+		value, found, err := resolve(old, pluginID)
+		if found {
+			edits = append(edits, datasourceFieldEdit{owner, field, value})
+		}
+		return err
+	}
+	v2Query := func(node map[string]any) error {
+		if node["kind"] != "DataQuery" && node["kind"] != "AdhocVariable" && node["kind"] != "GroupByVariable" {
+			return nil
+		}
+		labels := object(node["labels"])
+		if _, explicit := bindings[inputString(labels["grafana.app/export-label"])]; explicit {
+			if source := inputString(object(node["datasource"])["name"]); strings.HasPrefix(source, "$") {
+				labeledVariables[strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(source, "$"), "{"), "}")] = true
+			}
+			return nil // The explicit export-label mapping disambiguates this reference.
+		}
+		return ref(node, "name", inputString(node["group"]))
+	}
+	var panels func([]any) error
+	panels = func(raws []any) error {
+		for _, raw := range raws {
+			panel := object(raw)
+			if err := ref(panel, "uid", ""); err != nil {
+				return err
+			}
+			for _, raw := range array(panel["targets"]) {
+				if err := ref(object(raw), "uid", ""); err != nil {
+					return err
+				}
+			}
+			if err := panels(array(panel["panels"])); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := panels(array(document["panels"])); err != nil {
+		return nil, nil, err
+	}
+	for _, raw := range array(document["rows"]) {
+		if err := panels(array(object(raw)["panels"])); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, raw := range array(object(document["templating"])["list"]) {
+		variable := object(raw)
+		if err := ref(variable, "uid", ""); err != nil {
+			return nil, nil, err
+		}
+		if variable["type"] == "datasource" {
+			variables = append(variables, variable)
+		}
+	}
+	for _, raw := range object(document["elements"]) {
+		panel := object(raw)
+		if panel["kind"] != "Panel" {
+			continue
+		}
+		data := object(object(panel["spec"])["data"])
+		for _, raw := range array(object(data["spec"])["queries"]) {
+			if err := v2Query(object(object(object(raw)["spec"])["query"])); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for _, raw := range array(document["variables"]) {
+		node := object(raw)
+		variable := object(node["spec"])
+		if node["kind"] == "DatasourceVariable" {
+			// Preserve the spec; the synthetic type is only used while choosing a mapping.
+			variables = append(variables, map[string]any{"name": variable["name"], "query": datasourceVariablePlugin(node, variable), "current": variable["current"]})
+		}
+		if err := v2Query(node); err != nil {
+			return nil, nil, err
+		}
+		if node["kind"] == "QueryVariable" {
+			if err := v2Query(object(variable["query"])); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for _, raw := range array(object(document["annotations"])["list"]) {
+		if err := ref(object(raw), "uid", ""); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, raw := range array(document["annotations"]) {
+		annotation := object(raw)
+		if annotation["kind"] == "AnnotationQuery" {
+			if err := v2Query(object(object(annotation["spec"])["query"])); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for _, variable := range variables {
+		name := inputString(variable["name"])
+		if _, explicit := bindings[name]; explicit || labeledVariables[name] {
+			continue
+		}
+		old := inputString(object(variable["current"])["value"])
+		value, found, err := resolve(old, inputString(variable["query"]))
+		if err != nil {
+			return nil, nil, err
+		}
+		if found {
+			variableBindings[name] = value
+		}
+	}
+	return edits, variableBindings, nil
+}
 
 func variableObject(node map[string]any) map[string]any {
 	if node["kind"] == "DatasourceVariable" || node["kind"] == "ConstantVariable" {

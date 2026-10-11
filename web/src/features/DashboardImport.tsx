@@ -3,6 +3,7 @@ import { api, jsonBody, message, type Dashboard } from "../api";
 import { Dialog } from "../components/Dialog";
 import { communityReference } from "../grafana/community-reference";
 import { t } from "../i18n";
+import { grafanaImportBody } from "./grafana-import-body";
 
 type Input = {
   name: string;
@@ -14,7 +15,6 @@ type Input = {
 };
 type Preview = {
   title: string;
-  dashboard: unknown;
   inputs: Input[];
   id?: number;
   revision?: number;
@@ -29,12 +29,13 @@ export function DashboardImport({
 }: {
   close: () => void;
   imported: (dashboard: Dashboard, warnings: string[]) => Promise<void>;
-  initial?: unknown;
+  initial?: string;
 }) {
   const [mode, setMode] = useState(initial ? "json" : "community"),
     [reference, setReference] = useState("");
   const [json, setJSON] = useState(""),
     [preview, setPreview] = useState<Preview | null>(null),
+    [previewSource, setPreviewSource] = useState<string | null>(null),
     [sources, setSources] = useState<Source[]>([]);
   const [name, setName] = useState(""),
     [uid, setUID] = useState(""),
@@ -63,9 +64,10 @@ export function DashboardImport({
     setLoading(false);
     setMode(next);
     setPreview(null);
+    setPreviewSource(null);
     setError("");
   }
-  async function load(raw?: unknown, revision?: number) {
+  async function load(raw?: string, revision?: number) {
     read.current?.abort();
     const controller = new AbortController();
     read.current = controller;
@@ -73,27 +75,26 @@ export function DashboardImport({
     setError("");
     try {
       let result: Preview;
-      if (mode === "community" && !raw) {
+      let sourceText: string | null = null;
+      if (mode === "community" && raw === undefined) {
         const source = communityReference(reference);
         result = await api<Preview>(
           `/dashboards/community/${source.id}${revision || source.revision ? `?revision=${revision || source.revision}` : ""}`,
           { signal: controller.signal },
         );
       } else {
-        const source = raw ?? JSON.parse(json);
-        if (
-          new TextEncoder().encode(JSON.stringify(source)).length >
-          4 * 1024 * 1024
-        )
+        sourceText = raw ?? json;
+        if (new TextEncoder().encode(sourceText).length > 4 * 1024 * 1024)
           throw new Error(t("Import must be under 4 MiB"));
         result = await api<Preview>("/import/grafana-preview", {
           method: "POST",
-          body: jsonBody({ dashboard: source }),
+          body: grafanaImportBody(sourceText),
           signal: controller.signal,
         });
       }
       if (controller.signal.aborted) return;
       setPreview(result);
+      setPreviewSource(sourceText);
       setName(result.title);
       setUID("");
       setInputs(
@@ -107,6 +108,7 @@ export function DashboardImport({
       if (!controller.signal.aborted) {
         setError(t(message(e)));
         setPreview(null);
+        setPreviewSource(null);
       }
     } finally {
       if (!controller.signal.aborted) setLoading(false);
@@ -187,6 +189,7 @@ export function DashboardImport({
                     setLoading(false);
                     setReference(event.target.value);
                     setPreview(null);
+                    setPreviewSource(null);
                   }}
                   placeholder="1860"
                   required
@@ -204,6 +207,7 @@ export function DashboardImport({
                       setLoading(false);
                       setJSON(event.target.value);
                       setPreview(null);
+                      setPreviewSource(null);
                     }}
                     rows={6}
                     required
@@ -226,7 +230,7 @@ export function DashboardImport({
                         const text = await file.text();
                         if (!alive.current) return;
                         setJSON(text);
-                        await load(JSON.parse(text));
+                        await load(text);
                       } catch (e) {
                         setError(message(e));
                       }
@@ -266,14 +270,19 @@ export function DashboardImport({
                   : "/import/grafana-bound",
                 {
                   method: "POST",
-                  body: jsonBody({
-                    ...(preview.id
-                      ? { id: preview.id, revision: preview.revision }
-                      : { dashboard: preview.dashboard }),
-                    name,
-                    ...(uid ? { uid } : {}),
-                    inputs: bindings,
-                  }),
+                  body: preview.id
+                    ? jsonBody({
+                        id: preview.id,
+                        revision: preview.revision,
+                        name,
+                        ...(uid ? { uid } : {}),
+                        inputs: bindings,
+                      })
+                    : grafanaImportBody(previewSource!, {
+                        name,
+                        ...(uid ? { uid } : {}),
+                        inputs: bindings,
+                      }),
                 },
               );
               await imported(result.dashboard, result.warnings);

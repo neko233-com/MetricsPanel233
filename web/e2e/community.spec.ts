@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -193,6 +194,229 @@ test("Portable JSON import previews inputs, binds local datasource and retains o
   ).json();
   expect(items).toHaveLength(before.length + 1);
   expect(errors).toEqual([]);
+});
+test("Pasted and uploaded Grafana JSON retain unsafe integers in saved source and raw exports", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  const issues: string[] = [],
+    bodies: string[] = [];
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (entry) => {
+    const expectedExportFailure =
+      entry.type() === "error" &&
+      entry.location().url.includes("/api/v1/dashboard-exports/") &&
+      entry.text().includes("status of 409");
+    if (["error", "warning"].includes(entry.type()) && !expectedExportFailure)
+      issues.push(entry.text());
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/api\/v1\/import\/grafana(?:-preview|-bound)?$/.test(
+        new URL(request.url()).pathname,
+      )
+    )
+      bodies.push(request.postData() || "");
+  });
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const binary =
+    process.env.METRICSPANEL_TEST_BINARY ||
+    path.join(
+      root,
+      "bin",
+      process.platform === "win32" ? "metricspanel.exe" : "metricspanel",
+    );
+  const cases = [
+    { route: "paste", uid: "exact-integer-paste", bound: true },
+    { route: "dialog-file", uid: "exact-integer-dialog-file", bound: true },
+    { route: "original-file", uid: "exact-integer-original-file", bound: true },
+    { route: "original-file", uid: "exact-integer-file-quick", bound: false },
+  ];
+  const assertExact = (text: string) => {
+    expect(text).toMatch(/"counter"\s*:\s*9007199254740993\s*[,}]/);
+    expect(text).toMatch(/"digits"\s*:\s*"9007199254740993"/);
+    expect(text).toMatch(/"description"\s*:\s*"number 9007199254740993"/);
+    expect(text).not.toMatch(/"counter"\s*:\s*9007199254740992\s*[,}]/);
+  };
+  for (const item of cases) {
+    const name = item.bound
+      ? `Exact "${item.route}" \\ binding`
+      : "Exact quick file";
+    const panels = resource.panels.map((panel) => ({
+      ...panel,
+      datasource: {
+        type: "prometheus",
+        uid: item.bound ? "${DS_PROM}" : "metricspanel",
+      },
+    }));
+    // Keep the unsafe integer as a literal JSON token from its creation onward.
+    const text = `{
+      "uid":${JSON.stringify(item.uid)},"title":${JSON.stringify(name)},"schemaVersion":42,
+      "opaque":{"counter":9007199254740993,"digits":"9007199254740993","description":"number 9007199254740993"},
+      "__inputs":${JSON.stringify(item.bound ? resource.__inputs : [])},
+      "panels":${JSON.stringify(panels)}
+    }`;
+    const start = bodies.length;
+    await page.goto(endpoint + "/#dashboards");
+    if (item.route === "original-file") {
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "exact.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(text),
+      });
+    } else {
+      await page
+        .getByRole("button", { name: "Import dashboard", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Import dashboard",
+        exact: true,
+      });
+      await dialog.getByRole("tab", { name: "JSON", exact: true }).click();
+      if (item.route === "paste") {
+        await dialog.getByLabel("Dashboard JSON", { exact: true }).fill(text);
+        await dialog
+          .getByRole("button", { name: "Load dashboard", exact: true })
+          .click();
+      } else {
+        await dialog
+          .getByLabel("Upload JSON file", { exact: true })
+          .setInputFiles({
+            name: "exact.json",
+            mimeType: "application/json",
+            buffer: Buffer.from(text),
+          });
+      }
+    }
+    if (item.bound) {
+      const dialog = page.getByRole("dialog", {
+        name: "Import dashboard",
+        exact: true,
+      });
+      await expect(
+        dialog.getByRole("combobox", {
+          name: "Monitoring source",
+          exact: true,
+        }),
+      ).toHaveValue("metricspanel");
+      await dialog
+        .getByLabel("Dashboard UID (optional)", { exact: true })
+        .fill(item.uid);
+      await dialog
+        .getByRole("button", { name: "Import dashboard", exact: true })
+        .click();
+    }
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+    const transmitted = bodies.slice(start);
+    expect(transmitted.length).toBeGreaterThanOrEqual(2);
+    for (const body of transmitted) {
+      assertExact(body);
+      expect(body).toContain(text);
+    }
+    if (!item.bound) expect(transmitted.at(-1)).toBe(text);
+    const response = await page.request.get(endpoint + "/api/v1/dashboards");
+    expect(response.ok()).toBeTruthy();
+    const raw = await response.text();
+    assertExact(raw);
+    const saved = JSON.parse(raw).find(
+      (dashboard: any) => dashboard.name === name,
+    );
+    expect(saved).toBeDefined();
+    expect(saved.grafana.uid).toBe(item.uid);
+    const classic = await page.request.get(
+      `${endpoint}/api/dashboards/uid/${item.uid}`,
+    );
+    expect(classic.ok()).toBeTruthy();
+    assertExact(await classic.text());
+    const exported = await promisify(execFile)(
+      binary,
+      [
+        "dashboards",
+        "export",
+        "--id",
+        saved.id,
+        "--format",
+        "grafana",
+        "--server",
+        endpoint,
+      ],
+      { windowsHide: true, env: { ...process.env, METRICSPANEL_TOKEN: "" } },
+    );
+    assertExact(exported.stdout);
+    await page.evaluate(() =>
+      sessionStorage.setItem("metricspanel-token", "download-token-proof"),
+    );
+    if (item.route === "paste") {
+      await page.route(
+        /\/api\/v1\/dashboard-exports\/[^?]+\?format=grafana$/,
+        (route) =>
+          route.fulfill({
+            status: 409,
+            json: { error: { message: "Export temporarily unavailable" } },
+          }),
+        { times: 1 },
+      );
+      await page
+        .getByRole("button", { name: "Export JSON", exact: true })
+        .click();
+      await expect(page.getByRole("alert")).toHaveText(
+        "Export temporarily unavailable",
+      );
+      await expect(
+        page.getByRole("button", { name: "Export JSON", exact: true }),
+      ).toBeEnabled();
+    }
+    const templateRequest = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname ===
+        `/api/v1/dashboard-exports/${saved.id}`,
+    );
+    const templateDownload = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Export JSON", exact: true })
+      .click();
+    const templateArtifact = await templateDownload;
+    expect(templateArtifact.suggestedFilename()).toBe(
+      `${saved.id}-grafana.json`,
+    );
+    const templateAPI = await templateRequest;
+    expect(new URL(templateAPI.url()).searchParams.get("format")).toBe(
+      "grafana",
+    );
+    expect(templateAPI.headers().authorization).toBe(
+      "Bearer download-token-proof",
+    );
+    const templatePath = path.join(temp, `${item.uid}-grafana.json`);
+    await templateArtifact.saveAs(templatePath);
+    assertExact(await readFile(templatePath, "utf8"));
+    await page.goto(endpoint + "/#dashboards");
+    const nativeRequest = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname ===
+        `/api/v1/dashboard-exports/${saved.id}`,
+    );
+    const nativeDownload = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: `Export ${name}`, exact: true })
+      .click();
+    const nativeArtifact = await nativeDownload;
+    expect(nativeArtifact.suggestedFilename()).toBe(`${saved.id}.json`);
+    const nativeAPI = await nativeRequest;
+    expect(new URL(nativeAPI.url()).searchParams.get("format")).toBe("native");
+    expect(nativeAPI.headers().authorization).toBe(
+      "Bearer download-token-proof",
+    );
+    const nativePath = path.join(temp, `${item.uid}-native.json`);
+    await nativeArtifact.saveAs(nativePath);
+    assertExact(await readFile(nativePath, "utf8"));
+    await page.evaluate(() => sessionStorage.removeItem("metricspanel-token"));
+  }
+  expect(issues).toEqual([]);
 });
 test("Imported datasource UID prometheus queries its external source rather than the local alias", async ({
   page,

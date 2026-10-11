@@ -135,6 +135,10 @@ PromQL 聚合、正则 selector、rate、histogram_quantile、子查询和常用
 
 “导入仪表盘”支持输入 Grafana.com 社区 ID 或 URL、选择修订版本，也支持粘贴和上传 JSON。先加载预览，再选择数据源、填写常量、修改名称和 UID，确认后保存。未指定 UID 时生成新 UID；同名 UID 返回冲突，避免重复链接。`__inputs`、数据源变量与 V2 公共导出标签可以绑定已有数据源；常量按字面值替换。查询变量使用绑定的数据源，Prometheus 走对应代理，插件数据源调用公开 `metricFindQuery` 接口。下载仅访问 Grafana.com，限时 20 秒、JSON 最多 4 MiB。
 
+本地 JSON 以原始文本提交，网页和 CLI 导出读取服务端保存的 JSON，避免 JavaScript 舍入未知的大整数。导出模板保留已选 `__inputs.value`；重新导入时可更新实际数据源引用，无法区分的同源多输入映射会返回明确错误。已展开常量的完整重新绑定仍待补齐。V2 数据源变量读取正式 `pluginId` 字段，兼容旧 `query`。
+
+`GET /api/v1/dashboard-exports/{id}?format=native|grafana` 返回原生仪表盘或 Grafana 源文档，使用同一工作空间认证。Grafana 兼容读写接口也保留未知数字的精度。
+
 ```sh
 metricspanel dashboards community --id 1860 --community-revision 42
 metricspanel dashboards import-community --url https://grafana.com/grafana/dashboards/1860-node-exporter-full/ --community-revision 42 --inputs '{"ds_prometheus":"metricspanel"}' --name "Nodes" --uid company-nodes

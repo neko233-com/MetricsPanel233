@@ -185,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, v)
 	})
 	api.HandleFunc("POST /api/v1/dashboards", s.saveDashboard)
+	s.dashboardExportRoutes(api)
 	api.HandleFunc("POST /api/v1/import/grafana", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 4*1024*1024)
 		data, err := io.ReadAll(r.Body)

@@ -1,9 +1,10 @@
 import { t as tr } from "../i18n";
 import { useRef, useState } from "react";
 import { ArrowRight, Download, Plus, Trash2, Upload } from "lucide-react";
-import { api, download, jsonBody, message, type Dashboard } from "../api";
+import { api, downloadRaw, jsonBody, message, type Dashboard } from "../api";
 import { Dialog } from "../components/Dialog";
 import { DashboardImport } from "./DashboardImport";
+import { grafanaImportBody } from "./grafana-import-body";
 export function Dashboards({
   dashboards,
   open,
@@ -19,8 +20,9 @@ export function Dashboards({
     [name, setName] = useState(""),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
+    [exporting, setExporting] = useState(""),
     [removing, setRemoving] = useState<Dashboard | null>(null),
-    [importing, setImporting] = useState<{ initial?: unknown } | null>(null);
+    [importing, setImporting] = useState<{ initial?: string } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -62,7 +64,8 @@ export function Dashboards({
           try {
             if (file.size > 4 * 1024 * 1024)
               throw new Error("Import must be under 4 MiB");
-            const data = JSON.parse(await file.text()) as Dashboard & {
+            const text = await file.text();
+            const data = JSON.parse(text) as Dashboard & {
               title?: string;
               dashboard?: unknown;
               spec?: unknown;
@@ -73,17 +76,17 @@ export function Dashboards({
                 "/import/grafana-preview",
                 {
                   method: "POST",
-                  body: jsonBody({ dashboard: data }),
+                  body: grafanaImportBody(text),
                 },
               );
               if (preview.inputs.length) {
-                setImporting({ initial: data });
+                setImporting({ initial: text });
                 return;
               }
               const result = await api<{
                 dashboard: Dashboard;
                 warnings: string[];
-              }>("/import/grafana", { method: "POST", body: jsonBody(data) });
+              }>("/import/grafana", { method: "POST", body: text });
               imported = result.dashboard;
               if (result.warnings.length) {
                 window.alert(
@@ -93,7 +96,7 @@ export function Dashboards({
             } else
               imported = await api<Dashboard>("/dashboards", {
                 method: "POST",
-                body: jsonBody(data),
+                body: text,
               });
             await reload();
             open(imported);
@@ -151,7 +154,20 @@ export function Dashboards({
                         aria-label={`Export ${tr(d.name)}`}
                         title={tr("Export JSON")}
                         className="icon-button"
-                        onClick={() => download(`${d.id}.json`, d)}
+                        disabled={Boolean(exporting)}
+                        onClick={async () => {
+                          setExporting(d.id);
+                          try {
+                            await downloadRaw(
+                              `${d.id}.json`,
+                              `/dashboard-exports/${encodeURIComponent(d.id)}?format=native`,
+                            );
+                          } catch (e) {
+                            notify(message(e), true);
+                          } finally {
+                            setExporting("");
+                          }
+                        }}
                       >
                         <Download size={17} />
                       </button>

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,7 +58,9 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 		if found {
 			old := classicDocument(existing)
 			version = int(numeric(old["version"])) + 1
-			incoming := int(numeric(document["version"]))
+			// A version supplied by the caller is required for optimistic updates;
+			// the default shown in GET responses must not count as supplied.
+			incoming := int(numeric(dashboardInputVersion(request.Dashboard)))
 			if !request.Overwrite && incoming != version-1 {
 				writeJSON(w, 412, map[string]string{"status": "version-mismatch", "message": "dashboard exists; provide its current version or overwrite=true"})
 				return
@@ -170,8 +173,7 @@ func (s *Server) grafanaDashboard(ctx context.Context, uid string) (model.Dashbo
 	return model.Dashboard{}, false, nil
 }
 func classicDocument(d model.Dashboard) map[string]any {
-	var doc map[string]any
-	_ = json.Unmarshal(d.Grafana, &doc)
+	doc := dashboardJSONObjects(d.Grafana)
 	if wrapped, ok := doc["dashboard"].(map[string]any); ok {
 		doc = wrapped
 	}
@@ -188,15 +190,11 @@ func classicDocument(d model.Dashboard) map[string]any {
 	if doc["elements"] != nil { // Public resource -> classic API response.
 		panels := []any{}
 		for _, p := range d.Panels {
-			var config map[string]any
-			_ = json.Unmarshal(p.Config, &config)
-			panels = append(panels, config)
+			panels = append(panels, dashboardJSONObjects(p.Config))
 		}
 		variables := []any{}
 		for _, v := range d.Variables {
-			var config map[string]any
-			_ = json.Unmarshal(v.Config, &config)
-			variables = append(variables, config)
+			variables = append(variables, dashboardJSONObjects(v.Config))
 		}
 		doc = map[string]any{"title": d.Name, "panels": panels, "templating": map[string]any{"list": variables}, "schemaVersion": 41}
 	}
@@ -212,9 +210,37 @@ func classicDocument(d model.Dashboard) map[string]any {
 	}
 	return doc
 }
+
+func dashboardJSONObjects(data json.RawMessage) map[string]any {
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	_ = decoder.Decode(&object)
+	return object
+}
+
+func dashboardInputVersion(data json.RawMessage) any {
+	object := dashboardJSONObjects(data)
+	if wrapped, ok := object["dashboard"].(map[string]any); ok {
+		object = wrapped
+	}
+	if spec, ok := object["spec"].(map[string]any); ok {
+		object = spec
+	}
+	return object["version"]
+}
+
 func numeric(value any) float64 {
-	if n, ok := value.(float64); ok {
+	switch n := value.(type) {
+	case float64:
 		return n
+	case int:
+		return float64(n)
+	case json.Number:
+		value, err := n.Float64()
+		if err == nil {
+			return value
+		}
 	}
 	return 0
 }

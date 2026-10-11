@@ -78,6 +78,11 @@ func Import(data []byte) (ImportResult, error) {
 				}
 				v.Spec["query"] = query["spec"]
 			}
+			if v.Kind == "DatasourceVariable" {
+				if pluginID, _ := v.Spec["pluginId"].(string); pluginID != "" {
+					v.Spec["query"] = pluginID
+				}
+			}
 			b, _ := json.Marshal(v.Spec)
 			source.Templating.List = append(source.Templating.List, b)
 		}

@@ -187,10 +187,24 @@ export function parseLabels(text: string): Labels {
     throw new Error("Labels must be a JSON object with string values");
   return labels as Labels;
 }
-export function download(name: string, data: unknown) {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+export async function downloadRaw(name: string, path: string): Promise<void> {
+  const token = sessionStorage.getItem("metricspanel-token") || "";
+  const response = await fetch(
+    path.startsWith("/prometheus/") || path.startsWith("/api/")
+      ? path
+      : `/api/v1${path}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   );
+  if (!response.ok) {
+    const result = await response.json();
+    throw new ApiError(
+      (typeof result.error === "string"
+        ? result.error
+        : result.error?.message) || `HTTP ${response.status}`,
+      response.status,
+    );
+  }
+  const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
   link.download = name;

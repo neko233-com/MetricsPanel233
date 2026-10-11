@@ -77,6 +77,10 @@ Grafana's Prometheus datasource can use `http://localhost:7333/prometheus` with 
 Instant/range query, labels, label values, series, metadata, targets and buildinfo endpoints are implemented using the upstream PromQL engine.
 
 Import Classic, V1 and V2 dashboard resources through the UI or `metricspanel dashboards save --file grafana.json`.
+The import dialog loads Grafana.com IDs or URLs, selects a revision, and previews datasource UID and literal constant bindings before saving. It also accepts pasted or uploaded JSON. An omitted UID creates a new one; explicit duplicates return HTTP 409. Agents use `dashboards community`, `import-community`, `preview-grafana` and `import-grafana`. Native Grafana gnet/import/interpolation routes, folders and library-panel import remain pending.
+
+Local imports submit the original JSON text. Browser and CLI exports read the saved source through `GET /api/v1/dashboard-exports/{id}?format=native|grafana` with workspace authentication, preserving unknown large integers. Grafana-compatible dashboard reads and writes preserve JSON number precision too. Retained datasource input values allow exported templates to rebind actual source references; ambiguous mappings return an error. Previously expanded constants do not yet support complete rebinding. V2 datasource variables use the official `pluginId` field with legacy `query` fallback.
+
 Panel targets, refIds, instant/range queries, legends, gridPos, fieldConfig and transformation contracts are retained.
 Limits are 500 panels and 32 queries per panel. Panels query only near the visible viewport; the official renderer dependency loads only for templates.
 Import tests include a pinned community Node Exporter Full dashboard.
@@ -98,6 +102,8 @@ Custom plotting options such as stacking and multiple axes are not all executed.
 Full compatibility remains an objective, not a claim for this release.
 
 ## Grafana plugins and datasources
+
+The plugin library searches the official Grafana catalog, filters panel/datasource/app types, and displays details, historical versions and server-platform availability. Selected versions install or update through signature verification. Published requirements do not establish runtime compatibility. Agents use `plugins search --query clock --kind panel`, `plugins info --id grafana-clock-panel`, `plugins versions --id grafana-clock-panel` and `plugins catalog --id grafana-clock-panel --plugin-version 3.2.4`; output is JSON.
 
 The Plugins page installs original ZIP packages or exact versions from the official catalog, enables/disables plugins and manages datasources.
 Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.

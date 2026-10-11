@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Download, RefreshCw, Pencil } from "lucide-react";
 import {
-  download,
+  downloadRaw,
   message,
   type Dashboard,
   type Panel,
@@ -182,6 +182,8 @@ export function TemplateView({
 }) {
   const variables = dashboard.variables || [];
   const [editingQueries, setEditingQueries] = useState(false);
+  const [exporting, setExporting] = useState(false),
+    [exportError, setExportError] = useState("");
   const [values, setValues] = useState<VariableValues>(() =>
     selectedVariables(variables, new URLSearchParams(location.search)),
   );
@@ -328,9 +330,21 @@ export function TemplateView({
             onChange={onRefreshChoice}
           />
           <button
-            onClick={() =>
-              download(`${dashboard.id}-grafana.json`, dashboard.grafana)
-            }
+            disabled={exporting}
+            onClick={async () => {
+              setExporting(true);
+              setExportError("");
+              try {
+                await downloadRaw(
+                  `${dashboard.id}-grafana.json`,
+                  `/dashboard-exports/${encodeURIComponent(dashboard.id)}?format=grafana`,
+                );
+              } catch (e) {
+                setExportError(message(e));
+              } finally {
+                setExporting(false);
+              }
+            }}
           >
             <Download size={17} />
             {t("Export JSON")}
@@ -394,9 +408,9 @@ export function TemplateView({
             ))}
         </div>
       )}
-      {error && (
+      {(exportError || error) && (
         <p className="form-error" role="alert">
-          {error}
+          {exportError || error}
         </p>
       )}
       <div className="grafana-grid">
