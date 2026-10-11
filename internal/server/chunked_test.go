@@ -207,18 +207,36 @@ func TestRealSDKChunkedHTTPFlushAppendErrorsCancellationAndAuth(t *testing.T) {
 	_, err = s.SaveDataSource(ctx, model.DataSourceInput{DataSource: model.DataSource{UID: "a-slow", Name: "Slow SDK", Type: ds.Type}, SecureJSONData: map[string]string{"apiKey": "test-secret-233"}})
 	require.NoError(t, err)
 	path = "/api/ds/query"
-	response = post(ctx, queryBody(`[{"refId":"S","value":1,"chunks":1,"firstDelayMs":500,"datasource":{"uid":"a-slow"}},{"refId":"F","value":233,"chunks":1,"datasource":{"uid":"sdk-chunks"}}]`), token)
+	parallelBefore := stats()
+	parallelCtx, stopParallel := context.WithCancel(ctx)
+	defer stopParallel()
+	// Keep the slow stream open until this test cancels it. A single delayed
+	// chunk can finish (or not start yet) before the separate stats RPC arrives.
+	response = post(parallelCtx, queryBody(`[{"refId":"S","value":1,"chunks":1000,"firstDelayMs":500,"delayMs":1000,"datasource":{"uid":"a-slow"}},{"refId":"F","value":233,"chunks":1,"datasource":{"uid":"sdk-chunks"}}]`), token)
 	require.Equal(t, 200, response.StatusCode)
 	reader = bufio.NewReader(response.Body)
 	line, err = reader.ReadBytes('\n')
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(line, &first))
 	assert.Equal(t, "F", first.RefID)
-	assert.Equal(t, int64(1), stats()["active"])
-	remaining, err := io.ReadAll(reader)
+	assert.Empty(t, first.Error)
+	require.Eventually(t, func() bool {
+		current := stats()
+		return current["ref_S"] > parallelBefore["ref_S"] && current["active"] > 0
+	}, 5*time.Second, 10*time.Millisecond, "fast frame must arrive while the slow SDK stream is unfinished")
+	line, err = reader.ReadBytes('\n')
 	require.NoError(t, err)
-	assert.Contains(t, string(remaining), `"refId":"S"`)
+	var slow queryChunk
+	require.NoError(t, json.Unmarshal(line, &slow))
+	assert.Equal(t, "S", slow.RefID)
+	assert.Empty(t, slow.Error)
+	assert.NotEmpty(t, slow.Frame)
+	stopParallel()
 	response.Body.Close()
+	require.Eventually(t, func() bool {
+		current := stats()
+		return current["active"] == 0 && current["cancelled"] > parallelBefore["cancelled"]
+	}, 5*time.Second, 10*time.Millisecond, "closing the multi-source HTTP stream must cancel the unfinished SDK query")
 }
 
 func TestModernNativePrometheusChunkedAndJSONQueries(t *testing.T) {
