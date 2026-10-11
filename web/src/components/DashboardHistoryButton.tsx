@@ -219,7 +219,7 @@ function DashboardHistory({
                       </td>
                       <td>{item.createdBy || "—"}</td>
                       <td>
-                        {item.message || "—"}
+                        {item.message === "Current version imported during upgrade" ? t(item.message) : item.message || "—"}
                         {item.restoredFromKey !== "0" &&
                           item.restoredFromKey && (
                             <small className="history-restored">

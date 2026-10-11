@@ -63,6 +63,7 @@ Usage: metricspanel <command> [flags]
   health       Check server health
   stats        Show storage and collection statistics
   metrics      List metric names and series counts
+  processes    list | get (read-only processes visible to the server host)
   query        Query a metric (--metric NAME --range 30m --aggregation last)
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
   targets      catalog | exporters | list | add | set | delete | scrape
@@ -102,6 +103,8 @@ func run(args []string) error {
 		return output(map[string]string{"version": version, "go": "1.27"})
 	case "schema":
 		return output(schema())
+	case "processes":
+		return runHostProcesses(args[1:])
 	}
 	command := args[0]
 	rest := args[1:]
@@ -921,6 +924,85 @@ func run(args []string) error {
 	return fmt.Errorf("unknown command/action: %s %s", command, action)
 }
 
+func runHostProcesses(args []string) error {
+	if len(args) == 0 {
+		return errors.New("processes requires list or get; see processes --help")
+	}
+	action := args[0]
+	if action == "--help" || action == "-h" || action == "help" {
+		fmt.Fprintln(os.Stdout, "Usage: metricspanel processes list [--prefix TEXT --limit 200 --continue-token TOKEN]\n       metricspanel processes get --pid PID [--start-token TOKEN]\nRead-only processes in the MetricsPanel233 server host/process namespace. Client commands return JSON.")
+		return nil
+	}
+	if action != "list" && action != "get" {
+		return fmt.Errorf("unknown processes action %q; use list or get", action)
+	}
+	f := flag.NewFlagSet("processes "+action, flag.ContinueOnError)
+	endpoint := f.String("server", env("METRICSPANEL_URL", "http://127.0.0.1:7333"), "MetricsPanel233 server URL; processes belong to this server host")
+	token := f.String("token", env("METRICSPANEL_TOKEN", ""), "API Bearer token; prefer environment variable")
+	f.Bool("json", true, "JSON output (always enabled)")
+	var prefix, continueToken, startToken, pid string
+	var limit int
+	if action == "list" {
+		f.StringVar(&prefix, "prefix", "", "case-insensitive process name prefix (at most 128 UTF-8 bytes)")
+		f.IntVar(&limit, "limit", 200, "page size (1-1000); continuation retains its original page size when omitted")
+		f.StringVar(&continueToken, "continue-token", "", "opaque continueToken from the previous page; expires after 60 seconds")
+	} else {
+		f.StringVar(&pid, "pid", "", "process ID returned by processes list; required")
+		f.StringVar(&startToken, "start-token", "", "opaque string startToken from list; detects PID reuse when supplied")
+	}
+	if err := f.Parse(args[1:]); err != nil {
+		return err
+	}
+	if f.NArg() != 0 {
+		return errors.New("unexpected positional arguments; use named flags")
+	}
+	prefixProvided, limitProvided := false, false
+	f.Visit(func(option *flag.Flag) {
+		prefixProvided = prefixProvided || option.Name == "prefix"
+		limitProvided = limitProvided || option.Name == "limit"
+	})
+	query := url.Values{}
+	path := "/api/v1/host/processes"
+	if action == "list" {
+		if !utf8.ValidString(prefix) || len(prefix) > 128 || strings.ContainsAny(prefix, "\x00\r\n") {
+			return errors.New("--prefix must be valid UTF-8 without line breaks or NUL, at most 128 bytes")
+		}
+		if limit < 1 || limit > 1000 {
+			return errors.New("--limit must be between 1 and 1000")
+		}
+		if continueToken == "" || limitProvided {
+			query.Set("limit", strconv.Itoa(limit))
+		}
+		if prefixProvided {
+			query.Set("prefix", strings.ToLower(prefix))
+		}
+		if continueToken != "" {
+			query.Set("continue", continueToken)
+		}
+	} else {
+		parsedPID, err := strconv.ParseUint(pid, 10, 32)
+		if err != nil {
+			return errors.New("--pid is required and must be between 0 and 4294967295")
+		}
+		if len(startToken) > 256 {
+			return errors.New("--start-token must contain at most 256 bytes")
+		}
+		path += "/" + strconv.FormatUint(parsedPID, 10)
+		if startToken != "" {
+			query.Set("startToken", startToken)
+		}
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token}
+	result, err := client.call(http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	return output(result)
+}
+
 func readFile(path string) ([]byte, error) {
 	if path != "-" {
 		file, err := os.Open(path)
@@ -1152,6 +1234,7 @@ func schema() any {
 	routes := result["api"].(map[string][]string)
 	addDashboardResourceSchema(result, routes)
 	addDashboardHistorySchema(result, routes)
+	addHostProcessSchema(result, routes)
 	routes["GET"] = append(routes["GET"], "/api/v1/dashboard-exports/{id}?format=native|grafana")
 	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
 	result["commands"] = append(result["commands"].([]string), "targets exporters")

@@ -141,6 +141,80 @@ export type Stats = {
   started_at: number;
   last_sample: number;
 };
+export type ProcessFieldState =
+  | "ok" | "warming_up" | "denied" | "exited" | "unsupported" | "unavailable";
+export type HostProcess = {
+  id: string;
+  pid: number;
+  ppid: number;
+  name: string;
+  nameSource: string;
+  startToken: string;
+  startedAt: number | null;
+  cpuSecondsTotal: number | null;
+  cpuPercent: number | null;
+  memoryRssBytes: string | null;
+  threads: number | null;
+  iconKey: string;
+  states: { startTime: ProcessFieldState; cpu: ProcessFieldState; memory: ProcessFieldState };
+};
+export type HostProcessSource = {
+  id: string;
+  hostname: string;
+  os: string;
+  scope: "host" | "pid_namespace";
+  capabilities: { cpu: boolean; memory: boolean; icons: boolean };
+};
+export type HostProcesses = {
+  source: HostProcessSource;
+  snapshotId: string;
+  sampledAt: number;
+  expiresAt: number;
+  prefix: string;
+  order: "name_asc_pid_asc";
+  total: number;
+  items: HostProcess[];
+  continueToken: string;
+  partial: boolean;
+  warnings: string[];
+};
+export type HostProcessDetail = {
+  source: HostProcessSource;
+  sampledAt: number;
+  process: HostProcess;
+};
+// API pages already use the fixed name/PID order. Keep that order between
+// samples unless the membership or a process name actually changes.
+export function stableProcessRows(previous: HostProcess[], incoming: HostProcess[]): HostProcess[] {
+  if (previous.length !== incoming.length) return incoming;
+  const byIdentity = new Map(incoming.map((item) => [item.id, item]));
+  if (previous.some((item) => byIdentity.get(item.id)?.name !== item.name)) return incoming;
+  return previous.map((item) => byIdentity.get(item.id)!);
+}
+export function formatProcessMemory(bytes: string | null): string {
+  if (bytes === null || !/^\d+$/.test(bytes)) return "—";
+  const value = BigInt(bytes), units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+  let divisor = 1n, index = 0;
+  while (value >= divisor * 1024n && index < units.length - 1) {
+    divisor *= 1024n;
+    index++;
+  }
+  const tenths = (value * 10n + divisor / 2n) / divisor;
+  return `${tenths / 10n}${tenths % 10n ? `.${tenths % 10n}` : ""} ${units[index]}`;
+}
+export async function processIconBlob(iconKey: string, signal: AbortSignal): Promise<Blob> {
+  const token = sessionStorage.getItem("metricspanel-token") || "";
+  const response = await fetch(`/api/v1/host/process-icons/${encodeURIComponent(iconKey)}`, {
+    signal,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  if (response.headers.get("Content-Type")?.split(";")[0].trim() !== "image/png")
+    throw new Error("Invalid process icon response");
+  const blob = await response.blob();
+  if (blob.size > 256 * 1024) throw new Error("Process icon is too large");
+  return blob;
+}
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {

@@ -94,6 +94,22 @@ Docker 集成测试在一个容器中启动 MySQL 协议兼容的 MariaDB、Redi
 `timestamp` 使用 Unix 毫秒，省略 / 0 使用服务端时间。同序列同时间戳重复写入覆盖旧值。
 NaN / Inf 无法存入 JSON；exporter 的非有限样本会跳过。支持 Prometheus 文本、OpenMetrics 1.0 和 delimited protobuf；经典 histogram / summary 正常入库。原生 histogram 明确拒绝，exemplar 不存储。Kerberos/SPNEGO、Sentinel 自动发现和集群自动遍历仍待补齐。
 
+## 主机进程
+
+本轮进程功能面向 Windows 桌面。“进程”页面显示服务端所在机器或 PID 命名空间中可见的进程，按不区分大小写的名称 A–Z 排列，同名按 PID 排列。可输入任意名称前缀，或点击 A–Z 筛选。默认每 5 秒更新 CPU、驻留内存和采集时间；这些数值变化不会改变行顺序。名称或进程集合变化时按名称重新排列。图标异步加载，不影响排序。
+
+列表展示图标、名称、PID、PPID、CPU 和驻留内存，点击名称查看启动时间、线程数与字段状态，也可直接查询 PID。Windows 从可执行文件提取真实图标，并通过原生 API 读取 CPU 和内存。没有图标或无法读取时使用通用图标。权限不足、进程退出与不支持的字段显示为不可用，不写成零。CPU 的 100% 表示占用一个核心，多核进程可以超过 100%。
+
+```sh
+metricspanel processes list --prefix G --limit 20
+metricspanel processes list --continue-token CONTINUE_TOKEN
+metricspanel processes get --pid 233 --start-token START_TOKEN
+```
+
+分页固定在同一份 60 秒快照中，续页可省略前缀和数量以继承原值。快照过期或被回收返回 410，需要重新读取首页；修改续页的前缀或数量返回 400。`startToken` 是不透明字符串，使用列表中的原值；PID 已被其他进程复用时返回 409，进程退出时返回 404。不传 token 时读取当前 PID。PID、快照和进程清单随运行环境变化，不能作为持久资源 ID。
+
+API 为 `GET /api/v1/host/processes`、`GET /api/v1/host/processes/{pid}`、`GET /api/v1/host/process-icons/{iconKey}`，使用工作空间相同的 Bearer 认证。JSON 中 `memoryRssBytes` 使用十进制字符串，`startToken` 使用原始字符串，agent 不需要转换为浮点数。容器部署显示容器可见的进程；远程 CLI 查询指定服务的进程。此页面提供实时查看，进程指标的历史存储和远程主机发现尚待接入。
+
 ## Agent CLI
 
 CLI 输出默认就是 JSON；错误写入 stderr，退出码 1。`--json` 也可显式指定。
@@ -592,7 +608,7 @@ Windows：`pwsh -File scripts/test-docker.ps1 -Repeat 2`；race 测试需本机 
 不清理其他项目或公共基础镜像，BuildKit 缓存会复用。若进程被强制杀死，下次执行会清理旧项目。
 
 测试涵盖真实 Go 抓取 / 主动上报、MySQL 协议 / Redis / PostgreSQL / ClickHouse 直连和 MySQL exporter、大数据 API 协议、两种后端的重复写入、应用重启、ClickHouse 重启、整个测试容器重启、
-Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源 / Live、Agent NDJSON 订阅、重启及资源清理。
+Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源 / Live、Agent NDJSON 订阅、同名真实进程的 PID / 分页 / 认证 CLI、重启及资源清理。
 
 浏览器自动化：先构建网页和 `bin/metricspanel[.exe]`，再运行：
 
@@ -621,6 +637,7 @@ internal/collector    抓取、解析与调度
 internal/store        SQLite / ClickHouse 指标存储 + 配置持久化
 internal/promcompat   官方 PromQL 引擎适配与兼容 API
 internal/grafana       Grafana JSON 导入
+internal/hostprocess  原生进程清单、固定分页与图标缓存
 web/src               React 应用、双语、SVG 图表
 examples/go-service   可运行的 Go 业务接入示例
 tests/integration     真实 Docker 全链路验收

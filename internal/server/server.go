@@ -115,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	s.dashboardResourceRoutes(api)
 	s.dashboardHistoryRoutes(api)
 	s.dashboardHistoryResourceRoutes(api)
+	s.hostProcessRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)

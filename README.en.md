@@ -55,6 +55,22 @@ HTTP collectors support Basic or Bearer authentication (Bearer takes precedence)
 
 Prometheus text, OpenMetrics 1.0 and delimited protobuf support scalar samples and classic histograms/summaries. Native histogram samples fail explicitly; exemplars are not stored. Kerberos/SPNEGO, Sentinel discovery and automatic cluster fan-out remain unfinished.
 
+## Host processes
+
+This process release targets Windows desktop. The Processes page lists processes visible to the server host or PID namespace in case-insensitive name order, A–Z, with numeric PID as the tie breaker. Filter by any name prefix or use the A–Z shortcuts. CPU, resident memory and collection time refresh every five seconds by default without changing row order. Names or membership changes update the name order; asynchronously loaded icons never reorder rows.
+
+Rows show the icon, name, PID, PPID, CPU and resident memory. Open a name for start time, thread count and field states, or look up a PID directly. Windows extracts executable icons and reads CPU and memory through native APIs. Unavailable icons use a generic fallback. Permission failures, exited processes and unsupported fields stay unavailable rather than becoming zero. CPU 100% represents one core, so a multicore process can exceed 100%.
+
+```sh
+metricspanel processes list --prefix G --limit 20
+metricspanel processes list --continue-token CONTINUE_TOKEN
+metricspanel processes get --pid 233 --start-token START_TOKEN
+```
+
+Pagination retains one snapshot for 60 seconds. Continuations may omit prefix and limit to inherit the original values. Expired or evicted snapshots return 410 and require a new first page; changing continuation parameters returns 400. Preserve the opaque string `startToken` from the list: a reused PID returns 409, and an exited process returns 404. Without a token, get reads the current PID. Process lists, PIDs and snapshots change with the running environment and are not durable resource identifiers.
+
+`GET /api/v1/host/processes`, `GET /api/v1/host/processes/{pid}` and `GET /api/v1/host/process-icons/{iconKey}` use the same workspace Bearer authentication. `memoryRssBytes` is a decimal string and `startToken` is an opaque string; agents need no floating-point conversion. A container exposes its visible process namespace; a remote CLI reads the selected server. This page provides live inventory; durable per-process metrics and remote host discovery remain pending.
+
 ## Storage and performance
 
 ClickHouse uses vectorized columnar execution, partitioned ReplacingMergeTree, compression, TTL and acknowledged durable batch inserts.
@@ -475,7 +491,7 @@ go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
 
 Or on Windows: `pwsh -File scripts/test-docker.ps1 -Repeat 2`.
 The testify integration suite verifies real Go push/scrape, real MySQL exporter collection, both storage backends, duplicate writes,
-application and ClickHouse restarts, Grafana queries/templates and resource cleanup.
+application and ClickHouse restarts, Grafana queries/templates, actual same-name process PIDs, snapshot pagination, authenticated process CLI and resource cleanup.
 Four concurrent writers additionally ingest 100,000 SQLite samples and 1,000,000 ClickHouse samples; the suite reports batch p50/p95 and 24h aggregation time.
 These bounded workloads do not establish million-series or sustained production performance.
 The suite also stores 10,000 x 64-dimensional vectors, verifies HNSW use through EXPLAIN, measures recall@10 against exact search, and rechecks the index plan after database restart.
