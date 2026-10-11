@@ -5,6 +5,7 @@ import {
   api,
   formatValue,
   jsonBody,
+  message,
   parseLabels,
   aggregations,
   timeAgo,
@@ -22,6 +23,7 @@ import { TimeRangePicker } from "../components/TimeRangePicker";
 import { RefreshPicker } from "../components/RefreshPicker";
 import { AnnotationQueriesButton } from "../components/AnnotationQueriesButton";
 import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
+import { DashboardHistoryButton } from "../components/DashboardHistoryButton";
 export function DashboardView({
   dashboard,
   stats,
@@ -49,12 +51,18 @@ export function DashboardView({
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
 }) {
-  const [editor, setEditor] = useState<Panel | "new" | null>(null);
-  const [removing, setRemoving] = useState<Panel | null>(null);
-  async function save(panels: Panel[]) {
-    await api(`/dashboards/${encodeURIComponent(dashboard.id)}`, {
+  const [editor, setEditor] = useState<{ panel: Panel | "new"; baseline: Dashboard } | null>(null);
+  const [removing, setRemoving] = useState<{ panel: Panel; baseline: Dashboard } | null>(null);
+  const [removalError, setRemovalError] = useState(""), [removalBusy, setRemovalBusy] = useState(false);
+  const openEditor = (panel?: Panel) => {
+    const baseline = structuredClone(dashboard);
+    setEditor({ panel: panel ? baseline.panels.find((item) => item.id === panel.id)! : "new", baseline });
+  };
+  async function save(baseline: Dashboard, panels: Panel[]) {
+    await api(`/dashboards/${encodeURIComponent(baseline.id)}`, {
       method: "PUT",
-      body: jsonBody({ ...dashboard, panels }),
+      headers: { "If-Match": String(baseline.updated_at) },
+      body: jsonBody({ ...baseline, panels }),
     });
     await reload();
   }
@@ -67,8 +75,8 @@ export function DashboardView({
       annotationDashboard={dashboard}
       mint={i === 2}
       onRange={onRange}
-      onEdit={() => setEditor(p)}
-      onRemove={() => setRemoving(p)}
+      onEdit={() => openEditor(p)}
+      onRemove={() => { setRemovalError(""); setRemoving({ panel: p, baseline: structuredClone(dashboard) }); }}
     />
   );
   return (
@@ -86,6 +94,7 @@ export function DashboardView({
           </p>
         </div>
         <div className="toolbar">
+          <DashboardHistoryButton dashboard={dashboard} reload={reload} />
           <DashboardSnapshotButton
             dashboard={dashboard}
             range={range}
@@ -105,7 +114,7 @@ export function DashboardView({
           >
             <RefreshCw size={19} />
           </button>
-          <button className="primary" onClick={() => setEditor("new")}>
+          <button className="primary" onClick={() => openEditor()}>
             <Plus size={18} />
             {tr("Add panel")}
           </button>
@@ -163,7 +172,7 @@ export function DashboardView({
               <div className="empty-workspace">
                 <h2>{tr("Add your first metric panel")}</h2>
                 <p>{tr("Select a metric to start plotting live data.")}</p>
-                <button onClick={() => setEditor("new")} className="primary">
+                <button onClick={() => openEditor()} className="primary">
                   <Plus size={18} />
                   {tr("Add panel")}
                 </button>
@@ -243,14 +252,15 @@ export function DashboardView({
       )}
       {editor && (
         <PanelEditor
-          panel={editor === "new" ? undefined : editor}
+          panel={editor.panel === "new" ? undefined : editor.panel}
           metrics={metrics}
           onClose={() => setEditor(null)}
           onSave={async (p) => {
             await save(
-              editor === "new" || p.id !== editor.id
-                ? [...dashboard.panels, p]
-                : dashboard.panels.map((item) => (item.id === p.id ? p : item)),
+              editor.baseline,
+              editor.panel === "new" || p.id !== editor.panel.id
+                ? [...editor.baseline.panels, p]
+                : editor.baseline.panels.map((item) => (item.id === p.id ? p : item)),
             );
             setEditor(null);
             notify(tr("Panel saved"));
@@ -258,26 +268,31 @@ export function DashboardView({
         />
       )}
       {removing && (
-        <Dialog title={tr("Remove panel")} onClose={() => setRemoving(null)}>
+        <Dialog title={tr("Remove panel")} onClose={() => { if (!removalBusy) setRemoving(null); }}>
           <p>
             {tr("Remove \u201C")}
-            {removing.title}
+            {removing.panel.title}
             {tr("\u201D from this dashboard?")}
           </p>
+          {removalError && <p className="form-error" role="alert">{tr(removalError)}</p>}
           <div className="form-actions">
-            <button onClick={() => setRemoving(null)}>{tr("Cancel")}</button>
+            <button disabled={removalBusy} onClick={() => setRemoving(null)}>{tr("Cancel")}</button>
             <button
               className="danger"
+              disabled={removalBusy}
               onClick={async () => {
+                setRemovalBusy(true);
+                setRemovalError("");
                 try {
                   await save(
-                    dashboard.panels.filter((p) => p.id !== removing.id),
+                    removing.baseline,
+                    removing.baseline.panels.filter((p) => p.id !== removing.panel.id),
                   );
                   setRemoving(null);
                   notify(tr("Panel removed"));
                 } catch (e) {
-                  notify(String(e), true);
-                }
+                  setRemovalError(message(e));
+                } finally { setRemovalBusy(false); }
               }}
             >
               {tr("Remove panel")}
@@ -311,7 +326,7 @@ function PanelEditor({
   const [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
   return (
-    <Dialog title={tr(panel ? "Edit panel" : "Add panel")} onClose={onClose}>
+    <Dialog title={tr(panel ? "Edit panel" : "Add panel")} onClose={saving ? () => {} : onClose}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -336,7 +351,7 @@ function PanelEditor({
               labels: parseLabels(labels),
             });
           } catch (e) {
-            setError(String(e));
+            setError(message(e));
             setSaving(false);
           }
         }}
@@ -436,7 +451,7 @@ function PanelEditor({
               {tr("Duplicate panel")}
             </button>
           ) : null}
-          <button type="button" onClick={onClose}>
+          <button type="button" disabled={saving} onClick={onClose}>
             {tr("Cancel")}
           </button>
           <button className="primary" disabled={saving}>

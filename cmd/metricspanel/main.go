@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
@@ -67,6 +68,7 @@ Usage: metricspanel <command> [flags]
   targets      catalog | exporters | list | add | set | delete | scrape
   dashboards   list | save | export | delete | community | import-community
                preview-grafana | import-grafana | move | library-add | library-unlink
+               history | version | version-export | compare | restore
   folders      list | get | create | save | move | delete
   library      list | get | save | model | connections | delete
   annotations  list | get | save | patch | tags | delete | graphite
@@ -127,6 +129,12 @@ func run(args []string) error {
 	format := f.String("format", "native", "dashboard export format: native or grafana (original source)")
 	id := f.String("id", "", "resource ID")
 	dashboardRevision := f.Int64("revision", 0, "expected updated_at for an atomic native dashboard save")
+	dashboardVersion := f.Int64("dashboard-version", 0, "saved dashboard version to read, export or restore")
+	baseVersion := f.Int64("base-version", 0, "dashboard comparison base version")
+	newVersion := f.Int64("new-version", 0, "dashboard comparison target version")
+	historyOffset := f.Int("offset", 0, "dashboard history offset for the first page")
+	historyToken := f.String("continue-token", "", "opaque dashboard history continuation token")
+	dashboardMessage := f.String("message", "", "dashboard save or restore message (at most 500 characters)")
 	alertFolder := f.String("folder-uid", "", "dashboard, library panel or alert group folder UID; empty/general is the root")
 	folderParent := f.String("parent-uid", "", "parent folder UID; empty moves to the root")
 	folderForceRules := f.Bool("force-delete-rules", false, "delete alert rules when deleting a folder and its contents")
@@ -177,13 +185,19 @@ func run(args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
 	}
-	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink"))) {
-		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add and library-unlink")
+	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink" && action != "restore"))) {
+		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add, library-unlink and restore")
+	}
+	if *dashboardMessage != "" && (command != "dashboards" || action != "save" && action != "restore") {
+		return errors.New("--message is only supported by dashboards save and restore")
+	}
+	if utf8.RuneCountInString(*dashboardMessage) > 500 {
+		return errors.New("--message must contain at most 500 characters")
 	}
 	if *alertPreviewAt < 0 || *alertPreviewAt > 253402300799999 || (*alertPreviewAt != 0 && (command != "alerts" || action != "preview")) {
 		return errors.New("--at must be 0 to 253402300799999 and is only supported by alerts preview")
 	}
-	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision}
+	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision, dashboardMessage: *dashboardMessage}
 	request := func(method, path string, payload any) error {
 		result, err := client.call(method, path, payload)
 		if err != nil {
@@ -742,6 +756,44 @@ func run(args []string) error {
 		}
 	case "dashboards":
 		switch action {
+		case "history", "version", "version-export", "compare", "restore":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			if action == "history" {
+				if *limit < 1 || *limit > 1000 || *historyOffset < 0 {
+					return errors.New("history --limit must be 1–1000 and --offset nonnegative")
+				}
+				query := url.Values{"limit": {strconv.Itoa(*limit)}, "start": {strconv.Itoa(*historyOffset)}}
+				if *historyToken != "" {
+					query.Set("continueToken", *historyToken)
+				}
+				return request("GET", "/api/v1/dashboard-versions/"+url.PathEscape(*id)+"?"+query.Encode(), nil)
+			}
+			if action == "compare" {
+				if *baseVersion <= 0 || *newVersion <= 0 {
+					return errors.New("compare requires positive --base-version and --new-version")
+				}
+				return request("POST", "/api/v1/dashboard-compare/"+url.PathEscape(*id), map[string]int64{"baseVersion": *baseVersion, "newVersion": *newVersion})
+			}
+			if *dashboardVersion <= 0 {
+				return errors.New("a positive --dashboard-version is required")
+			}
+			if action == "restore" {
+				payload := map[string]any{"version": *dashboardVersion, "message": *dashboardMessage}
+				if *dashboardRevision > 0 {
+					payload["revision"] = *dashboardRevision
+				}
+				return request("POST", "/api/v1/dashboard-restore/"+url.PathEscape(*id), payload)
+			}
+			path := "/api/v1/dashboard-versions/" + url.PathEscape(*id) + "/" + strconv.FormatInt(*dashboardVersion, 10)
+			if action == "version-export" {
+				if *format != "native" && *format != "grafana" {
+					return errors.New("--format must be native or grafana")
+				}
+				path = "/api/v1/dashboard-version-exports/" + url.PathEscape(*id) + "/" + strconv.FormatInt(*dashboardVersion, 10) + "?format=" + *format
+			}
+			return request("GET", path, nil)
 		case "move", "library-add", "library-unlink":
 			if *id == "" {
 				return errors.New("--id is required")
@@ -885,6 +937,7 @@ type apiClient struct {
 	endpoint, token   string
 	disableProvenance bool
 	dashboardRevision int64
+	dashboardMessage  string
 	rawResponse       bool
 }
 
@@ -941,6 +994,9 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 	}
 	if c.dashboardRevision > 0 && method == "PUT" && strings.HasPrefix(path, "/api/v1/dashboards/") {
 		req.Header.Set("If-Match", strconv.FormatInt(c.dashboardRevision, 10))
+	}
+	if c.dashboardMessage != "" && (strings.HasPrefix(path, "/api/v1/dashboards") || path == "/api/v1/import/grafana") {
+		req.Header.Set("X-Dashboard-Message", strconv.QuoteToASCII(c.dashboardMessage))
 	}
 	timeout := 20 * time.Second
 	if path == "/api/v1/plugins/catalog" || strings.HasSuffix(path, "/install") {
@@ -1095,6 +1151,7 @@ func schema() any {
 	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
 	routes := result["api"].(map[string][]string)
 	addDashboardResourceSchema(result, routes)
+	addDashboardHistorySchema(result, routes)
 	routes["GET"] = append(routes["GET"], "/api/v1/dashboard-exports/{id}?format=native|grafana")
 	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
 	result["commands"] = append(result["commands"].([]string), "targets exporters")

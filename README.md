@@ -150,6 +150,20 @@ metricspanel dashboards import-grafana --file dashboard.json --inputs '{"DS_PROM
 
 仪表盘页提供嵌套文件夹、移动和版本检查。「库面板」保存共享面板模型；更新后所有引用读取新配置，解除引用时保留当前配置。删除仍在使用的库面板会返回冲突。删除文件夹会删除子文件夹和其中的仪表盘、未使用库面板；包含系统仪表盘或已引用库面板时拒绝删除。删除其中的告警规则需要显式选择，正在评估的规则会阻止删除。文件夹、模型、关联和稳定数字 ID 重启后保留。快照会解除库引用，避免共享配置变化影响已冻结数据。
 
+「版本历史」显示保存时间、作者与说明，可查看或下载旧 JSON、比较配置、恢复旧版。每次成功保存与历史记录在同一事务提交；恢复生成新版本，保留当前 UID、数字 ID、文件夹和插件元数据，库面板继续引用当前共享模型。版本冲突、相同配置恢复或缺失库引用不会写入新记录。原生面板编辑与删除使用打开窗口时的版本检查，过期编辑需关闭并重新打开。升级旧数据库只登记仍存在的当前版本，不改写原始仪表盘，也不虚构此前历史。目前保留全部历史，按数量清理的配置尚待补齐。
+
+原生 Grafana `GET /api/dashboards/uid/{uid}/versions`、版本详情及恢复接口可用；资源 API 的历史 selector 支持官方客户端的 V1/V2 双流过滤和稳定分页，原文保留真实格式，并明确标记未转换的格式。该接口尚不代表完整资源 CRUD。契约参考 [固定版本客户端](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard/api/UnifiedDashboardAPI.ts) 和 [历史模型](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/dashboardversion/model.go)。
+
+```sh
+metricspanel dashboards save --id DASHBOARD_ID --file native.json --revision UPDATED_AT --message "Update service panels"
+metricspanel dashboards history --id DASHBOARD_ID --limit 20
+metricspanel dashboards version-export --id DASHBOARD_ID --dashboard-version 2 --format grafana
+metricspanel dashboards compare --id DASHBOARD_ID --base-version 1 --new-version 2
+metricspanel dashboards restore --id DASHBOARD_ID --dashboard-version 1 --revision UPDATED_AT
+```
+
+`history --continue-token TOKEN` 延续固定版本范围，期间的新保存不造成重复或遗漏；`version` 返回完整历史详情。原生接口同时返回字符串版本键，大整数版本不依赖浏览器浮点值。历史导出与比较保留 JSON 数字原值；没有原始 Grafana 模板的原生仪表盘可导出生成的 Classic JSON。恢复配置不回退监控样本或注释事件。
+
 ```sh
 metricspanel folders create --id operations --name Operations
 metricspanel dashboards import-grafana --file dashboard.json --folder-uid operations

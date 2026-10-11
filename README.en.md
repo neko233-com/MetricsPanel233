@@ -95,6 +95,20 @@ metricspanel api --path /api/library-elements --method GET
 
 Folder/library GET exports round-trip through `save --id` with their current versions. `library model` returns the original model JSON. `api --path` exposes every published local API route with the same authentication; text responses return JSON `content` / `contentType`. Contracts follow pinned [folder models](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) and [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go).
 
+Version history shows saved time, author and message, with raw JSON viewing/download, configuration comparison and restore. Every successful save records an immutable version in the same transaction. Restore creates a new version while retaining current identity, folder and plugin metadata; library references use the current shared model. Stale, identical and missing-library restores write nothing. Native panel editing/deletion checks the dashboard captured when the dialog opened. Existing databases register only their currently available version without rewriting the source or inventing past history. All versions are currently retained; configurable retention remains pending.
+
+Grafana UID version list/detail/restore routes and the official resource history-selector dual V1/V2 stream are available. Resources preserve their actual source schema and report explicit conversion failures for unmatched schemas; complete resource CRUD remains pending. See the pinned [UnifiedDashboardAPI](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard/api/UnifiedDashboardAPI.ts) and [version model](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/dashboardversion/model.go).
+
+```sh
+metricspanel dashboards save --id DASHBOARD_ID --file native.json --revision UPDATED_AT --message "Update service panels"
+metricspanel dashboards history --id DASHBOARD_ID --limit 20
+metricspanel dashboards version-export --id DASHBOARD_ID --dashboard-version 2 --format grafana
+metricspanel dashboards compare --id DASHBOARD_ID --base-version 1 --new-version 2
+metricspanel dashboards restore --id DASHBOARD_ID --dashboard-version 1 --revision UPDATED_AT
+```
+
+`history --continue-token TOKEN` continues an anchored range despite new saves; `version` returns the full record. Native responses include string version keys, exports/comparison retain exact JSON number values, and a native dashboard without an original source can export generated Classic JSON. Restoring configuration does not roll back metric samples or annotation events.
+
 Local imports submit the original JSON text. Browser and CLI exports read the saved source through `GET /api/v1/dashboard-exports/{id}?format=native|grafana` with workspace authentication, preserving unknown large integers. Grafana-compatible dashboard reads and writes preserve JSON number precision too. Retained datasource input values allow exported templates to rebind actual source references; ambiguous mappings return an error. Previously expanded constants do not yet support complete rebinding. V2 datasource variables use the official `pluginId` field with legacy `query` fallback.
 
 Panel targets, refIds, instant/range queries, legends, gridPos, fieldConfig and transformation contracts are retained.

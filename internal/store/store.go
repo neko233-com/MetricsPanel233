@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS targets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TE
 CREATE TABLE IF NOT EXISTS target_connections(id INTEGER PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,kind TEXT NOT NULL,username TEXT NOT NULL,database_name TEXT NOT NULL,tls_mode TEXT NOT NULL,secrets BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS dashboard_identity(id INTEGER PRIMARY KEY AUTOINCREMENT,dashboard_id TEXT NOT NULL UNIQUE REFERENCES dashboards(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS dashboard_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,grafana_id INTEGER NOT NULL,uid TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),parent_version INTEGER NOT NULL,restored_from INTEGER NOT NULL,created INTEGER NOT NULL,created_by TEXT NOT NULL,message TEXT NOT NULL,snapshot TEXT NOT NULL,UNIQUE(dashboard_id,version));
 CREATE TABLE IF NOT EXISTS folders(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,title TEXT NOT NULL,parent_uid TEXT NOT NULL DEFAULT '',description TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS folders_sibling_title ON folders(parent_uid,title COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS library_elements(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,name TEXT NOT NULL,kind INTEGER NOT NULL,folder_uid TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL,model TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
@@ -168,6 +169,10 @@ CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(i
 		return nil, err
 	}
 	if _, err = db.Exec(`INSERT INTO dashboard_identity(dashboard_id) SELECT d.id FROM dashboards d WHERE NOT EXISTS (SELECT 1 FROM dashboard_identity i WHERE i.dashboard_id=d.id) ORDER BY CASE WHEN d.id='system' THEN 0 ELSE 1 END,d.name,d.id`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.backfillDashboardHistory(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}

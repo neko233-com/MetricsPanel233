@@ -113,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 	s.grafanaRoutes(api, promRoutes)
 	s.dashboardCatalogRoutes(api)
 	s.dashboardResourceRoutes(api)
+	s.dashboardHistoryRoutes(api)
+	s.dashboardHistoryResourceRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
@@ -195,6 +197,12 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/dashboards", s.saveDashboard)
 	s.dashboardExportRoutes(api)
 	api.HandleFunc("POST /api/v1/import/grafana", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := dashboardSaveContext(r)
+		if err != nil {
+			fail(w, 400, err)
+			return
+		}
+		r = r.WithContext(ctx)
 		r.Body = http.MaxBytesReader(w, r.Body, 4*1024*1024)
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -409,6 +417,12 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	fail(w, 404, errors.New("target not found"))
 }
 func (s *Server) saveDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx, contextErr := dashboardSaveContext(r)
+	if contextErr != nil {
+		fail(w, 400, contextErr)
+		return
+	}
+	r = r.WithContext(ctx)
 	var d model.Dashboard
 	if err := decode(w, r, &d); err != nil {
 		fail(w, 400, err)

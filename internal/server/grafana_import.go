@@ -82,6 +82,8 @@ func writeGrafanaError(w http.ResponseWriter, err error) {
 			api.code = 408
 		} else if errors.Is(err, context.DeadlineExceeded) {
 			api.code = 504
+		} else if errors.Is(err, store.ErrDashboardConflict) {
+			api.code, api.status = 412, "version-mismatch"
 		}
 	}
 	result := map[string]any{"message": api.message}
@@ -345,6 +347,7 @@ func (s *Server) saveGrafanaDashboard(ctx context.Context, request grafanaSaveRe
 	if utf8.RuneCountInString(request.Message) > 500 {
 		return result, grafanaError(400, "", "message too long, max 500 characters")
 	}
+	ctx = store.WithDashboardHistoryMetadata(ctx, model.DashboardHistoryMetadata{Message: request.Message})
 	for _, raw := range arrayServer(doc["tags"]) {
 		if tag, ok := raw.(string); ok && utf8.RuneCountInString(tag) > 50 {
 			return result, grafanaError(400, "tag-too-long", "dashboard tag too long, max 50 characters")

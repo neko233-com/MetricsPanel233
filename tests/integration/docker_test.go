@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -280,7 +281,11 @@ func (e environment) verifyDashboardResources(address, service string, create bo
 				} `json:"meta"`
 			}
 			require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/dashboards/uid/"+uid, nil), &response))
-			assert.Equal(e.t, "docker-resource-child", response.Meta.FolderUID)
+			expectedFolder := "docker-resource-child"
+			if !create && uid == "docker-linked-one" {
+				expectedFolder = "docker-resource-root"
+			}
+			assert.Equal(e.t, expectedFolder, response.Meta.FolderUID)
 			assert.Equal(e.t, "900719925474099312345", string(response.Dashboard.Opaque))
 			require.Len(e.t, response.Dashboard.Panels, 1)
 			checkModel(response.Dashboard.Panels[0], title)
@@ -299,7 +304,7 @@ func (e environment) verifyDashboardResources(address, service string, create bo
 		out, err := e.composeInput(`{"uid":"`+libraryUID+`","name":"Docker shared panel","kind":1,"folderUid":"docker-resource-child","model":`+initialModel+`}`, "exec", "-T", service, "metricspanel", "library", "save", "--file", "-")
 		require.NoError(e.t, err, out)
 		for _, suffix := range []string{"one", "two"} {
-			document := json.RawMessage(fmt.Sprintf(`{"uid":"docker-linked-%s","title":"Docker linked %s","opaque":900719925474099312345,"panels":[{"id":1,"type":"text","libraryPanel":{"uid":"%s","name":"Docker shared panel"},"gridPos":{"x":0,"y":0,"w":24,"h":8}}]}`, suffix, suffix, libraryUID))
+			document := json.RawMessage(fmt.Sprintf(`{"uid":"docker-linked-%s","title":"Docker linked %s","opaque":900719925474099312345,"historyExact":9007199254740993,"historyUnsigned":18446744073709551615,"historyMetric":"docker_history_fixture_only","annotations":{"list":[{"name":"History deployment notes","enable":true,"type":"dashboard","opaque":18446744073709551615,"target":{"type":"dashboard","tags":["docker-history"]}}]},"panels":[{"id":1,"type":"text","libraryPanel":{"uid":"%s","name":"Docker shared panel"},"gridPos":{"x":0,"y":0,"w":24,"h":8}}]}`, suffix, suffix, libraryUID))
 			e.must(address, "POST", "/api/dashboards/db", map[string]any{"dashboard": document, "folderUid": "docker-resource-child"})
 		}
 		checkModel(e.must(address, "GET", "/api/v1/library-models/"+libraryUID, nil), "Shared original")
@@ -366,6 +371,168 @@ func (e environment) verifyDashboardResources(address, service string, create bo
 	checkDashboards("Shared updated")
 	e.t.Log("folder tree, linked library update, exact JSON numbers and typed CLI persisted")
 	return connections.Result
+}
+
+type dashboardHistoryEvidence struct {
+	ResourceHistoryHash      [32]byte
+	NativeID, UID, FolderUID string
+	GrafanaID, Version       int64
+	HistoryHash              [32]byte
+	CurrentHash              [32]byte
+	AnnotationHash           [32]byte
+	Exports                  map[int64][3][32]byte
+}
+
+// History operations reuse the two existing linked dashboards and shared
+// library. Restore happens only during first creation, never during verification.
+func (e environment) verifyDashboardHistory(address, service string, create bool) dashboardHistoryEvidence {
+	e.t.Helper()
+	const uid = "docker-linked-one"
+	cli := func(args ...string) []byte {
+		e.t.Helper()
+		out, err := e.compose(append([]string{"exec", "-T", service, "metricspanel"}, args...)...)
+		require.NoError(e.t, err, out)
+		return bytes.TrimSpace([]byte(out))
+	}
+	var dashboards []model.Dashboard
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &dashboards))
+	var current model.Dashboard
+	for _, dashboard := range dashboards {
+		if dashboard.UID() == uid {
+			current = dashboard
+		}
+	}
+	require.NotEmpty(e.t, current.ID)
+	readNative := func() []byte {
+		return cli("dashboards", "export", "--id", current.ID, "--format", "native")
+	}
+	checkSource := func(raw []byte) {
+		e.t.Helper()
+		var source map[string]json.RawMessage
+		require.NoError(e.t, json.Unmarshal(raw, &source), string(raw))
+		assert.Equal(e.t, "9007199254740993", string(source["historyExact"]))
+		assert.Equal(e.t, "18446744073709551615", string(source["historyUnsigned"]))
+		assert.Contains(e.t, string(source["annotations"]), "18446744073709551615")
+		var panels []struct {
+			LibraryPanel struct {
+				UID string `json:"uid"`
+			} `json:"libraryPanel"`
+		}
+		require.NoError(e.t, json.Unmarshal(source["panels"], &panels))
+		require.Len(e.t, panels, 1)
+		assert.Equal(e.t, "docker-shared-panel", panels[0].LibraryPanel.UID)
+	}
+	if create {
+		initial := current
+		checkSource(initial.Grafana)
+		e.must(address, "POST", "/api/annotations", map[string]any{"dashboardUID": uid, "panelId": 1, "time": time.Now().UnixMilli(), "text": "History must retain this event", "tags": []string{"docker-history"}, "idempotencyKey": "docker-dashboard-history-note"})
+		beforeNotes := e.must(address, "GET", "/api/annotations?dashboardUID="+uid, nil)
+		var source map[string]json.RawMessage
+		require.NoError(e.t, json.Unmarshal(initial.Grafana, &source))
+		source["historyExact"] = json.RawMessage(`9007199254740994`)
+		source["historyUnsigned"] = json.RawMessage(`18446744073709551614`)
+		current.Grafana, _ = json.Marshal(source)
+		draft, err := json.Marshal(current)
+		require.NoError(e.t, err)
+		out, err := e.composeInput(string(draft), "exec", "-T", service, "metricspanel", "dashboards", "save", "--id", current.ID, "--file", "-", "--revision", strconv.FormatInt(initial.UpdatedAt, 10), "--message", "Change exact source numbers")
+		require.NoError(e.t, err, out)
+		require.NoError(e.t, json.Unmarshal([]byte(out), &current))
+		assert.Equal(e.t, initial.GrafanaVersion+1, current.GrafanaVersion)
+		var comparison struct {
+			Changes []struct {
+				Path   string          `json:"path"`
+				Before json.RawMessage `json:"before"`
+				After  json.RawMessage `json:"after"`
+			} `json:"changes"`
+		}
+		require.NoError(e.t, json.Unmarshal(cli("dashboards", "compare", "--id", current.ID, "--base-version", strconv.FormatInt(initial.GrafanaVersion, 10), "--new-version", strconv.FormatInt(current.GrafanaVersion, 10)), &comparison))
+		changes := map[string][2]string{}
+		for _, change := range comparison.Changes {
+			changes[change.Path] = [2]string{string(change.Before), string(change.After)}
+		}
+		assert.Equal(e.t, [2]string{"9007199254740993", "9007199254740994"}, changes["/historyExact"])
+		assert.Equal(e.t, [2]string{"18446744073709551615", "18446744073709551614"}, changes["/historyUnsigned"])
+		// Current folder differs from the historical folder and must win on restore.
+		require.NoError(e.t, json.Unmarshal(cli("dashboards", "move", "--id", current.ID, "--folder-uid", "docker-resource-root", "--revision", strconv.FormatInt(current.UpdatedAt, 10)), &current))
+		parent := current.GrafanaVersion
+		require.NoError(e.t, json.Unmarshal(cli("dashboards", "restore", "--id", current.ID, "--dashboard-version", strconv.FormatInt(initial.GrafanaVersion, 10), "--revision", strconv.FormatInt(current.UpdatedAt, 10), "--message", "Restore verified original source"), &current))
+		assert.Equal(e.t, parent+1, current.GrafanaVersion)
+		assert.Equal(e.t, initial.ID, current.ID)
+		assert.Equal(e.t, initial.GrafanaID, current.GrafanaID)
+		assert.Equal(e.t, initial.UID(), current.UID())
+		assert.Equal(e.t, "docker-resource-root", current.FolderUID)
+		assert.Equal(e.t, initial.PluginID, current.PluginID)
+		assert.Equal(e.t, initial.PluginPath, current.PluginPath)
+		assert.Equal(e.t, string(initial.Annotations), string(current.Annotations))
+		assert.Equal(e.t, sha256.Sum256(beforeNotes), sha256.Sum256(e.must(address, "GET", "/api/annotations?dashboardUID="+uid, nil)))
+	}
+	currentRaw := readNative()
+	require.NoError(e.t, json.Unmarshal(currentRaw, &current))
+	checkSource(current.Grafana)
+	assert.Equal(e.t, "docker-resource-root", current.FolderUID)
+	var canonical struct {
+		Version int64 `json:"version"`
+	}
+	require.NoError(e.t, json.Unmarshal(current.Grafana, &canonical))
+	assert.Equal(e.t, current.GrafanaVersion, canonical.Version)
+	historyRaw := cli("dashboards", "history", "--id", current.ID, "--limit", "20")
+	var history model.DashboardVersionList
+	require.NoError(e.t, json.Unmarshal(historyRaw, &history))
+	require.Len(e.t, history.Versions, 4)
+	latest := history.Versions[0]
+	oldest := history.Versions[len(history.Versions)-1]
+	assert.Equal(e.t, current.GrafanaVersion, latest.Version)
+	assert.Equal(e.t, history.Versions[1].Version, latest.ParentVersion)
+	assert.Equal(e.t, oldest.Version, latest.RestoredFrom)
+	assert.Equal(e.t, "Restore verified original source", latest.Message)
+	assert.Equal(e.t, "Change exact source numbers", history.Versions[2].Message)
+	var legacy model.DashboardVersionList
+	require.NoError(e.t, json.Unmarshal(cli("api", "--path", "/api/dashboards/uid/"+uid+"/versions?limit=20"), &legacy))
+	assert.Equal(e.t, history, legacy)
+	resourceQuery := url.Values{"labelSelector": {"grafana.app/get-history=true"}, "fieldSelector": {"metadata.name=" + uid}, "limit": {"20"}}
+	var resourceHistory struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	resourceRaw := cli("api", "--path", "/apis/dashboard.grafana.app/v1/namespaces/default/dashboards?"+resourceQuery.Encode())
+	require.NoError(e.t, json.Unmarshal(resourceRaw, &resourceHistory))
+	require.Len(e.t, resourceHistory.Items, len(history.Versions))
+	evidence := dashboardHistoryEvidence{NativeID: current.ID, UID: current.UID(), FolderUID: current.FolderUID, GrafanaID: current.GrafanaID, Version: current.GrafanaVersion, HistoryHash: sha256.Sum256(historyRaw), CurrentHash: sha256.Sum256(currentRaw), AnnotationHash: sha256.Sum256(e.must(address, "GET", "/api/annotations?dashboardUID="+uid, nil)), Exports: map[int64][3][32]byte{}}
+	evidence.ResourceHistoryHash = sha256.Sum256(resourceRaw)
+	for _, entry := range history.Versions {
+		version := strconv.FormatInt(entry.Version, 10)
+		detail := cli("dashboards", "version", "--id", current.ID, "--dashboard-version", version)
+		native := cli("dashboards", "version-export", "--id", current.ID, "--dashboard-version", version, "--format", "native")
+		grafanaSource := cli("dashboards", "version-export", "--id", current.ID, "--dashboard-version", version, "--format", "grafana")
+		var snapshot model.Dashboard
+		require.NoError(e.t, json.Unmarshal(native, &snapshot))
+		assert.Equal(e.t, current.ID, snapshot.ID)
+		assert.Equal(e.t, current.GrafanaID, snapshot.GrafanaID)
+		assert.Equal(e.t, entry.Version, snapshot.GrafanaVersion)
+		if entry.Version == oldest.Version || entry.Version == latest.Version {
+			checkSource(grafanaSource)
+		}
+		evidence.Exports[entry.Version] = [3][32]byte{sha256.Sum256(detail), sha256.Sum256(native), sha256.Sum256(grafanaSource)}
+	}
+	var linked struct {
+		Dashboard struct {
+			Panels []struct {
+				Title        string `json:"title"`
+				LibraryPanel struct {
+					UID string `json:"uid"`
+				} `json:"libraryPanel"`
+			} `json:"panels"`
+		} `json:"dashboard"`
+	}
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/dashboards/uid/"+uid, nil), &linked))
+	require.Len(e.t, linked.Dashboard.Panels, 1)
+	assert.Equal(e.t, "Shared updated", linked.Dashboard.Panels[0].Title, "restoring a dashboard must use the current shared model")
+	assert.Equal(e.t, "docker-shared-panel", linked.Dashboard.Panels[0].LibraryPanel.UID)
+	var metrics model.QueryResult
+	metricQuery := url.Values{"metric": {"docker_history_fixture_only"}, "range": {"15m"}, "aggregation": {"last"}}
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/v1/query?"+metricQuery.Encode(), nil), &metrics))
+	assert.Empty(e.t, metrics.Series, "history source fields must not ingest metrics")
+	e.t.Log("typed dashboard history, exact compare, restore lineage, raw exports and annotation identity persisted")
+	return evidence
 }
 
 func (e environment) verifySQL(address string, restarted bool) {
@@ -981,6 +1148,7 @@ func TestDockerEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("single test container runtime image: %s bytes; 2 CPUs, 2 GiB memory limit", imageSize)
 	resourceConnections := map[string][]model.LibraryConnection{}
+	historyEvidence := map[string]dashboardHistoryEvidence{}
 	for _, backend := range []struct{ service, goService string }{{"sqlite", "go-sqlite"}, {"clickhouse-app", "go-clickhouse"}} {
 		if !t.Run(backend.service, func(t *testing.T) {
 			e := e
@@ -1077,6 +1245,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.NoError(t, json.Unmarshal(e.must(address, "POST", "/api/v1/dashboards", model.Dashboard{Name: "Docker time regions", Panels: []model.Panel{}, Annotations: regionConfig}), &nativeRegions))
 			e.verifyDashboardSnapshot(address, true)
 			resourceConnections[backend.service] = e.verifyDashboardResources(address, backend.service, true)
+			historyEvidence[backend.service] = e.verifyDashboardHistory(address, backend.service, true)
 			_, err = e.compose("restart", backend.service)
 			require.NoError(t, err)
 			address = e.address(backend.service)
@@ -1089,6 +1258,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifyAlertGroups(address, true)
 			e.verifyDashboardSnapshot(address, false)
 			assert.Equal(t, resourceConnections[backend.service], e.verifyDashboardResources(address, backend.service, false), "app restart changed library connection identities")
+			assert.Equal(t, historyEvidence[backend.service], e.verifyDashboardHistory(address, backend.service, false), "app restart changed dashboard history or exports")
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false
@@ -1166,5 +1336,6 @@ func TestDockerEndToEnd(t *testing.T) {
 		e.verifyNativeCollectors(address)
 		e.verifyDashboardSnapshot(address, false)
 		assert.Equal(t, resourceConnections[service], e.verifyDashboardResources(address, service, false), "single-container restart changed library connection identities")
+		assert.Equal(t, historyEvidence[service], e.verifyDashboardHistory(address, service, false), "single-container restart changed dashboard history or exports")
 	}
 }

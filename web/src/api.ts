@@ -53,6 +53,23 @@ export type Dashboard = {
   folder_uid?: string;
   plugin_id?: string;
   plugin_path?: string;
+  grafana_version?: number;
+};
+export type DashboardVersion = {
+  id: number;
+  dashboardId: number;
+  uid: string;
+  versionKey: string;
+  parentVersionKey: string;
+  restoredFromKey: string;
+  created: string;
+  createdBy: string;
+  message: string;
+};
+export type DashboardVersions = {
+  versions: DashboardVersion[];
+  continueToken: string;
+  currentVersionKey: string;
 };
 export type Folder = {
   uid: string;
@@ -84,21 +101,16 @@ export type LibraryConnection = {
   url?: string;
 };
 export function dashboardUID(dashboard: Dashboard): string {
-  const original = dashboard.grafana as
-    | {
-        uid?: string;
-        metadata?: { name?: string };
-        spec?: { uid?: string };
-        dashboard?: { uid?: string };
-      }
-    | undefined;
-  return (
-    original?.uid ||
-    original?.dashboard?.uid ||
-    original?.spec?.uid ||
-    original?.metadata?.name ||
-    dashboard.id
-  );
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
+  let original = object(dashboard.grafana);
+  if (original && Object.hasOwn(original, "dashboard")) original = object(original.dashboard);
+  const metadata = object(original?.metadata), spec = object(original?.spec);
+  for (const value of [original?.uid, metadata?.name, spec?.uid])
+    if (typeof value === "string" && value) return value;
+  return dashboard.id;
 }
 export type Target = {
 	 kind?: string;
@@ -237,20 +249,20 @@ export function parseLabels(text: string): Labels {
     throw new Error("Labels must be a JSON object with string values");
   return labels as Labels;
 }
-export async function downloadRaw(name: string, path: string): Promise<void> {
+export async function downloadRaw(name: string, path: string, options: RequestInit = {}): Promise<void> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
   const response = await fetch(
     path.startsWith("/prometheus/") || path.startsWith("/api/")
       ? path
       : `/api/v1${path}`,
-    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+    { ...options, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } },
   );
   if (!response.ok) {
     const result = await response.json();
     throw new ApiError(
       (typeof result.error === "string"
         ? result.error
-        : result.error?.message) || `HTTP ${response.status}`,
+        : result.error?.message) || result.message || `HTTP ${response.status}`,
       response.status,
     );
   }

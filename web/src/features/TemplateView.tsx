@@ -20,6 +20,7 @@ import { t, getLocale } from "../i18n";
 import { queryValues, variableOptions } from "../grafana/variables";
 import { layoutPanels } from "../grafana/layout";
 import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
+import { DashboardHistoryButton } from "../components/DashboardHistoryButton";
 import type { VariableValues } from "../grafana/engine";
 import type { FrameUpdate } from "../grafana/engine";
 import type { PluginExtensionPanelContext } from "@grafana/data";
@@ -297,6 +298,7 @@ export function TemplateView({
           </p>
         </div>
         <div className="toolbar">
+          <DashboardHistoryButton dashboard={dashboard} reload={reload} />
           <DashboardSnapshotButton
             dashboard={dashboard}
             panels={panels.map((entry) => ({

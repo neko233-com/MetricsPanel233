@@ -222,6 +222,10 @@ func (s *Store) saveDashboard(ctx context.Context, d model.Dashboard, revision *
 }
 
 func saveDashboardTx(ctx context.Context, tx *sql.Tx, d model.Dashboard, revision *int64) (model.Dashboard, error) {
+	metadata, err := dashboardHistoryMetadata(ctx)
+	if err != nil {
+		return d, err
+	}
 	if err := d.Validate(); err != nil {
 		return d, err
 	}
@@ -230,6 +234,7 @@ func saveDashboardTx(ctx context.Context, tx *sql.Tx, d model.Dashboard, revisio
 		return d, err
 	}
 	var previousExtras string
+	var parentVersion int64
 	lookupErr := tx.QueryRowContext(ctx, `SELECT extras FROM dashboards WHERE id=?`, d.ID).Scan(&previousExtras)
 	if lookupErr == nil {
 		var previous struct {
@@ -246,6 +251,7 @@ func saveDashboardTx(ctx context.Context, tx *sql.Tx, d model.Dashboard, revisio
 		if version == math.MaxInt64 {
 			return d, errors.New("dashboard version limit reached")
 		}
+		parentVersion = version
 		d.GrafanaVersion = version + 1
 	} else if errors.Is(lookupErr, sql.ErrNoRows) {
 		d.GrafanaVersion = d.SourceVersion()
@@ -290,6 +296,9 @@ func saveDashboardTx(ctx context.Context, tx *sql.Tx, d model.Dashboard, revisio
 		return d, err
 	}
 	if err = syncLibraryConnections(ctx, tx, d); err != nil {
+		return d, err
+	}
+	if err = insertDashboardVersion(ctx, tx, d, parentVersion, metadata); err != nil {
 		return d, err
 	}
 	return d, nil
