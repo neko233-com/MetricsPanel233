@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { api, jsonBody, message, type Dashboard } from "../api";
+import { api, jsonBody, message, type Dashboard, type Folder } from "../api";
 import { Dialog } from "../components/Dialog";
 import { communityReference } from "../grafana/community-reference";
 import { t } from "../i18n";
 import { grafanaImportBody } from "./grafana-import-body";
+import { FolderSelect } from "./Folders";
 
 type Input = {
   name: string;
@@ -26,10 +27,14 @@ export function DashboardImport({
   close,
   imported,
   initial,
+  folders = [],
+  defaultFolder = "",
 }: {
   close: () => void;
   imported: (dashboard: Dashboard, warnings: string[]) => Promise<void>;
   initial?: string;
+  folders?: Folder[];
+  defaultFolder?: string;
 }) {
   const [mode, setMode] = useState(initial ? "json" : "community"),
     [reference, setReference] = useState("");
@@ -44,6 +49,7 @@ export function DashboardImport({
     [loading, setLoading] = useState(false),
     [saving, setSaving] = useState(false);
   const read = useRef<AbortController | null>(null);
+  const [folder, setFolder] = useState(defaultFolder);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -277,11 +283,13 @@ export function DashboardImport({
                         name,
                         ...(uid ? { uid } : {}),
                         inputs: bindings,
+                        folderUid: folder,
                       })
                     : grafanaImportBody(previewSource!, {
                         name,
                         ...(uid ? { uid } : {}),
                         inputs: bindings,
+                        folderUid: folder,
                       }),
                 },
               );
@@ -320,7 +328,7 @@ export function DashboardImport({
               value={name}
               onChange={(event) => setName(event.target.value)}
               required
-              maxLength={100}
+              maxLength={5000}
               disabled={saving || loading}
             />
           </label>
@@ -334,6 +342,7 @@ export function DashboardImport({
               disabled={saving || loading}
             />
           </label>
+          <label>{t("Folder")}<FolderSelect folders={folders} value={folder} onChange={setFolder} disabled={saving || loading} /></label>
           {preview.inputs.map((input) => (
             <label key={input.name}>
               {input.label || input.name}

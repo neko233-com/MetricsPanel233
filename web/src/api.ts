@@ -50,6 +50,38 @@ export type Dashboard = {
   variables?: Variable[];
   annotations?: Record<string, any>[];
   grafana?: unknown;
+  folder_uid?: string;
+  plugin_id?: string;
+  plugin_path?: string;
+};
+export type Folder = {
+  uid: string;
+  title: string;
+  parentUid?: string;
+  version: number;
+  description?: string;
+  canSave?: boolean;
+  canEdit?: boolean;
+  canAdmin?: boolean;
+};
+export type LibraryPanel = {
+  uid: string;
+  name: string;
+  kind: number;
+  model: Record<string, unknown>;
+  version: number;
+  folderUid: string;
+  type?: string;
+  meta?: { folderName?: string; connectedDashboards?: number; updated?: string };
+};
+export type LibraryConnection = {
+  connectionUid: string;
+  connectionId?: number;
+  kind: number;
+  created?: string;
+  dashboardUid?: string;
+  name?: string;
+  url?: string;
 };
 export function dashboardUID(dashboard: Dashboard): string {
   const original = dashboard.grafana as
@@ -128,12 +160,30 @@ export async function api<T>(
     throw new ApiError(
       (typeof result.error === "string"
         ? result.error
-        : result.error?.message) || `HTTP ${response.status}`,
+        : result.error?.message) || result.message || `HTTP ${response.status}`,
       response.status,
     );
   return result as T;
 }
 export const jsonBody = (data: unknown) => JSON.stringify(data);
+export async function apiText(path: string, options: RequestInit = {}): Promise<string> {
+  const token = sessionStorage.getItem("metricspanel-token") || "";
+  const response = await fetch(path.startsWith("/api/") ? path : `/api/v1${path}`, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let result: { error?: string | { message?: string }; message?: string } = {};
+    try { result = JSON.parse(text); } catch { /* A proxy may return an HTTP error without JSON. */ }
+    throw new ApiError((typeof result.error === "string" ? result.error : result.error?.message) || result.message || `HTTP ${response.status}`, response.status);
+  }
+  return text;
+}
 export const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 export function formatValue(value: number, unit = ""): string {

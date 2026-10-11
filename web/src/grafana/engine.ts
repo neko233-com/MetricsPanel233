@@ -77,6 +77,7 @@ export type GrafanaTarget = {
   datasource?: string | { type?: string; uid?: string };
 };
 export type GrafanaConfig = {
+	 libraryPanel?: { uid: string; name?: string };
   snapshotData?: unknown;
   snapshotTimeRange?: { from: number; to: number; timezone?: string };
   id?: number;

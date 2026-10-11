@@ -112,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 	promRoutes.Handle("/", prom.Handler())
 	s.grafanaRoutes(api, promRoutes)
 	s.dashboardCatalogRoutes(api)
+	s.dashboardResourceRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
@@ -182,6 +183,13 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 500, err)
 			return
 		}
+		for i, d := range v {
+			v[i], err = s.resolveDashboardLibrary(r.Context(), d)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
+		}
 		writeJSON(w, 200, v)
 	})
 	api.HandleFunc("POST /api/v1/dashboards", s.saveDashboard)
@@ -193,12 +201,26 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, err)
 			return
 		}
+		s.dashboardImportMu.Lock()
+		defer s.dashboardImportMu.Unlock()
+		data, err = s.resolveGrafanaLibraryPanels(r.Context(), data, "")
+		if err != nil {
+			fail(w, 400, err)
+			return
+		}
 		result, err := grafana.Import(data)
 		if err != nil {
 			fail(w, 400, err)
 			return
 		}
-		result.Dashboard, err = s.Store.SaveDashboard(r.Context(), result.Dashboard)
+		if _, found, lookupErr := s.grafanaDashboard(r.Context(), result.Dashboard.UID()); lookupErr != nil {
+			fail(w, 500, lookupErr)
+			return
+		} else if found {
+			fail(w, 409, errors.New("dashboard UID already exists; use the import dialog to choose a new UID or the Grafana save API to update it"))
+			return
+		}
+		result.Dashboard, err = s.saveDashboardWithLibraryPanels(r.Context(), result.Dashboard, nil)
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -413,9 +435,9 @@ func (s *Server) saveDashboard(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, errors.New("If-Match must contain a positive dashboard revision"))
 			return
 		}
-		v, err = s.Store.SaveDashboardAtRevision(r.Context(), d, revision)
+		v, err = s.saveDashboardWithLibraryPanels(r.Context(), d, &revision)
 	} else {
-		v, err = s.Store.SaveDashboard(r.Context(), d)
+		v, err = s.saveDashboardWithLibraryPanels(r.Context(), d, nil)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrDashboardConflict) {

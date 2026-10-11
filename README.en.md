@@ -77,7 +77,23 @@ Grafana's Prometheus datasource can use `http://localhost:7333/prometheus` with 
 Instant/range query, labels, label values, series, metadata, targets and buildinfo endpoints are implemented using the upstream PromQL engine.
 
 Import Classic, V1 and V2 dashboard resources through the UI or `metricspanel dashboards save --file grafana.json`.
-The import dialog loads Grafana.com IDs or URLs, selects a revision, and previews datasource UID and literal constant bindings before saving. It also accepts pasted or uploaded JSON. An omitted UID creates a new one; explicit duplicates return HTTP 409. Agents use `dashboards community`, `import-community`, `preview-grafana` and `import-grafana`. Native Grafana gnet/import/interpolation routes, folders and library-panel import remain pending.
+The import dialog loads Grafana.com IDs or URLs, selects a revision, folder, datasource UID and literal constant bindings before saving. It accepts pasted or uploaded JSON too. An omitted UID creates a new one; explicit duplicates return HTTP 409. Agents use `dashboards community`, `import-community`, `preview-grafana` and `import-grafana`. Native gnet, interpolation, import and verified plugin-bundled dashboard routes are available. Classic/V1/V2 library references and exported `__elements` definitions commit with the dashboard.
+
+Nested folders support creation, rename, move and version checks. Library panels share one query and visualization model across dashboards; reads resolve the latest model, and unlink freezes the current configuration. Connected libraries cannot be deleted. Folder deletion atomically removes descendants, their dashboards and unused libraries; connected libraries and the system dashboard block it. Alert rules require explicit deletion and scheduler mutation gates. Folder identities, library models, connections and stable dashboard numeric IDs survive restart. Snapshots detach library references.
+
+```sh
+metricspanel folders create --id operations --name Operations
+metricspanel dashboards import-grafana --file dashboard.json --folder-uid operations
+metricspanel library list --folder-uid operations
+metricspanel library save --file examples/library/process-memory.json
+metricspanel library get --id LIBRARY_UID > library.json
+metricspanel library save --id LIBRARY_UID --file library.json
+metricspanel dashboards library-add --id DASHBOARD_ID --library-uid LIBRARY_UID
+metricspanel dashboards library-unlink --id DASHBOARD_ID --panel NATIVE_PANEL_ID
+metricspanel api --path /api/library-elements --method GET
+```
+
+Folder/library GET exports round-trip through `save --id` with their current versions. `library model` returns the original model JSON. `api --path` exposes every published local API route with the same authentication; text responses return JSON `content` / `contentType`. Contracts follow pinned [folder models](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) and [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go).
 
 Local imports submit the original JSON text. Browser and CLI exports read the saved source through `GET /api/v1/dashboard-exports/{id}?format=native|grafana` with workspace authentication, preserving unknown large integers. Grafana-compatible dashboard reads and writes preserve JSON number precision too. Retained datasource input values allow exported templates to rebind actual source references; ambiguous mappings return an error. Previously expanded constants do not yet support complete rebinding. V2 datasource variables use the official `pluginId` field with legacy `query` fallback.
 
@@ -93,10 +109,10 @@ The [Go runtime template](examples/dashboards/go-runtime.json) shows real metric
 
 Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/dashboards/uid/{uid} and GET /api/search.
 Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
-These endpoints use the same workspace Bearer token. Dashboard writes currently support the root folder.
+These endpoints use the same workspace Bearer token, folderUid/folderId and stable local numeric dashboard IDs.
 
 **Full Grafana ecosystem parity remains unfinished.** Additional core UI extension points, some app core services, legacy Angular plugins,
-folders/organizations/permissions, library panels and the full backend API remain unfinished.
+folder/organization permissions and remaining backend APIs remain unfinished. Library UID rename and App Platform resource APIs remain pending.
 V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
 Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
 Full compatibility remains an objective, not a claim for this release.
@@ -104,6 +120,8 @@ Full compatibility remains an objective, not a claim for this release.
 ## Grafana plugins and datasources
 
 The plugin library searches the official Grafana catalog, filters panel/datasource/app types, and displays details, historical versions and server-platform availability. Selected versions install or update through signature verification. Published requirements do not establish runtime compatibility. Agents use `plugins search --query clock --kind panel`, `plugins info --id grafana-clock-panel`, `plugins versions --id grafana-clock-panel` and `plugins catalog --id grafana-clock-panel --plugin-version 3.2.4`; output is JSON.
+
+Native `/api/gnet/plugins` preserves official catalog JSON and supports detail/version discovery. `/api/plugins/{id}/install` accepts an exact version or resolves the latest before signature verification. Uninstall, verified README/CHANGELOG and actual package-validation/backend-start errors have native routes too. `plugins catalog --id ID` installs latest; pin deployments with `--plugin-version EXACT`. Current startup errors last for the server process and clear after successful startup or uninstall.
 
 The Plugins page installs original ZIP packages or exact versions from the official catalog, enables/disables plugins and manages datasources.
 Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.

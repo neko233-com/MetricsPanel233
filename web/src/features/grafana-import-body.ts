@@ -2,6 +2,7 @@ type ImportSettings = {
   name?: string;
   uid?: string;
   inputs?: Record<string, string>;
+  folderUid?: string;
 };
 
 export function grafanaImportBody(

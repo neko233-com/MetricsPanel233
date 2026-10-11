@@ -155,6 +155,7 @@ export async function captureDashboardSnapshot(
           timeShift: _shift,
           timeCompare: _compare,
           compareWith: _alias,
+          libraryPanel: _library,
           ...display
         } = config;
         saved[index] = {

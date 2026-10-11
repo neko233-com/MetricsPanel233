@@ -95,6 +95,12 @@ CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
 CREATE TABLE IF NOT EXISTS targets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, interval_seconds INTEGER NOT NULL, labels TEXT NOT NULL, enabled INTEGER NOT NULL, last_scrape INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', samples INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS target_connections(id INTEGER PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,kind TEXT NOT NULL,username TEXT NOT NULL,database_name TEXT NOT NULL,tls_mode TEXT NOT NULL,secrets BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS dashboards(id TEXT PRIMARY KEY, name TEXT NOT NULL, panels TEXT NOT NULL, updated_at INTEGER NOT NULL, extras TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS dashboard_identity(id INTEGER PRIMARY KEY AUTOINCREMENT,dashboard_id TEXT NOT NULL UNIQUE REFERENCES dashboards(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS folders(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,title TEXT NOT NULL,parent_uid TEXT NOT NULL DEFAULT '',description TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS folders_sibling_title ON folders(parent_uid,title COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS library_elements(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,name TEXT NOT NULL,kind INTEGER NOT NULL,folder_uid TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL,model TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS library_elements_folder_name ON library_elements(folder_uid,name COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS library_panel_connections(id INTEGER PRIMARY KEY AUTOINCREMENT,library_uid TEXT NOT NULL REFERENCES library_elements(uid) ON DELETE CASCADE,dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,created INTEGER NOT NULL,UNIQUE(library_uid,dashboard_id));
 CREATE TABLE IF NOT EXISTS patterns(id TEXT PRIMARY KEY,metric TEXT NOT NULL,labels TEXT NOT NULL,normalization TEXT NOT NULL,aggregation TEXT NOT NULL,created_at INTEGER NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS patterns_metric ON patterns(normalization,aggregation,metric,created_at);
 CREATE TABLE IF NOT EXISTS alert_rules(uid TEXT PRIMARY KEY,version INTEGER NOT NULL,config TEXT NOT NULL,runtime TEXT NOT NULL,last_evaluation INTEGER NOT NULL DEFAULT 0);
@@ -158,6 +164,10 @@ CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(i
 	panels, _ := json.Marshal(d.Panels)
 	_, err = db.Exec(`INSERT OR IGNORE INTO dashboards(id,name,panels,updated_at) VALUES(?,?,?,?)`, d.ID, d.Name, string(panels), time.Now().UnixMilli())
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`INSERT INTO dashboard_identity(dashboard_id) SELECT d.id FROM dashboards d WHERE NOT EXISTS (SELECT 1 FROM dashboard_identity i WHERE i.dashboard_id=d.id) ORDER BY CASE WHEN d.id='system' THEN 0 ELSE 1 END,d.name,d.id`); err != nil {
 		db.Close()
 		return nil, err
 	}

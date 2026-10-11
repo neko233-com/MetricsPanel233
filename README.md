@@ -146,7 +146,23 @@ metricspanel dashboards preview-grafana --file dashboard.json
 metricspanel dashboards import-grafana --file dashboard.json --inputs '{"DS_PROMETHEUS":"metricspanel"}'
 ```
 
-The import dialog and CLI load Grafana.com IDs or URLs, select a revision, preview required inputs and bind datasource UIDs or constants before saving. Classic/V1/V2 envelopes and unknown fields survive binding; only requested input references and identity change. An omitted UID creates a new one; explicit duplicates return HTTP 409. Folder and library-panel imports, and Grafana's native `gnet` / interpolation routes remain pending.
+导入时可选择目标文件夹；Classic / V1 / V2 的 library panel 引用和导出的 `__elements` 同事务保存。原生 `GET /api/gnet/dashboards/{id}`、`POST /api/dashboards/interpolate`、`POST /api/dashboards/import` 以及已验证插件内置仪表盘导入可供 Grafana 工具和 agent 调用。
+
+仪表盘页提供嵌套文件夹、移动和版本检查。「库面板」保存共享面板模型；更新后所有引用读取新配置，解除引用时保留当前配置。删除仍在使用的库面板会返回冲突。删除文件夹会删除子文件夹和其中的仪表盘、未使用库面板；包含系统仪表盘或已引用库面板时拒绝删除。删除其中的告警规则需要显式选择，正在评估的规则会阻止删除。文件夹、模型、关联和稳定数字 ID 重启后保留。快照会解除库引用，避免共享配置变化影响已冻结数据。
+
+```sh
+metricspanel folders create --id operations --name Operations
+metricspanel dashboards import-grafana --file dashboard.json --folder-uid operations
+metricspanel library list --folder-uid operations
+metricspanel library save --file examples/library/process-memory.json
+metricspanel library get --id LIBRARY_UID > library.json
+metricspanel library save --id LIBRARY_UID --file library.json
+metricspanel dashboards library-add --id DASHBOARD_ID --library-uid LIBRARY_UID
+metricspanel dashboards library-unlink --id DASHBOARD_ID --panel NATIVE_PANEL_ID
+metricspanel api --path /api/library-elements --method GET
+```
+
+`folders get` 和 `library get` 的 JSON 可由对应 `save --id` 读回；版本冲突需重新读取。`library model` 返回原始模型 JSON。`api --path` 支持所有已公开的本地 API 路径，使用相同认证，非 JSON 文本包装为 `content` / `contentType`。契约参考固定版本 [folder model](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) 和 [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go)。
 
 - 保留原始 JSON、targets、refId、instant / range、legendFormat、24 列 gridPos、fieldConfig 和 transformations；最多 500 面板，每面板 32 查询。
 - timeseries / graph、stat / singlestat、table、gauge、bargauge、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
@@ -164,11 +180,11 @@ metricspanel dashboards save --file examples/dashboards/go-runtime.json
 
 为 dashboard-as-code 工具提供 `POST /api/dashboards/db`、`GET / DELETE /api/dashboards/uid/{uid}`、`GET /api/search`，
 支持版本冲突检查 / overwrite。提供数据源发现、health 和 `/api/datasources/proxy/uid/metricspanel/...` 查询代理。
-这些接口同样要求工作空间 Bearer token。当前 dashboard API 使用根文件夹。
+这些接口同样要求工作空间 Bearer token，支持 `folderUid` / `folderId` 和稳定本地数字 ID。
 
 **当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
 但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。expression 的 SQL、
-部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限、library panel 和完整后端 API 尚未实现。
+部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限和其余后端 API 尚未实现。Library UID 重命名和 App Platform 资源接口仍待补齐。
 V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
 field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
 因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
@@ -202,6 +218,8 @@ ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一�
 ## Grafana 插件与数据源
 
 网页「插件 → 插件库」读取 Grafana 官方目录，支持搜索、按面板 / 数据源 / 应用筛选、查看详情及历史版本。详情显示已安装版本、Grafana 版本要求、Angular 检测和当前服务器的平台包；选择精确版本后使用已有的签名验证流程安装或更新。已安装插件支持启用 / 停用、卸载和配置；也可上传原始 ZIP。目录可发现 Renderer 条目，当前安装器不支持该包类型。
+
+原生 `/api/gnet/plugins` 保留官方目录 JSON，支持详情与版本查询。`/api/plugins/{id}/install` 可指定版本或使用当前最新版，安装前验证签名；卸载、README / CHANGELOG 和真实包校验 / 后端启动错误也有原生接口。`plugins catalog --id ID` 可安装最新版；需要固定部署时加 `--plugin-version EXACT`。当前启动错误随进程保存，成功重新启动或卸载后清除。
 
 ```sh
 metricspanel plugins search --query clock --kind panel

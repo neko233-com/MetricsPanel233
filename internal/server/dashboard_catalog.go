@@ -17,15 +17,19 @@ type boundDashboardRequest struct {
 	Name      string            `json:"name"`
 	UID       string            `json:"uid"`
 	Inputs    map[string]string `json:"inputs"`
+	FolderUID string            `json:"folderUid"`
+	FolderID  int64             `json:"folderId"`
 }
 
 type communityImportRequest struct {
-	ID       int               `json:"id"`
-	URL      string            `json:"url"`
-	Revision int               `json:"revision"`
-	Name     string            `json:"name"`
-	UID      string            `json:"uid"`
-	Inputs   map[string]string `json:"inputs"`
+	ID        int               `json:"id"`
+	URL       string            `json:"url"`
+	Revision  int               `json:"revision"`
+	Name      string            `json:"name"`
+	UID       string            `json:"uid"`
+	Inputs    map[string]string `json:"inputs"`
+	FolderUID string            `json:"folderUid"`
+	FolderID  int64             `json:"folderId"`
 }
 
 func (s *Server) dashboardCatalogRoutes(api *http.ServeMux) {
@@ -109,7 +113,7 @@ func (s *Server) dashboardCatalogRoutes(api *http.ServeMux) {
 			communityLoadError(w, err)
 			return
 		}
-		s.saveBoundDashboard(w, r, boundDashboardRequest{Dashboard: catalog.Dashboard, Name: request.Name, UID: request.UID, Inputs: request.Inputs}, map[string]any{"id": catalog.ID, "revision": catalog.Revision, "url": catalog.URL})
+		s.saveBoundDashboard(w, r, boundDashboardRequest{Dashboard: catalog.Dashboard, Name: request.Name, UID: request.UID, Inputs: request.Inputs, FolderUID: request.FolderUID, FolderID: request.FolderID}, map[string]any{"id": catalog.ID, "revision": catalog.Revision, "url": catalog.URL})
 	})
 }
 
@@ -154,12 +158,32 @@ func (s *Server) saveBoundDashboard(w http.ResponseWriter, r *http.Request, requ
 		fail(w, 400, err)
 		return
 	}
+	folderID := request.FolderID
+	if request.FolderUID != "" {
+		folderID = 0
+	}
+	folder, err := s.resolveDashboardFolder(r.Context(), request.FolderUID, folderID)
+	if err != nil {
+		dashboardResourceError(w, err)
+		return
+	}
+	bound, err = normalizeImportedElements(bound)
+	sourceDocument := append(json.RawMessage(nil), bound...)
+	if err == nil {
+		bound, err = s.resolveGrafanaLibraryPanels(r.Context(), bound, folder.UID)
+	}
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
 	result, err := grafana.Import(bound)
 	if err != nil {
 		fail(w, 400, err)
 		return
 	}
-	result.Dashboard, err = s.Store.SaveDashboard(r.Context(), result.Dashboard)
+	result.Dashboard.Grafana = sourceDocument
+	result.Dashboard.FolderUID = folder.UID
+	result.Dashboard, err = s.saveDashboardWithLibraryPanels(r.Context(), result.Dashboard, nil)
 	if err != nil {
 		fail(w, 500, err)
 		return

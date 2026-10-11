@@ -29,7 +29,7 @@ func TestNativeAnnotationQueriesSurviveRestartAndDisableDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	assert.JSONEq(t, string(config), string(all[1].Annotations))
-	assert.JSONEq(t, `null`, string(all[1].Grafana))
+	assert.Empty(t, all[1].Grafana, "native dashboards have no Grafana source object")
 	assert.NoError(t, all[0].Validate(), "old dashboards without annotations remain editable")
 	saved.Annotations = json.RawMessage(`[]`)
 	_, err = s.SaveDashboard(ctx, saved)

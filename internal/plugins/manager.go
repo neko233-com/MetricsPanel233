@@ -43,6 +43,7 @@ type Manager struct {
 	AllowUnsigned map[string]bool
 	mu            sync.RWMutex
 	processes     map[string]*process
+	failures      map[string]pluginFailure
 	requests      chan struct{}
 }
 
@@ -57,7 +58,7 @@ func New(s *store.Store, root string, allowed []string) *Manager {
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
-	m := &Manager{Store: s, Root: root, AllowUnsigned: map[string]bool{}, processes: map[string]*process{}, requests: make(chan struct{}, 8)}
+	m := &Manager{Store: s, Root: root, AllowUnsigned: map[string]bool{}, processes: map[string]*process{}, failures: map[string]pluginFailure{}, requests: make(chan struct{}, 8)}
 	for _, id := range allowed {
 		m.AllowUnsigned[id] = true
 	}
@@ -235,6 +236,11 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 		}
 		return err
 	}
+	for pluginID, failure := range m.failures {
+		if failure.packageID == id {
+			delete(m.failures, pluginID)
+		}
+	}
 	return removeOwned(m.Root, retired)
 }
 func processEnvironment() []string {
@@ -246,7 +252,7 @@ func processEnvironment() []string {
 	}
 	return out
 }
-func (m *Manager) getProcess(ctx context.Context, id string) (*process, error) {
+func (m *Manager) getProcess(ctx context.Context, id string) (result *process, resultErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.Store.PluginEffective(ctx, id)
@@ -256,10 +262,22 @@ func (m *Manager) getProcess(ctx context.Context, id string) (*process, error) {
 	if !p.Enabled || !p.Backend {
 		return nil, errors.New("plugin backend is not enabled")
 	}
+	failureCode := "failedBackendStart"
+	defer func() {
+		if resultErr == nil {
+			delete(m.failures, id)
+		} else if !errors.Is(resultErr, context.Canceled) && !errors.Is(resultErr, context.DeadlineExceeded) && ctx.Err() == nil {
+			m.recordFailure(p, failureCode)
+		}
+	}()
 	if cached := m.processes[id]; cached != nil && !cached.client.Exited() {
 		return cached, nil
 	}
 	if err = m.verifyFiles(p); err != nil {
+		failureCode = "signatureModified"
+		if p.Signature == "unsigned" && !m.AllowUnsigned[p.PackageID] {
+			failureCode = "signatureMissing"
+		}
 		return nil, err
 	}
 	executable := p.Executable + "_" + runtime.GOOS + "_" + runtime.GOARCH

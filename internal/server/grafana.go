@@ -5,14 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"hash/crc32"
 	"net/http"
-	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
-	"github.com/neko233-com/MetricsPanel233/internal/grafana"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -31,56 +28,14 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 			fail(w, 400, err)
 			return
 		}
-		if request.FolderID != 0 || request.FolderUID != "" {
-			fail(w, 400, errors.New("only the root dashboard folder is currently supported"))
-			return
-		}
-		result, err := grafana.Import(request.Dashboard)
+		result, err := s.saveGrafanaDashboard(r.Context(), grafanaSaveRequest{Dashboard: request.Dashboard, Overwrite: request.Overwrite, FolderID: request.FolderID, FolderUID: request.FolderUID, Message: request.Message})
 		if err != nil {
-			fail(w, 400, err)
+			writeGrafanaError(w, err)
 			return
 		}
 		document := classicDocument(result.Dashboard)
 		uid, _ := document["uid"].(string)
-		if uid == "" {
-			uid = uuid.NewString()
-		}
-		if len(uid) > 128 || strings.ContainsAny(uid, "/?#\\") {
-			fail(w, 400, errors.New("invalid dashboard uid"))
-			return
-		}
-		existing, found, err := s.grafanaDashboard(r.Context(), uid)
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-		version := 1
-		if found {
-			old := classicDocument(existing)
-			version = int(numeric(old["version"])) + 1
-			// A version supplied by the caller is required for optimistic updates;
-			// the default shown in GET responses must not count as supplied.
-			incoming := int(numeric(dashboardInputVersion(request.Dashboard)))
-			if !request.Overwrite && incoming != version-1 {
-				writeJSON(w, 412, map[string]string{"status": "version-mismatch", "message": "dashboard exists; provide its current version or overwrite=true"})
-				return
-			}
-			result.Dashboard.ID = existing.ID
-		}
-		document["uid"] = uid
-		document["version"] = version
-		document["id"] = crc32.ChecksumIEEE([]byte(uid))
-		result.Dashboard.Grafana, err = json.Marshal(document)
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-		saved, err := s.Store.SaveDashboard(r.Context(), result.Dashboard)
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-		writeJSON(w, 200, map[string]any{"id": document["id"], "uid": uid, "slug": slug(saved.Name), "url": "/d/" + url.PathEscape(uid) + "/" + slug(saved.Name), "status": "success", "version": version, "warnings": s.filterPluginWarnings(r.Context(), result.Warnings)})
+		writeJSON(w, 200, map[string]any{"id": result.Dashboard.GrafanaID, "uid": uid, "slug": slug(result.Dashboard.Name), "url": grafanaDashboardURL(uid, result.Dashboard.Name), "status": "success", "version": document["version"], "warnings": result.Warnings})
 	})
 	api.HandleFunc("GET /api/dashboards/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		d, found, err := s.grafanaDashboard(r.Context(), r.PathValue("uid"))
@@ -92,7 +47,25 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 			fail(w, 404, errors.New("dashboard not found"))
 			return
 		}
-		writeJSON(w, 200, map[string]any{"dashboard": classicDocument(d), "meta": map[string]any{"isStarred": false, "canSave": true, "canEdit": true, "canAdmin": true, "folderId": 0, "folderUid": "", "folderTitle": "General", "url": "/d/" + url.PathEscape(r.PathValue("uid")) + "/" + slug(d.Name)}})
+		d, err = s.resolveDashboardLibrary(r.Context(), d)
+		if err != nil {
+			writeGrafanaError(w, err)
+			return
+		}
+		folder, err := s.resolveDashboardFolder(r.Context(), d.FolderUID, 0)
+		if err != nil {
+			writeGrafanaError(w, err)
+			return
+		}
+		classic, err := json.Marshal(classicDocument(d))
+		if err == nil {
+			classic, err = s.resolveGrafanaLibraryPanels(r.Context(), classic, d.FolderUID)
+		}
+		if err != nil {
+			writeGrafanaError(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"dashboard": json.RawMessage(classic), "meta": map[string]any{"isStarred": false, "canSave": true, "canEdit": true, "canAdmin": true, "folderId": folder.ID, "folderUid": folder.UID, "folderTitle": folder.Title, "pluginId": d.PluginID, "url": grafanaDashboardURL(r.PathValue("uid"), d.Name)}})
 	})
 	api.HandleFunc("DELETE /api/dashboards/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		d, found, err := s.grafanaDashboard(r.Context(), r.PathValue("uid"))
@@ -115,45 +88,14 @@ func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
 		writeJSON(w, 200, map[string]any{"title": d.Name, "message": "Dashboard deleted", "id": classicDocument(d)["id"]})
 	})
 	api.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
-		dashboards, err := s.Store.Dashboards(r.Context())
+		result, err := s.grafanaSearch(r)
 		if err != nil {
-			fail(w, 500, err)
+			writeGrafanaError(w, err)
 			return
 		}
-		result := []map[string]any{}
-		query := strings.ToLower(r.URL.Query().Get("query"))
-		for _, d := range dashboards {
-			if len(d.Grafana) == 0 || !strings.Contains(strings.ToLower(d.Name), query) {
-				continue
-			}
-			doc := classicDocument(d)
-			uid, _ := doc["uid"].(string)
-			if uid == "" {
-				uid = d.ID
-			}
-			if wanted := r.URL.Query()["dashboardUIDs"]; len(wanted) > 0 && !contains(wanted, uid) {
-				continue
-			}
-			result = append(result, map[string]any{"id": crc32.ChecksumIEEE([]byte(uid)), "uid": uid, "title": d.Name, "type": "dash-db", "url": "/d/" + url.PathEscape(uid) + "/" + slug(d.Name), "uri": "db/" + slug(d.Name), "tags": doc["tags"], "isStarred": false})
-		}
-		limit := 100
-		if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
-		page := 1
-		if n, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && n > 0 && n <= 1000000 {
-			page = n
-		}
-		start := (page - 1) * limit
-		if start > len(result) {
-			start = len(result)
-		}
-		end := start + limit
-		if end > len(result) {
-			end = len(result)
-		}
-		writeJSON(w, 200, result[start:end])
+		writeJSON(w, 200, result)
 	})
+	s.grafanaImportRoutes(api)
 	s.datasourceRoutes(api, prometheus)
 }
 
@@ -163,31 +105,238 @@ func (s *Server) grafanaDashboard(ctx context.Context, uid string) (model.Dashbo
 		return model.Dashboard{}, false, err
 	}
 	for _, d := range dashboards {
-		if len(d.Grafana) > 0 {
-			doc := classicDocument(d)
-			if doc["uid"] == uid || d.ID == uid {
-				return d, true, nil
-			}
+		doc := classicDocument(d)
+		if doc["uid"] == uid {
+			return d, true, nil
+		}
+	}
+	for _, d := range dashboards {
+		if d.ID == uid {
+			return d, true, nil
 		}
 	}
 	return model.Dashboard{}, false, nil
 }
+
+func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
+	params := r.URL.Query()
+	limit, page := 1000, 1
+	if n, err := strconv.Atoi(params.Get("limit")); err == nil && n > 0 {
+		if n > 5000 {
+			return nil, grafanaError(422, "", "Limit is above maximum allowed (5000), use page parameter to access hits beyond limit")
+		}
+		limit = n
+	}
+	if n, err := strconv.Atoi(params.Get("page")); err == nil && n > 0 && n <= 1000000 {
+		page = n
+	}
+	wantedUIDs := params["dashboardUIDs"]
+	if len(wantedUIDs) == 0 {
+		wantedUIDs = params["dashboardUID"]
+	}
+	parseIDs := func(values []string) []int64 {
+		var ids []int64
+		for _, value := range values {
+			if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	}
+	wantedIDs, folderIDs := parseIDs(params["dashboardIds"]), parseIDs(params["folderIds"])
+	folderUIDs := params["folderUIDs"]
+	if len(wantedUIDs) > 0 && len(wantedIDs) > 0 || len(folderUIDs) > 0 && len(folderIDs) > 0 {
+		return nil, grafanaError(400, "", "search supports UIDs or IDs, not both")
+	}
+	for i, uid := range folderUIDs {
+		folderUIDs[i] = model.RootFolderUID(uid)
+	}
+	result := []map[string]any{}
+	if params.Get("starred") == "true" || params.Get("deleted") == "true" {
+		return result, nil
+	}
+	folders, err := s.Store.Folders(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	byUID := map[string]model.Folder{"": {Title: "General", URL: "/dashboards"}}
+	for _, folder := range folders {
+		byUID[folder.UID] = folder
+	}
+	query, kind := strings.ToLower(params.Get("query")), params.Get("type")
+	matches := func(uid, title, parent string, id int64) bool {
+		if !strings.Contains(strings.ToLower(title), query) || len(wantedUIDs) > 0 && !contains(wantedUIDs, uid) || len(wantedIDs) > 0 && !containsID(wantedIDs, id) {
+			return false
+		}
+		folder := byUID[parent]
+		return (len(folderUIDs) == 0 || contains(folderUIDs, parent)) && (len(folderIDs) == 0 || containsID(folderIDs, folder.ID))
+	}
+	hit := func(uid, title, typ, location string, id int64, parent model.Folder, tags any) map[string]any {
+		if tags == nil {
+			tags = []string{}
+		}
+		return map[string]any{"id": id, "uid": uid, "orgId": 1, "title": title, "type": typ, "url": location, "uri": "db/" + slug(title), "slug": slug(title), "tags": tags, "isStarred": false, "isDeleted": false, "sortMeta": 0, "folderId": parent.ID, "folderUid": parent.UID, "folderTitle": parent.Title, "folderUrl": parent.URL}
+	}
+	if (kind == "" || kind == "dash-folder") && len(params["tag"]) == 0 {
+		for _, folder := range folders {
+			if matches(folder.UID, folder.Title, folder.ParentUID, folder.ID) {
+				result = append(result, hit(folder.UID, folder.Title, "dash-folder", folder.URL, folder.ID, byUID[folder.ParentUID], nil))
+			}
+		}
+	}
+	if kind == "" || kind == "dash-db" {
+		dashboards, err := s.Store.Dashboards(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range dashboards {
+			doc := classicDocument(d)
+			uid, _ := doc["uid"].(string)
+			parent := model.RootFolderUID(d.FolderUID)
+			if !matches(uid, d.Name, parent, d.GrafanaID) {
+				continue
+			}
+			tags := []string{}
+			if raw, ok := doc["tags"].([]any); ok {
+				for _, value := range raw {
+					if tag, ok := value.(string); ok {
+						tags = append(tags, tag)
+					}
+				}
+			}
+			allTags := true
+			for _, tag := range params["tag"] {
+				allTags = allTags && contains(tags, tag)
+			}
+			if allTags {
+				sort.Strings(tags)
+				result = append(result, hit(uid, d.Name, "dash-db", grafanaDashboardURL(uid, d.Name), d.GrafanaID, byUID[parent], tags))
+			}
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if params.Get("sort") == "" && result[i]["type"] != result[j]["type"] {
+			return result[i]["type"] == "dash-folder"
+		}
+		iTitle, jTitle := strings.ToLower(result[i]["title"].(string)), strings.ToLower(result[j]["title"].(string))
+		if params.Get("sort") == "alpha-desc" {
+			return iTitle > jTitle
+		}
+		return iTitle < jTitle
+	})
+	start := (page - 1) * limit
+	if start >= len(result) {
+		return []map[string]any{}, nil
+	}
+	end := min(start+limit, len(result))
+	return result[start:end], nil
+}
+
+func containsID(values []int64, value int64) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeClassicDocument(d model.Dashboard) map[string]any {
+	panels := []any{}
+	for i, panel := range d.Panels {
+		config := dashboardJSONObjects(panel.Config)
+		if config == nil {
+			visual := panel.Visualization
+			if visual == "" {
+				visual = "timeseries"
+			}
+			expressions := panel.Expressions
+			if len(expressions) == 0 && panel.Expr != "" {
+				expressions = []string{panel.Expr}
+			}
+			if len(expressions) == 0 && panel.Metric != "" {
+				expression := panel.Metric
+				keys := make([]string, 0, len(panel.Labels))
+				for key := range panel.Labels {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				matchers := make([]string, 0, len(keys))
+				for _, key := range keys {
+					matchers = append(matchers, key+"="+strconv.Quote(panel.Labels[key]))
+				}
+				if len(matchers) > 0 {
+					expression += "{" + strings.Join(matchers, ",") + "}"
+				}
+				switch panel.Aggregation {
+				case "rate":
+					expression = "rate(" + expression + "[$__rate_interval])"
+				case "avg", "sum", "min", "max":
+					expression = panel.Aggregation + "(" + expression + ")"
+				}
+				expressions = []string{expression}
+			}
+			targets := []any{}
+			for j, expression := range expressions {
+				refID := string(rune('A' + j))
+				if j >= 26 {
+					refID = "Q" + strconv.Itoa(j+1)
+				}
+				targets = append(targets, map[string]any{"refId": refID, "expr": expression, "range": true, "datasource": map[string]any{"uid": "metricspanel", "type": "prometheus"}})
+			}
+			unit := panel.Unit
+			if unit == "seconds" {
+				unit = "s"
+			} else if unit == "count" {
+				unit = "short"
+			}
+			config = map[string]any{"id": i + 1, "title": panel.Title, "type": visual, "datasource": map[string]any{"uid": "metricspanel", "type": "prometheus"}, "targets": targets, "gridPos": map[string]int{"h": 8, "w": 12, "x": i % 2 * 12, "y": i / 2 * 8}, "fieldConfig": map[string]any{"defaults": map[string]any{"unit": unit}, "overrides": []any{}}, "options": map[string]any{}}
+		}
+		panels = append(panels, config)
+	}
+	variables := []any{}
+	for _, variable := range d.Variables {
+		config := dashboardJSONObjects(variable.Config)
+		if config == nil {
+			options := []any{}
+			for _, value := range variable.Options {
+				options = append(options, map[string]any{"text": value, "value": value, "selected": value == variable.Current})
+			}
+			config = map[string]any{"name": variable.Name, "type": variable.Type, "query": variable.Query, "current": map[string]any{"text": variable.Current, "value": variable.Current}, "options": options, "multi": variable.Multi, "includeAll": variable.IncludeAll}
+		}
+		variables = append(variables, config)
+	}
+	annotations := []any{}
+	if len(d.Annotations) > 0 {
+		decoder := json.NewDecoder(bytes.NewReader(d.Annotations))
+		decoder.UseNumber()
+		_ = decoder.Decode(&annotations)
+	}
+	return map[string]any{"title": d.Name, "panels": panels, "templating": map[string]any{"list": variables}, "annotations": map[string]any{"list": annotations}, "schemaVersion": 41, "tags": []string{}, "time": map[string]string{"from": "now-30m", "to": "now"}}
+}
+
 func classicDocument(d model.Dashboard) map[string]any {
 	doc := dashboardJSONObjects(d.Grafana)
 	if wrapped, ok := doc["dashboard"].(map[string]any); ok {
 		doc = wrapped
 	}
 	resourceUID := ""
+	var resourceVersion any
 	if metadata, ok := doc["metadata"].(map[string]any); ok {
 		resourceUID, _ = metadata["name"].(string)
+		resourceVersion = metadata["generation"]
 	}
 	if spec, ok := doc["spec"].(map[string]any); ok {
 		doc = spec
 	}
 	if doc == nil {
-		doc = map[string]any{}
+		doc = nativeClassicDocument(d)
 	}
 	if doc["elements"] != nil { // Public resource -> classic API response.
+		version := doc["version"]
+		if version == nil {
+			version = resourceVersion
+		}
 		panels := []any{}
 		for _, p := range d.Panels {
 			panels = append(panels, dashboardJSONObjects(p.Config))
@@ -196,7 +345,7 @@ func classicDocument(d model.Dashboard) map[string]any {
 		for _, v := range d.Variables {
 			variables = append(variables, dashboardJSONObjects(v.Config))
 		}
-		doc = map[string]any{"title": d.Name, "panels": panels, "templating": map[string]any{"list": variables}, "schemaVersion": 41}
+		doc = map[string]any{"title": d.Name, "panels": panels, "templating": map[string]any{"list": variables}, "schemaVersion": 41, "version": version}
 	}
 	if doc["uid"] == nil {
 		if resourceUID != "" {
@@ -207,6 +356,12 @@ func classicDocument(d model.Dashboard) map[string]any {
 	}
 	if doc["version"] == nil {
 		doc["version"] = 1
+	}
+	if d.GrafanaID > 0 {
+		doc["id"] = d.GrafanaID
+	}
+	if d.GrafanaVersion > 0 {
+		doc["version"] = d.GrafanaVersion
 	}
 	return doc
 }

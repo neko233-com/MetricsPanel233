@@ -1,6 +1,7 @@
 package grafana
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -16,7 +17,9 @@ func normalizeV2(elements map[string]json.RawMessage, layout json.RawMessage) ([
 			Kind string         `json:"kind"`
 			Spec map[string]any `json:"spec"`
 		}
-		if err := json.Unmarshal(raw, &element); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&element); err != nil {
 			return nil, nil, err
 		}
 		p := element.Spec
@@ -69,7 +72,7 @@ func normalizeV2(elements map[string]json.RawMessage, layout json.RawMessage) ([
 		switch kind {
 		case "GridLayout", "AutoGridLayout":
 			columns := 2
-			if n, ok := spec["maxColumnCount"].(float64); ok && n >= 1 && n <= 24 {
+			if n := number(spec["maxColumnCount"]); n >= 1 && n <= 24 {
 				columns = int(n)
 			}
 			items := array(spec["items"])
@@ -116,7 +119,9 @@ func normalizeV2(elements map[string]json.RawMessage, layout json.RawMessage) ([
 	}
 	var l map[string]any
 	if len(layout) > 0 {
-		if err := json.Unmarshal(layout, &l); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(layout))
+		decoder.UseNumber()
+		if err := decoder.Decode(&l); err != nil {
 			return nil, nil, err
 		}
 		walk(l)
@@ -152,6 +157,10 @@ func array(value any) []any {
 	return nil
 }
 func number(value any) float64 {
+	if n, ok := value.(json.Number); ok {
+		f, _ := n.Float64()
+		return f
+	}
 	if n, ok := value.(float64); ok {
 		return n
 	}

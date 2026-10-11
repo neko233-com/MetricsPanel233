@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 type DashboardInput struct {
@@ -273,8 +274,8 @@ func BindDashboard(data []byte, bindings map[string]string, name, uid string) ([
 		variable["options"] = options
 	}
 	if name != "" {
-		if len(name) > 100 {
-			return nil, errors.New("dashboard name must contain 1–100 bytes")
+		if utf8.RuneCountInString(name) > 5000 {
+			return nil, errors.New("dashboard name must contain 1–5000 characters")
 		}
 		document["title"] = name
 	}

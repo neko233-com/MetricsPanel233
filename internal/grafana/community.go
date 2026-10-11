@@ -85,6 +85,19 @@ type CommunityClient struct {
 	HTTPClient *http.Client
 }
 
+// Metadata returns the upstream Grafana.com shape, including its json template,
+// without projecting it into the native community-preview response.
+func (c *CommunityClient) Metadata(ctx context.Context, id int) (json.RawMessage, error) {
+	if id <= 0 || id > 2147483647 {
+		return nil, errors.New("invalid community dashboard ID or revision")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var metadata json.RawMessage
+	err := c.getJSON(ctx, "https://grafana.com/api/dashboards/"+strconv.Itoa(id), &metadata)
+	return metadata, err
+}
+
 func (c *CommunityClient) Load(ctx context.Context, id, revision int) (CommunityDashboard, error) {
 	if id <= 0 || id > 2147483647 || revision < 0 || revision > 2147483647 {
 		return CommunityDashboard{}, errors.New("invalid community dashboard ID or revision")

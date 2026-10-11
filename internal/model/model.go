@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"time"
+	"unicode/utf8"
 )
 
 var metricName = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]{0,199}$`)
@@ -136,13 +137,18 @@ type Variable struct {
 }
 
 type Dashboard struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Panels      []Panel         `json:"panels"`
-	UpdatedAt   int64           `json:"updated_at"`
-	Variables   []Variable      `json:"variables,omitempty"`
-	Grafana     json.RawMessage `json:"grafana,omitempty"`
-	Annotations json.RawMessage `json:"annotations,omitempty"`
+	ID             string          `json:"id"`
+	GrafanaID      int64           `json:"grafana_id,omitempty"`
+	GrafanaVersion int64           `json:"grafana_version,omitempty"`
+	FolderUID      string          `json:"folder_uid,omitempty"`
+	PluginID       string          `json:"plugin_id,omitempty"`
+	PluginPath     string          `json:"plugin_path,omitempty"`
+	Name           string          `json:"name"`
+	Panels         []Panel         `json:"panels"`
+	UpdatedAt      int64           `json:"updated_at"`
+	Variables      []Variable      `json:"variables,omitempty"`
+	Grafana        json.RawMessage `json:"grafana,omitempty"`
+	Annotations    json.RawMessage `json:"annotations,omitempty"`
 }
 
 func ValidAggregation(a string) bool {
@@ -165,8 +171,8 @@ func (d Dashboard) Validate() error {
 			}
 		}
 	}
-	if len(d.Name) == 0 || len(d.Name) > 100 {
-		return errors.New("dashboard name must contain 1–100 bytes")
+	if len(d.Name) == 0 || utf8.RuneCountInString(d.Name) > 5000 {
+		return errors.New("dashboard name must contain 1–5000 characters")
 	}
 	if len(d.Panels) > 500 {
 		return errors.New("at most 500 panels per dashboard")

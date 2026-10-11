@@ -17,6 +17,16 @@ type ImportResult struct {
 }
 
 func Import(data []byte) (ImportResult, error) {
+	return importDashboard(data, false)
+}
+
+// ImportForSave permits empty dashboards in Grafana's create/update APIs while
+// keeping the template importer's existing requirement for at least one panel.
+func ImportForSave(data []byte) (ImportResult, error) {
+	return importDashboard(data, true)
+}
+
+func importDashboard(data []byte, allowEmpty bool) (ImportResult, error) {
 	original := append(json.RawMessage(nil), data...)
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -52,7 +62,7 @@ func Import(data []byte) (ImportResult, error) {
 		return ImportResult{}, fmt.Errorf("Grafana dashboard title required")
 	}
 	result := ImportResult{Dashboard: model.Dashboard{ID: uuid.NewString(), Name: source.Title, Panels: []model.Panel{}, Grafana: original}, Warnings: []string{}}
-	if len(source.Elements) > 0 {
+	if source.Elements != nil {
 		panels, warnings, err := normalizeV2(source.Elements, source.Layout)
 		if err != nil {
 			return result, err
@@ -232,7 +242,7 @@ func Import(data []byte) (ImportResult, error) {
 		}
 		result.Dashboard.Variables = append(result.Dashboard.Variables, model.Variable{Name: v.Name, Type: v.Type, Query: query, Current: current, Options: options, Multi: v.Multi, IncludeAll: v.IncludeAll, Config: raw})
 	}
-	if len(result.Dashboard.Panels) == 0 {
+	if len(result.Dashboard.Panels) == 0 && !allowEmpty {
 		return result, fmt.Errorf("template has no panels")
 	}
 	if err := result.Dashboard.Validate(); err != nil {

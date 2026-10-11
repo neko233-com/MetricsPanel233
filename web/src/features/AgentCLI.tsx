@@ -3,6 +3,16 @@ import { useState } from "react";
 import { Check, Copy, Terminal } from "lucide-react";
 const examples = [
   {
+    title: "Manage folders and library panels",
+    detail: "Create folders, update shared models and inspect dashboard connections.",
+    command: "metricspanel folders create --id operations --name Operations\nmetricspanel library list --folder-uid operations\nmetricspanel library get --id LIBRARY_UID > library.json\nmetricspanel library save --id LIBRARY_UID --file library.json\nmetricspanel library connections --id LIBRARY_UID",
+  },
+  {
+    title: "Call published API routes",
+    detail: "Send JSON to any published route with the workspace token.",
+    command: "metricspanel api --path /api/gnet/plugins\nmetricspanel api --path /api/library-elements/LIBRARY_UID --method PATCH --file library-update.json",
+  },
+  {
     title: "Native collectors",
     detail: "List collection protocols and exporter presets. Save connection credentials from a JSON file.",
     command: "metricspanel targets catalog\nmetricspanel targets exporters\nmetricspanel targets add --file collector.json\nmetricspanel targets scrape --id 1",

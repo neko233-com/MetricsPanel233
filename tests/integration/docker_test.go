@@ -241,6 +241,133 @@ func (e environment) verifyDashboardSnapshot(address string, create bool) {
 	e.t.Log("snapshot frames persisted; source queries disabled")
 }
 
+func (e environment) verifyDashboardResources(address, service string, create bool) []model.LibraryConnection {
+	e.t.Helper()
+	const libraryUID = "docker-shared-panel"
+	const initialModel = `{"type":"text","title":"Shared original","options":{"content":"original","opaque":18446744073709551615},"opaque":900719925474099312345}`
+	const updatedModel = `{"type":"text","title":"Shared updated","options":{"content":"updated","opaque":18446744073709551615},"opaque":900719925474099312345}`
+	cli := func(args ...string) []byte {
+		e.t.Helper()
+		out, err := e.compose(append([]string{"exec", "-T", service, "metricspanel"}, args...)...)
+		require.NoError(e.t, err, out)
+		return []byte(out)
+	}
+	checkModel := func(raw []byte, title string) {
+		e.t.Helper()
+		var panel struct {
+			Title   string          `json:"title"`
+			Opaque  json.RawMessage `json:"opaque"`
+			Options struct {
+				Opaque json.RawMessage `json:"opaque"`
+			} `json:"options"`
+		}
+		require.NoError(e.t, json.Unmarshal(raw, &panel), string(raw))
+		assert.Equal(e.t, title, panel.Title)
+		// JSONEq alone would round these literals to float64 and conceal corruption.
+		assert.Equal(e.t, "900719925474099312345", string(panel.Opaque))
+		assert.Equal(e.t, "18446744073709551615", string(panel.Options.Opaque))
+	}
+	checkDashboards := func(title string) {
+		e.t.Helper()
+		for _, uid := range []string{"docker-linked-one", "docker-linked-two"} {
+			var response struct {
+				Dashboard struct {
+					Opaque json.RawMessage   `json:"opaque"`
+					Panels []json.RawMessage `json:"panels"`
+				} `json:"dashboard"`
+				Meta struct {
+					FolderUID string `json:"folderUid"`
+				} `json:"meta"`
+			}
+			require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/dashboards/uid/"+uid, nil), &response))
+			assert.Equal(e.t, "docker-resource-child", response.Meta.FolderUID)
+			assert.Equal(e.t, "900719925474099312345", string(response.Dashboard.Opaque))
+			require.Len(e.t, response.Dashboard.Panels, 1)
+			checkModel(response.Dashboard.Panels[0], title)
+			var panel struct {
+				LibraryPanel struct {
+					UID string `json:"uid"`
+				} `json:"libraryPanel"`
+			}
+			require.NoError(e.t, json.Unmarshal(response.Dashboard.Panels[0], &panel))
+			assert.Equal(e.t, libraryUID, panel.LibraryPanel.UID)
+		}
+	}
+	if create {
+		cli("folders", "create", "--id", "docker-resource-root", "--name", "Docker resource root")
+		cli("folders", "create", "--id", "docker-resource-child", "--name", "Docker resource child", "--parent-uid", "docker-resource-root")
+		out, err := e.composeInput(`{"uid":"`+libraryUID+`","name":"Docker shared panel","kind":1,"folderUid":"docker-resource-child","model":`+initialModel+`}`, "exec", "-T", service, "metricspanel", "library", "save", "--file", "-")
+		require.NoError(e.t, err, out)
+		for _, suffix := range []string{"one", "two"} {
+			document := json.RawMessage(fmt.Sprintf(`{"uid":"docker-linked-%s","title":"Docker linked %s","opaque":900719925474099312345,"panels":[{"id":1,"type":"text","libraryPanel":{"uid":"%s","name":"Docker shared panel"},"gridPos":{"x":0,"y":0,"w":24,"h":8}}]}`, suffix, suffix, libraryUID))
+			e.must(address, "POST", "/api/dashboards/db", map[string]any{"dashboard": document, "folderUid": "docker-resource-child"})
+		}
+		checkModel(e.must(address, "GET", "/api/v1/library-models/"+libraryUID, nil), "Shared original")
+		checkDashboards("Shared original")
+		e.must(address, "PATCH", "/api/library-elements/"+libraryUID, map[string]any{"version": 1, "model": json.RawMessage(updatedModel)})
+	}
+	var folders []model.Folder
+	require.NoError(e.t, json.Unmarshal(cli("folders", "list"), &folders))
+	found := false
+	for _, folder := range folders {
+		if folder.UID == "docker-resource-child" {
+			found = true
+			assert.Equal(e.t, "docker-resource-root", folder.ParentUID)
+		}
+	}
+	require.True(e.t, found, "folder tree missing after restart")
+	var child model.Folder
+	require.NoError(e.t, json.Unmarshal(cli("folders", "get", "--id", "docker-resource-child"), &child))
+	assert.Equal(e.t, "docker-resource-root", child.ParentUID)
+	var children, parents []model.Folder
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/folders?parentUid=docker-resource-root", nil), &children))
+	require.Len(e.t, children, 1)
+	assert.Equal(e.t, child.UID, children[0].UID)
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/folders/docker-resource-child/parents", nil), &parents))
+	require.Len(e.t, parents, 1)
+	assert.Equal(e.t, "docker-resource-root", parents[0].UID)
+	var library struct {
+		Result model.LibraryElement `json:"result"`
+	}
+	require.NoError(e.t, json.Unmarshal(cli("library", "get", "--id", libraryUID), &library))
+	assert.Equal(e.t, int64(2), library.Result.Version, "shared model update did not persist")
+	assert.Equal(e.t, child.UID, library.Result.FolderUID)
+	assert.Equal(e.t, int64(2), library.Result.Meta.ConnectedDashboards)
+	checkModel(library.Result.Model, "Shared updated")
+	var filtered struct {
+		Result struct {
+			TotalCount int64                  `json:"totalCount"`
+			Elements   []model.LibraryElement `json:"elements"`
+		} `json:"result"`
+	}
+	require.NoError(e.t, json.Unmarshal(cli("library", "list", "--folder-uid", child.UID, "--query", "Docker shared"), &filtered))
+	assert.Equal(e.t, int64(1), filtered.Result.TotalCount)
+	require.Len(e.t, filtered.Result.Elements, 1)
+	assert.Equal(e.t, libraryUID, filtered.Result.Elements[0].UID)
+	checkModel(cli("library", "model", "--id", libraryUID), "Shared updated")
+	checkModel(cli("api", "--path", "/api/v1/library-models/"+libraryUID), "Shared updated")
+	var connections struct {
+		Result []model.LibraryConnection `json:"result"`
+	}
+	require.NoError(e.t, json.Unmarshal(e.must(address, "GET", "/api/library-elements/"+libraryUID+"/connections", nil), &connections))
+	require.Len(e.t, connections.Result, 2, "shared dashboard links did not persist")
+	for i, connection := range connections.Result {
+		assert.Greater(e.t, connection.ID, int64(0))
+		assert.Greater(e.t, connection.ConnectionID, int64(0))
+		assert.NotEmpty(e.t, connection.ConnectionUID)
+		assert.Equal(e.t, library.Result.ID, connection.ElementID)
+		assert.Equal(e.t, []string{"Docker linked one", "Docker linked two"}[i], connection.Name)
+	}
+	var viaCLI struct {
+		Result []model.LibraryConnection `json:"result"`
+	}
+	require.NoError(e.t, json.Unmarshal(cli("library", "connections", "--id", libraryUID), &viaCLI))
+	assert.Equal(e.t, connections.Result, viaCLI.Result)
+	checkDashboards("Shared updated")
+	e.t.Log("folder tree, linked library update, exact JSON numbers and typed CLI persisted")
+	return connections.Result
+}
+
 func (e environment) verifySQL(address string, restarted bool) {
 	e.t.Helper()
 	payload := json.RawMessage(`{"from":"now-1m","to":"now","queries":[{"refId":"A","datasource":{"uid":"metricspanel"},"expr":"mysql_up{job=\"mysql\"}","instant":true},{"refId":"B","datasource":{"uid":"docker-sdk"},"value":2,"sqlTable":true},{"refId":"Q","datasource":{"uid":"__expr__"},"type":"sql","expression":"WITH joined AS (SELECT A.job, B.host, A.__value__ * B.value AS total, B.online, B.payload FROM A CROSS JOIN B) SELECT job, host, SUM(total) AS total, MAX(JSON_EXTRACT(payload,'$.n')) AS payload FROM joined WHERE online GROUP BY job, host"}]}`)
@@ -853,6 +980,7 @@ func TestDockerEndToEnd(t *testing.T) {
 	imageSize, err := e.docker("image", "inspect", "metricspanel233-test:local", "--format", "{{.Size}}")
 	require.NoError(t, err)
 	t.Logf("single test container runtime image: %s bytes; 2 CPUs, 2 GiB memory limit", imageSize)
+	resourceConnections := map[string][]model.LibraryConnection{}
 	for _, backend := range []struct{ service, goService string }{{"sqlite", "go-sqlite"}, {"clickhouse-app", "go-clickhouse"}} {
 		if !t.Run(backend.service, func(t *testing.T) {
 			e := e
@@ -948,6 +1076,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			var nativeRegions model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "POST", "/api/v1/dashboards", model.Dashboard{Name: "Docker time regions", Panels: []model.Panel{}, Annotations: regionConfig}), &nativeRegions))
 			e.verifyDashboardSnapshot(address, true)
+			resourceConnections[backend.service] = e.verifyDashboardResources(address, backend.service, true)
 			_, err = e.compose("restart", backend.service)
 			require.NoError(t, err)
 			address = e.address(backend.service)
@@ -959,6 +1088,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.verifyAlertGraph(address, true)
 			e.verifyAlertGroups(address, true)
 			e.verifyDashboardSnapshot(address, false)
+			assert.Equal(t, resourceConnections[backend.service], e.verifyDashboardResources(address, backend.service, false), "app restart changed library connection identities")
 			var regionDashboards []model.Dashboard
 			require.NoError(t, json.Unmarshal(e.must(address, "GET", "/api/v1/dashboards", nil), &regionDashboards))
 			regionFound := false
@@ -966,7 +1096,7 @@ func TestDockerEndToEnd(t *testing.T) {
 				if dashboard.ID == nativeRegions.ID {
 					regionFound = true
 					assert.JSONEq(t, string(regionConfig), string(dashboard.Annotations), "restart lost native recurrence configuration")
-					assert.JSONEq(t, `null`, string(dashboard.Grafana), "native recurrence converted the dashboard format")
+					assert.True(t, len(dashboard.Grafana) == 0 || string(dashboard.Grafana) == "null", "native recurrence converted the dashboard format: %s", dashboard.Grafana)
 				}
 			}
 			require.True(t, regionFound)
@@ -1035,5 +1165,6 @@ func TestDockerEndToEnd(t *testing.T) {
 		require.Eventually(t, func() bool { value, ok := e.value(address, "restart_marker"); return ok && value == 234 }, 60*time.Second, 500*time.Millisecond, "single-container restart lost durable state")
 		e.verifyNativeCollectors(address)
 		e.verifyDashboardSnapshot(address, false)
+		assert.Equal(t, resourceConnections[service], e.verifyDashboardResources(address, service, false), "single-container restart changed library connection identities")
 	}
 }

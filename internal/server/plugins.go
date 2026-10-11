@@ -71,7 +71,9 @@ func (s *Server) validAssetSession(r *http.Request) bool {
 	return hmac.Equal([]byte(cookie.Value), []byte(s.assetSession(expires)))
 }
 func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
-	s.pluginCatalogRoutes(api, plugins.NewCatalogClient(nil))
+	catalog := plugins.NewCatalogClient(nil)
+	s.pluginCatalogRoutes(api, catalog)
+	s.nativePluginRoutes(api, catalog, nil)
 	api.HandleFunc("GET /api/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
 		items, err := s.Store.Plugins(r.Context())
 		if err != nil {
@@ -166,24 +168,10 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 		writeJSON(w, 200, map[string]bool{"deleted": true})
 	})
 	api.HandleFunc("GET /api/plugins", func(w http.ResponseWriter, r *http.Request) {
-		items, err := s.Store.Plugins(r.Context())
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-		out := []any{}
-		for _, p := range items {
-			metadata, err := s.pluginMetadata(r.Context(), p.ID)
-			if err != nil {
-				fail(w, 500, err)
-				return
-			}
-			out = append(out, metadata)
-		}
-		writeJSON(w, 200, out)
+		s.nativeInstalledPluginList(w, r, catalog)
 	})
 	api.HandleFunc("GET /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
-		metadata, err := s.pluginMetadata(r.Context(), r.PathValue("id"))
+		metadata, err := s.nativePluginMetadata(r.Context(), r.PathValue("id"), catalog)
 		if err != nil {
 			resourceError(w, err)
 			return

@@ -731,7 +731,7 @@ test("Native collector forms preserve credentials, scrape Redis, and use plain C
     await page.getByRole("button",{name:"Explore",exact:true}).click();
     await expect(page.getByText("Query stored metrics with label filters and PromQL.",{exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Dashboards",exact:true}).click();
-    await expect(page.getByText("Create dashboards, edit panels or import Grafana JSON.",{exact:true})).toBeVisible();
+    await expect(page.locator(".page-heading p")).toHaveText(/^\d+ dashboards · \d+ folders$/);
     await page.getByRole("button",{name:"Collectors",exact:true}).click();
     await page.getByRole("button",{name:"Switch language",exact:true}).click();
     await page.setViewportSize({width:390,height:844});
@@ -3598,7 +3598,7 @@ test("Recurring time regions render SDK frames and native bands, preserve all da
       .getByRole("button", { name: "Save annotation queries", exact: true })
       .click();
     await expect(dialog).toHaveCount(0);
-    expect((await saved(nativeID)).grafana).toBeNull();
+    expect((await saved(nativeID)).grafana ?? null).toBeNull();
     expect((await saved(nativeID)).annotations[1].target.timeRegion).toEqual({
       timezone: "utc",
       from: "00:00",
@@ -4212,7 +4212,7 @@ test("Annotation query editors use public SDK components, preserve template reso
     const nativeSaved = (
       await (await page.request.get(endpoint + "/api/v1/dashboards")).json()
     ).find((item: any) => item.id === nativeID);
-    expect(nativeSaved.grafana).toBeNull();
+    expect(nativeSaved.grafana ?? null).toBeNull();
     expect(nativeSaved.annotations).toHaveLength(3);
     expect(nativeSaved.annotations[1].target.tags).toEqual(["deploy", "prod"]);
     expect(nativeSaved.annotations[2].target.expr).toBe("vector(12)");

@@ -1,10 +1,12 @@
 import { t as tr } from "../i18n";
-import { useRef, useState } from "react";
-import { ArrowRight, Download, Plus, Trash2, Upload } from "lucide-react";
-import { api, downloadRaw, jsonBody, message, type Dashboard } from "../api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, Download, Folder as FolderIcon, Move, Plus, Trash2, Upload } from "lucide-react";
+import { api, downloadRaw, jsonBody, message, type Dashboard, type Folder } from "../api";
 import { Dialog } from "../components/Dialog";
 import { DashboardImport } from "./DashboardImport";
 import { grafanaImportBody } from "./grafana-import-body";
+import { Folders, FolderBreadcrumbs, FolderSelect, folderTrail } from "./Folders";
+import { LibraryPanels } from "./LibraryPanels";
 export function Dashboards({
   dashboards,
   open,
@@ -23,15 +25,33 @@ export function Dashboards({
     [exporting, setExporting] = useState(""),
     [removing, setRemoving] = useState<Dashboard | null>(null),
     [importing, setImporting] = useState<{ initial?: string } | null>(null);
+  const [tab, setTab] = useState<"dashboards" | "library">("dashboards");
+  const [folders, setFolders] = useState<Folder[]>([]), [folderLoading, setFolderLoading] = useState(true), [folderError, setFolderError] = useState("");
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null), [creationFolder, setCreationFolder] = useState("");
+  const [moving, setMoving] = useState<Dashboard | null>(null);
+  const [search, setSearch] = useState("");
+  const folderRequest = useRef<AbortController | null>(null);
+  const loadFolders = useCallback(async () => {
+    folderRequest.current?.abort();
+    const controller = new AbortController(); folderRequest.current = controller;
+    setFolderLoading(true); setFolderError("");
+    try {
+      const result = await api<Folder[]>("/folders", { signal: controller.signal });
+      if (!controller.signal.aborted) setFolders(result);
+    } catch (cause) { if (!controller.signal.aborted) { setFolderError(message(cause)); throw cause; } }
+    finally { if (!controller.signal.aborted) setFolderLoading(false); }
+  }, []);
+  useEffect(() => { void loadFolders().catch(() => {}); return () => folderRequest.current?.abort(); }, [loadFolders]);
+  const visibleDashboards = dashboards.filter((dashboard) => (selectedFolder === null || (dashboard.folder_uid || "") === selectedFolder) && dashboard.name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
       <div className="page-heading">
         <div>
           <h1>{tr("Dashboards")}</h1>
-          <p>{tr("Create dashboards, edit panels or import Grafana JSON.")}</p>
+          <p>{dashboards.length} {tr("dashboards")} · {folders.length} {tr("folders")}</p>
         </div>
-        <div className="toolbar">
+        {tab === "dashboards" && <div className="toolbar">
           <button onClick={() => setImporting({})}>
             <Upload size={17} />
             {tr("Import dashboard")}
@@ -46,16 +66,27 @@ export function Dashboards({
               setCreating(true);
               setName("");
               setError("");
+              setCreationFolder(selectedFolder || "");
             }}
           >
             <Plus size={18} />
             {tr("New dashboard")}
           </button>
-        </div>
+        </div>}
       </div>
+      <div className="dashboard-tabs" role="tablist" aria-label={tr("Dashboard resources")} onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault(); const next = event.key === "Home" ? "dashboards" : event.key === "End" ? "library" : tab === "dashboards" ? "library" : "dashboards";
+        setTab(next); event.currentTarget.querySelector<HTMLButtonElement>(`#${next === "dashboards" ? "dashboard-browser" : "library-panels"}-tab`)?.focus();
+      }}>
+        <button role="tab" id="dashboard-browser-tab" aria-controls="dashboard-browser-panel" aria-selected={tab === "dashboards"} tabIndex={tab === "dashboards" ? 0 : -1} onClick={() => setTab("dashboards")}>{tr("Dashboards")}</button>
+        <button role="tab" id="library-panels-tab" aria-controls="library-panels-panel" aria-selected={tab === "library"} tabIndex={tab === "library" ? 0 : -1} onClick={() => setTab("library")}>{tr("Library panels")}</button>
+      </div>
+      {folderError && <div className="folder-load-error"><p className="form-error" role="alert">{folderError}</p><button onClick={() => void loadFolders().catch(() => {})}>{tr("Retry")}</button></div>}
       <input
         ref={input}
         type="file"
+        className="dashboard-file-input"
         accept=".json,application/json"
         hidden
         onChange={async (e) => {
@@ -98,6 +129,7 @@ export function Dashboards({
                 method: "POST",
                 body: text,
               });
+            if (selectedFolder) imported = await api<Dashboard>(`/dashboard-folders/${encodeURIComponent(imported.id)}`, { method: "PUT", body: jsonBody({ folderUid: selectedFolder, revision: imported.updated_at }) });
             await reload();
             open(imported);
             notify(tr("Dashboard imported"));
@@ -111,6 +143,8 @@ export function Dashboards({
       {importing && (
         <DashboardImport
           initial={importing.initial}
+          folders={folders}
+          defaultFolder={selectedFolder || ""}
           close={() => setImporting(null)}
           imported={async (dashboard, warnings) => {
             await reload();
@@ -121,19 +155,26 @@ export function Dashboards({
           }}
         />
       )}
+      {tab === "library" ? <LibraryPanels folders={folders} dashboards={dashboards} reload={reload} open={open} notify={notify} /> : <div className="dashboard-browser" id="dashboard-browser-panel" role="tabpanel" aria-labelledby="dashboard-browser-tab">
+      <div>{folderLoading ? <p className="subtle" role="status">{tr("Loading folders…")}</p> : <Folders folders={folders} selected={selectedFolder} select={setSelectedFolder} changed={async () => { await Promise.all([loadFolders(), reload()]); }} notify={notify} />}</div>
+      <div className="dashboard-folder-content">
+      <FolderBreadcrumbs folders={folders} selected={selectedFolder} select={setSelectedFolder} />
+      <label className="dashboard-search">{tr("Search dashboards")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} maxLength={200} /></label>
+      {selectedFolder !== null && folders.some((folder) => (folder.parentUid || "") === selectedFolder) && <div className="folder-children">{folders.filter((folder) => (folder.parentUid || "") === selectedFolder).map((folder) => <button key={folder.uid} onClick={() => setSelectedFolder(folder.uid)}><FolderIcon size={17} />{folder.title}<ArrowRight size={15} /></button>)}</div>}
       <section className="list-panel">
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>{tr("Dashboard")}</th>
+                <th>{tr("Folder")}</th>
                 <th>{tr("Panels")}</th>
                 <th>{tr("Last updated")}</th>
                 <th>{tr("Actions")}</th>
               </tr>
             </thead>
             <tbody>
-              {dashboards.map((d) => (
+              {visibleDashboards.map((d) => (
                 <tr key={d.id}>
                   <td>
                     <button className="dashboard-title" onClick={() => open(d)}>
@@ -141,11 +182,13 @@ export function Dashboards({
                       <ArrowRight size={17} />
                     </button>
                     <div className="subtle mono">{d.id}</div>
+                    <div className="dashboard-mobile-meta subtle">{folderTrail(d.folder_uid || "", folders).map((folder) => folder.title).join(" / ") || tr("General")} · {new Date(d.updated_at).toLocaleString()}</div>
                     {(d.grafana as { snapshot?: unknown } | undefined)
                       ?.snapshot ? (
                       <span className="subtle">{tr("Snapshot")}</span>
                     ) : null}
                   </td>
+                  <td>{folderTrail(d.folder_uid || "", folders).map((folder) => folder.title).join(" / ") || tr("General")}</td>
                   <td>{d.panels.length}</td>
                   <td>{new Date(d.updated_at).toLocaleString()}</td>
                   <td>
@@ -171,6 +214,7 @@ export function Dashboards({
                       >
                         <Download size={17} />
                       </button>
+                      <button className="icon-button" aria-label={`${tr("Move dashboard")} ${tr(d.name)}`} title={tr("Move dashboard")} onClick={() => setMoving(d)}><Move size={17} /></button>
                       {d.id !== "system" && (
                         <button
                           className="icon-button danger-hover"
@@ -188,6 +232,8 @@ export function Dashboards({
           </table>
         </div>
       </section>
+      {!visibleDashboards.length && <p className="dashboard-empty">{tr("No dashboards in this folder.")}</p>}
+      </div></div>}
       {creating && (
         <Dialog title={tr("New dashboard")} onClose={() => setCreating(false)}>
           <form
@@ -198,7 +244,7 @@ export function Dashboards({
               try {
                 const d = await api<Dashboard>("/dashboards", {
                   method: "POST",
-                  body: jsonBody({ name, panels: [] }),
+                  body: jsonBody({ name, panels: [], folder_uid: creationFolder }),
                 });
                 await reload();
                 setCreating(false);
@@ -219,9 +265,10 @@ export function Dashboards({
                 onChange={(e) => setName(e.target.value)}
                 placeholder={tr("e.g. API overview")}
                 required
-                maxLength={100}
+                maxLength={5000}
               />
             </label>
+            <label>{tr("Folder")}<FolderSelect folders={folders} value={creationFolder} onChange={setCreationFolder} disabled={saving || folderLoading} /></label>
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -238,6 +285,7 @@ export function Dashboards({
           </form>
         </Dialog>
       )}
+      {moving && <MoveDashboard dashboard={moving} folders={folders} close={() => setMoving(null)} moved={async () => { await reload(); setMoving(null); notify(tr("Dashboard moved")); }} />}
       {removing && (
         <Dialog
           title={tr("Delete dashboard")}
@@ -272,4 +320,9 @@ export function Dashboards({
       )}
     </>
   );
+}
+
+function MoveDashboard({ dashboard, folders, close, moved }: { dashboard: Dashboard; folders: Folder[]; close: () => void; moved: () => Promise<void> }) {
+  const [folder, setFolder] = useState(dashboard.folder_uid || ""), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  return <Dialog title={tr("Move dashboard")} onClose={() => { if (!busy) close(); }}><p><strong>{dashboard.name}</strong></p><form onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(""); try { await api(`/dashboard-folders/${encodeURIComponent(dashboard.id)}`, { method: "PUT", body: jsonBody({ folderUid: folder, revision: dashboard.updated_at }) }); await moved(); } catch (cause) { setError(message(cause)); } finally { setBusy(false); } }}><label>{tr("Folder")}<FolderSelect folders={folders} value={folder} onChange={setFolder} disabled={busy} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button type="button" disabled={busy} onClick={close}>{tr("Cancel")}</button><button className="primary" disabled={busy}>{tr(busy ? "Saving…" : "Move dashboard")}</button></div></form></Dialog>;
 }

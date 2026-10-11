@@ -114,6 +114,13 @@ func insertAlertAnnotation(ctx context.Context, tx *sql.Tx, rule model.AlertRule
 	if number, err := strconv.ParseInt(panel, 10, 64); uid != "" && len(uid) <= 128 && err == nil && number > 0 && number <= 9007199254740991 {
 		a.DashboardUID, a.PanelID = uid, number
 		a.DashboardID = int64(crc32.ChecksumIEEE([]byte(uid)))
+		var allocated int64
+		lookupErr := tx.QueryRowContext(ctx, `SELECT i.id FROM dashboards d JOIN dashboard_identity i ON i.dashboard_id=d.id WHERE d.id=? OR COALESCE(json_extract(d.extras,'$.grafana.uid'),json_extract(d.extras,'$.grafana.dashboard.uid'),json_extract(d.extras,'$.grafana.metadata.name'),json_extract(d.extras,'$.grafana.dashboard.metadata.name'),json_extract(d.extras,'$.grafana.spec.uid'))=? ORDER BY CASE WHEN d.id=? THEN 0 ELSE 1 END LIMIT 1`, uid, uid, uid).Scan(&allocated)
+		if lookupErr == nil {
+			a.DashboardID = allocated
+		} else if lookupErr != sql.ErrNoRows {
+			return lookupErr
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO alert_rule_identity(uid) VALUES(?) ON CONFLICT(uid) DO NOTHING`, rule.UID); err != nil {
 		return err

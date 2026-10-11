@@ -553,6 +553,7 @@ test("Community import resolves URL and revisions, sends pinned bindings and can
       revision: 42,
       name: "Pinned community",
       inputs: { DS_PROM: "metricspanel" },
+      folderUid: "",
     });
     // Transport is mocked; the real bound-import route verifies persistence and rendering.
     const response = await page.request.post(

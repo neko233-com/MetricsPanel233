@@ -66,7 +66,9 @@ Usage: metricspanel <command> [flags]
   ingest       Push JSON samples (--file samples.json or --file - for stdin)
   targets      catalog | exporters | list | add | set | delete | scrape
   dashboards   list | save | export | delete | community | import-community
-               preview-grafana | import-grafana
+               preview-grafana | import-grafana | move | library-add | library-unlink
+  folders      list | get | create | save | move | delete
+  library      list | get | save | model | connections | delete
   annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | preview | evaluate | history | delete | group-get | group-save | group-delete
@@ -75,6 +77,7 @@ Usage: metricspanel <command> [flags]
   datasources  list | get | save | query | health | delete
   live         channels | watch | publish (watch emits NDJSON)
   schema       Print machine-readable command and API discovery
+  api          Call any published API route with JSON input/output
   version      Print version
 
 Client commands return JSON on stdout; live watch and query --stream emit NDJSON.
@@ -101,7 +104,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -109,6 +112,8 @@ func run(args []string) error {
 		rest = rest[1:]
 	}
 	f := flag.NewFlagSet(command+" "+action, flag.ContinueOnError)
+	apiMethod := f.String("method", "GET", "API HTTP method: GET, POST, PUT, PATCH or DELETE")
+	apiPath := f.String("path", "", "API path including optional query string")
 	endpoint := f.String("server", env("METRICSPANEL_URL", "http://127.0.0.1:7333"), "server URL")
 	token := f.String("token", env("METRICSPANEL_TOKEN", ""), "API Bearer token; prefer environment variable")
 	f.Bool("json", true, "JSON output (always enabled)")
@@ -122,7 +127,11 @@ func run(args []string) error {
 	format := f.String("format", "native", "dashboard export format: native or grafana (original source)")
 	id := f.String("id", "", "resource ID")
 	dashboardRevision := f.Int64("revision", 0, "expected updated_at for an atomic native dashboard save")
-	alertFolder := f.String("folder-uid", "", "alert rule group folder UID")
+	alertFolder := f.String("folder-uid", "", "dashboard, library panel or alert group folder UID; empty/general is the root")
+	folderParent := f.String("parent-uid", "", "parent folder UID; empty moves to the root")
+	folderForceRules := f.Bool("force-delete-rules", false, "delete alert rules when deleting a folder and its contents")
+	libraryUID := f.String("library-uid", "", "library panel UID to insert into a dashboard")
+	libraryPanelID := f.String("panel", "", "native panel ID to unlink from its library")
 	alertGroup := f.String("group", "", "alert rule group name")
 	alertPreviewAt := f.Int64("at", 0, "alert preview timestamp: Unix milliseconds (0 uses server time)")
 	disableProvenance := f.Bool("disable-provenance", false, "allow editing Grafana-provisioned rules")
@@ -168,8 +177,8 @@ func run(args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
 	}
-	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || action != "save")) {
-		return errors.New("--revision must be positive and is only supported by dashboards save")
+	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink"))) {
+		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add and library-unlink")
 	}
 	if *alertPreviewAt < 0 || *alertPreviewAt > 253402300799999 || (*alertPreviewAt != 0 && (command != "alerts" || action != "preview")) {
 		return errors.New("--at must be 0 to 253402300799999 and is only supported by alerts preview")
@@ -187,6 +196,139 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "api":
+		parsed, err := url.Parse(*apiPath)
+		if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" || (!strings.HasPrefix(parsed.Path, "/api/") && !strings.HasPrefix(parsed.Path, "/apis/") && !strings.HasPrefix(parsed.Path, "/prometheus/api/")) {
+			return errors.New("--path must be a local /api/, /apis/ or /prometheus/api/ route")
+		}
+		method := strings.ToUpper(*apiMethod)
+		switch method {
+		case "GET", "POST", "PUT", "PATCH", "DELETE":
+		default:
+			return errors.New("unsupported --method")
+		}
+		var payload any
+		if fileProvided {
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("API request file must contain JSON")
+			}
+			payload = json.RawMessage(data)
+		}
+		client.rawResponse = true
+		result, err := client.call(method, *apiPath, payload)
+		if err != nil {
+			return err
+		}
+		return output(result)
+	case "folders":
+		path := "/api/folders/" + url.PathEscape(*id)
+		switch action {
+		case "list":
+			return request("GET", "/api/v1/folders", nil)
+		case "get", "delete", "move":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			if action == "get" {
+				return request("GET", path, nil)
+			}
+			if action == "move" {
+				return request("POST", path+"/move", map[string]string{"parentUid": *folderParent})
+			}
+			if *folderForceRules {
+				path += "?forceDeleteRules=true"
+			}
+			return request("DELETE", path, nil)
+		case "create":
+			return request("POST", "/api/folders", map[string]string{"uid": *id, "title": *name, "parentUid": *folderParent})
+		case "save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("folder file must be JSON")
+			}
+			var fields map[string]json.RawMessage
+			if err = json.Unmarshal(data, &fields); err != nil || fields == nil {
+				return errors.New("folder file must be a JSON object")
+			}
+			payload := map[string]json.RawMessage{}
+			keys := []string{"uid", "title", "description", "parentUid"}
+			if *id != "" {
+				keys = []string{"title", "description", "version", "overwrite"}
+			}
+			for _, key := range keys {
+				if value, ok := fields[key]; ok {
+					payload[key] = value
+				}
+			}
+			if *id != "" {
+				return request("PUT", path, payload)
+			}
+			return request("POST", "/api/folders", payload)
+		}
+	case "library":
+		path := "/api/library-elements/" + url.PathEscape(*id)
+		switch action {
+		case "list":
+			params := url.Values{"kind": {"1"}, "searchString": {*catalogQuery}, "perPage": {strconv.Itoa(*limit)}}
+			if *alertFolder != "" {
+				params.Set("folderFilterUIDs", *alertFolder)
+			}
+			return request("GET", "/api/library-elements?"+params.Encode(), nil)
+		case "get", "model", "connections", "delete":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			if action == "model" {
+				return request("GET", "/api/v1/library-models/"+url.PathEscape(*id), nil)
+			}
+			if action == "connections" {
+				return request("GET", path+"/connections", nil)
+			}
+			if action == "delete" {
+				return request("DELETE", path, nil)
+			}
+			return request("GET", path, nil)
+		case "save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("library element file must be JSON")
+			}
+			var fields map[string]json.RawMessage
+			if err = json.Unmarshal(data, &fields); err != nil || fields == nil {
+				return errors.New("library file must be a JSON object")
+			}
+			if wrapped := fields["result"]; len(wrapped) > 0 {
+				if err = json.Unmarshal(wrapped, &fields); err != nil || fields == nil {
+					return errors.New("library result must be an object")
+				}
+			}
+			payload := map[string]json.RawMessage{}
+			for _, key := range []string{"uid", "name", "kind", "model", "version", "folderUid"} {
+				if value, ok := fields[key]; ok {
+					payload[key] = value
+				}
+			}
+			if _, ok := fields["folderUid"]; !ok {
+				if value, ok := fields["folderId"]; ok {
+					payload["folderId"] = value
+				}
+			}
+			if *id != "" {
+				return request("PATCH", path, payload)
+			}
+			delete(payload, "version")
+			return request("POST", "/api/library-elements", payload)
+		}
 	case "annotations":
 		switch action {
 		case "list":
@@ -325,8 +467,11 @@ func run(args []string) error {
 			}
 			return request(method, "/api/v1/plugins/"+url.PathEscape(*id), payload)
 		case "catalog":
-			if *id == "" || *pluginVersion == "" {
-				return errors.New("--id and --plugin-version required")
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			if *pluginVersion == "" {
+				return request("POST", "/api/plugins/"+url.PathEscape(*id)+"/install", map[string]string{})
 			}
 			return request("POST", "/api/v1/plugins/catalog", map[string]string{"id": *id, "version": *pluginVersion})
 		case "install":
@@ -597,6 +742,30 @@ func run(args []string) error {
 		}
 	case "dashboards":
 		switch action {
+		case "move", "library-add", "library-unlink":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			payload := map[string]any{}
+			if *dashboardRevision > 0 {
+				payload["revision"] = *dashboardRevision
+			}
+			if action == "move" {
+				payload["folderUid"] = *alertFolder
+				return request("PUT", "/api/v1/dashboard-folders/"+url.PathEscape(*id), payload)
+			}
+			if action == "library-add" {
+				if *libraryUID == "" {
+					return errors.New("--library-uid is required")
+				}
+				payload["libraryUid"] = *libraryUID
+				return request("POST", "/api/v1/dashboard-library/"+url.PathEscape(*id), payload)
+			}
+			if *libraryPanelID == "" {
+				return errors.New("--panel is required")
+			}
+			payload["panelId"] = *libraryPanelID
+			return request("POST", "/api/v1/dashboard-library/"+url.PathEscape(*id)+"/unlink", payload)
 		case "community", "import-community":
 			reference := *id
 			if *targetURL != "" {
@@ -627,7 +796,7 @@ func run(args []string) error {
 			if err := json.Unmarshal([]byte(*importInputs), &bindings); err != nil {
 				return fmt.Errorf("invalid --inputs: %w", err)
 			}
-			return request("POST", "/api/v1/import/grafana-community", map[string]any{"id": catalogID, "revision": revision, "name": *name, "uid": *importUID, "inputs": bindings})
+			return request("POST", "/api/v1/import/grafana-community", map[string]any{"id": catalogID, "revision": revision, "name": *name, "uid": *importUID, "inputs": bindings, "folderUid": *alertFolder})
 		case "preview-grafana", "import-grafana":
 			data, err := readFile(*file)
 			if err != nil {
@@ -645,6 +814,7 @@ func run(args []string) error {
 				}
 				path = "/api/v1/import/grafana-bound"
 				payload["name"], payload["uid"], payload["inputs"] = *name, *importUID, bindings
+				payload["folderUid"] = *alertFolder
 			}
 			return request("POST", path, payload)
 		case "list":
@@ -715,6 +885,7 @@ type apiClient struct {
 	endpoint, token   string
 	disableProvenance bool
 	dashboardRevision int64
+	rawResponse       bool
 }
 
 func (c apiClient) uploadPlugin(data []byte) (json.RawMessage, error) {
@@ -772,7 +943,7 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 		req.Header.Set("If-Match", strconv.FormatInt(c.dashboardRevision, 10))
 	}
 	timeout := 20 * time.Second
-	if path == "/api/v1/plugins/catalog" {
+	if path == "/api/v1/plugins/catalog" || strings.HasSuffix(path, "/install") {
 		timeout = 60 * time.Second
 	}
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
@@ -780,18 +951,25 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024+1))
 	if err != nil {
 		return nil, err
 	}
+	if len(data) > 16*1024*1024 {
+		return nil, errors.New("API response exceeds 16 MiB")
+	}
 	if resp.StatusCode >= 400 {
 		var e struct {
-			Error struct {
+			Message string `json:"message"`
+			Error   struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
 			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, e.Error.Message)
+		}
+		if e.Message != "" {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, e.Message)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -799,6 +977,9 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 		return json.RawMessage("null"), nil
 	}
 	if !json.Valid(data) {
+		if c.rawResponse {
+			return json.Marshal(map[string]string{"content": string(data), "contentType": resp.Header.Get("Content-Type")})
+		}
 		return nil, errors.New("server returned invalid JSON")
 	}
 	return json.RawMessage(data), nil
@@ -913,6 +1094,7 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
 	routes := result["api"].(map[string][]string)
+	addDashboardResourceSchema(result, routes)
 	routes["GET"] = append(routes["GET"], "/api/v1/dashboard-exports/{id}?format=native|grafana")
 	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
 	result["commands"] = append(result["commands"].([]string), "targets exporters")

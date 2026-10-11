@@ -32,11 +32,20 @@ func (s *Server) annotationScope(r *http.Request, uid string, id int64) (string,
 		return "", 0, err
 	}
 	for _, dashboard := range dashboards {
-		doc := classicDocument(dashboard)
-		candidate, _ := doc["uid"].(string)
-		number := int64(crc32.ChecksumIEEE([]byte(candidate)))
+		candidate := dashboard.UID()
+		number := dashboard.GrafanaID
 		if (uid != "" && candidate == uid) || (uid == "" && id == number) {
 			return candidate, number, nil
+		}
+	}
+	// Existing deployments used CRC32 IDs. Accept those filters while all new
+	// writes and dashboard responses use the allocated local identity.
+	if uid == "" {
+		for _, dashboard := range dashboards {
+			candidate := dashboard.UID()
+			if id == int64(crc32.ChecksumIEEE([]byte(candidate))) {
+				return candidate, dashboard.GrafanaID, nil
+			}
 		}
 	}
 	return "", 0, sql.ErrNoRows
