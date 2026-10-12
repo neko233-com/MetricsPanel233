@@ -1155,7 +1155,6 @@ func TestDockerEndToEnd(t *testing.T) {
 			e.t = t
 			address := e.address(backend.service)
 			e.must(address, "GET", "/api/v1/health", nil)
-			e.verifyHostProcesses(address, backend.service)
 			e.verifyBuiltinGrafana(address)
 			first := e.installPlugin(address, clockArchive)
 			assert.JSONEq(t, string(first), string(e.installPlugin(address, clockArchive)))

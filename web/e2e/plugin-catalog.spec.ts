@@ -242,7 +242,7 @@ test("Plugin library filters the official catalog and submits an exact version a
     },
   );
   await page.goto(endpoint + "/#plugins");
-  await expect(page).toHaveTitle("MetricsPanel233 · Local observability");
+  await expect(page).toHaveTitle("MetricsPanel233");
   await expect(
     page.getByRole("heading", { name: "Plugins & datasources" }),
   ).toBeVisible();

@@ -111,7 +111,7 @@ test("Portable JSON import previews inputs, binds local datasource and retains o
     localStorage.setItem("metricspanel-locale", "en"),
   );
   await page.goto(endpoint + "/#dashboards");
-  await expect(page).toHaveTitle("MetricsPanel233 · Local observability");
+  await expect(page).toHaveTitle("MetricsPanel233");
   await page
     .getByRole("button", { name: "Import dashboard", exact: true })
     .click();

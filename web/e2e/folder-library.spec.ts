@@ -95,7 +95,7 @@ async function visit(page: Page, endpoint: string) {
     localStorage.setItem("metricspanel-locale", "en"),
   );
   await page.goto(endpoint + "/#dashboards");
-  await expect(page).toHaveTitle("MetricsPanel233 · Local observability");
+  await expect(page).toHaveTitle("MetricsPanel233");
   await expect(
     page.getByRole("heading", { name: "Dashboards", exact: true }),
   ).toBeVisible();

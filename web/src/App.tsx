@@ -21,7 +21,6 @@ import {
   Menu,
   Monitor,
   Puzzle,
-  ListTree,
   Search,
   Server,
   Terminal,
@@ -45,7 +44,6 @@ import { AgentCLI } from "./features/AgentCLI";
 import { TemplateView } from "./features/TemplateView";
 import { Alerts } from "./features/Alerts";
 import { Plugins } from "./features/Plugins";
-import { ProcessesView } from "./features/ProcessesView";
 import {
   connectAppEvents,
   refreshWorkspace,
@@ -72,7 +70,6 @@ type View =
   | "collectors"
   | "alerts"
   | "plugins"
-  | "processes"
   | "cli";
 type AppView = View | "app";
 const navigation = [
@@ -80,7 +77,6 @@ const navigation = [
   { id: "dashboards", name: "Dashboards", icon: ChartNoAxesColumn },
   { id: "explore", name: "Explore", icon: Search },
   { id: "collectors", name: "Collectors", icon: Server },
-  { id: "processes", name: "Processes", icon: ListTree },
   { id: "alerts", name: "Alerts", icon: Bell },
   { id: "plugins", name: "Plugins", icon: Puzzle },
   { id: "cli", name: "Command line", icon: Terminal },
@@ -614,7 +610,6 @@ export default function App() {
             <Collectors targets={targets} reload={load} notify={notify} />
           )}
           {view === "cli" && <AgentCLI />}
-          {view === "processes" && <ProcessesView />}
           {view === "plugins" && <Plugins notify={notify} />}
           {view === "app" && (
             <Suspense fallback={<p>{tr("Loading plugin…")}</p>}>

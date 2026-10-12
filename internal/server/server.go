@@ -115,7 +115,6 @@ func (s *Server) Handler() http.Handler {
 	s.dashboardResourceRoutes(api)
 	s.dashboardHistoryRoutes(api)
 	s.dashboardHistoryResourceRoutes(api)
-	s.hostProcessRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
@@ -129,7 +128,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 503, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"status": "ok", "version": "0.1.0", "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
+                writeJSON(w, 200, map[string]any{"status": "ok", "version": "0.1.1", "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
 	})
 	api.HandleFunc("GET /api/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.Metrics(r.Context())

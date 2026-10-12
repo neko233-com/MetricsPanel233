@@ -199,7 +199,7 @@ func TestCLIJSONContractsAndCommands(t *testing.T) {
 	assert.Contains(t, string(data), "ingest_example")
 	data, err = capture(t, "version")
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "0.1.0")
+        assert.Contains(t, string(data), version)
 	file := filepath.Join(t.TempDir(), "samples.json")
 	require.NoError(t, os.WriteFile(file, []byte(`{"samples":[{"name":"cli_orders","value":233}]}`), 0600))
 	data, err = capture(t, "ingest", "--file", file, "--server", httpServer.URL)

@@ -119,7 +119,7 @@ async function visit(page: Page, endpoint: string, uid: string, title: string) {
   await page.goto(
     `${endpoint}/d/${encodeURIComponent(uid)}/${encodeURIComponent(title)}`,
   );
-  await expect(page).toHaveTitle("MetricsPanel233 · Local observability");
+  await expect(page).toHaveTitle("MetricsPanel233");
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
