@@ -39,13 +39,14 @@ type UserInput struct {
 }
 
 type Membership struct {
-	OrgID     int64  `json:"orgId"`
-	UserID    int64  `json:"userId"`
-	Role      Role   `json:"role"`
-	State     string `json:"state"`
-	Version   int64  `json:"version"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	OrgID      int64  `json:"orgId"`
+	UserID     int64  `json:"userId"`
+	Role       Role   `json:"role"`
+	State      string `json:"state"`
+	Version    int64  `json:"version"`
+	Generation int64  `json:"generation"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
 }
 
 func initializeAccounts(tx *sql.Tx) error {
@@ -87,6 +88,64 @@ func accountText(value string, allowEmpty bool) bool {
 	return utf8.ValidString(value) && len(value) <= 256 && (allowEmpty || strings.TrimSpace(value) != "") && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
+func validUserEmail(email string) bool {
+	if !accountText(email, true) {
+		return false
+	}
+	if email == "" {
+		return true
+	}
+	address, err := mail.ParseAddress(email)
+	return err == nil && address.Address == email
+}
+
+// Both creation and profile changes use the authentication alias namespace.
+// Deduplicate the actual lowercase keys, not Unicode EqualFold: the latter
+// can consider two distinct authentication keys equal (for example sigma).
+func registerUserIdentifiers(ctx context.Context, tx *sql.Tx, user User) error {
+	identifiers := []string{strings.ToLower(user.Login)}
+	if email := strings.ToLower(user.Email); email != "" && email != identifiers[0] {
+		identifiers = append(identifiers, email)
+	}
+	for _, identifier := range identifiers {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_identifiers(identifier,user_id) VALUES(?,?)`, identifier, user.ID); err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint failed: user_identifiers.identifier") {
+				return ErrAccountExists
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureOtherInstanceAdmin(ctx context.Context, q rowQuerier, userID int64) error {
+	var count int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM users u WHERE u.id!=? AND u.is_server_admin=1 AND u.disabled=0 AND EXISTS(SELECT 1 FROM organization_memberships m JOIN organizations o ON o.id=m.org_id WHERE m.user_id=u.id AND m.state='active' AND o.state='active')`, userID).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrLastAdministrator
+	}
+	return nil
+}
+
+// Check the state before and after removing an availability relationship in
+// the same transaction as that transition. userID=0 excludes the entire org;
+// otherwise only that single org/user membership is excluded. Another active
+// membership of the same administrator still qualifies. Catalogs without an
+// available human administrator are not barred from initialization/cleanup.
+func preserveAvailableInstanceAdmin(ctx context.Context, q rowQuerier, orgID, userID int64) error {
+	const available = ` FROM users u JOIN organization_memberships m ON m.user_id=u.id JOIN organizations o ON o.id=m.org_id WHERE u.is_server_admin=1 AND u.disabled=0 AND m.state='active' AND o.state='active'`
+	var before, after bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1`+available+`),EXISTS(SELECT 1`+available+` AND (m.org_id!=? OR (?>0 AND m.user_id!=?)))`, orgID, userID, userID).Scan(&before, &after); err != nil {
+		return err
+	}
+	if before && !after {
+		return ErrLastAdministrator
+	}
+	return nil
+}
+
 func normalizeUser(input UserInput) (UserInput, error) {
 	input.Login = strings.TrimSpace(input.Login)
 	input.Name = strings.TrimSpace(input.Name)
@@ -97,11 +156,8 @@ func normalizeUser(input UserInput) (UserInput, error) {
 	if !accountText(input.Login, false) || !accountText(input.Name, false) || !accountText(input.Email, true) || !input.Role.Valid() || input.OrgID <= 0 {
 		return input, errors.New("valid login, name, organization and role are required")
 	}
-	if input.Email != "" {
-		address, err := mail.ParseAddress(input.Email)
-		if err != nil || address.Address != input.Email {
-			return input, errors.New("valid email address required")
-		}
+	if !validUserEmail(input.Email) {
+		return input, errors.New("valid email address required")
 	}
 	return input, nil
 }
@@ -171,22 +227,21 @@ func (s *Store) createUser(ctx context.Context, input UserInput, bootstrap bool)
 	if err != nil {
 		return User{}, err
 	}
-	identifiers := []string{strings.ToLower(input.Login)}
-	if input.Email != "" && !strings.EqualFold(input.Login, input.Email) {
-		identifiers = append(identifiers, strings.ToLower(input.Email))
-	}
-	for _, identifier := range identifiers {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_identifiers(identifier,user_id) VALUES(?,?)`, identifier, user.ID); err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed: user_identifiers.identifier") {
-				return User{}, ErrAccountExists
-			}
-			return User{}, err
-		}
+	if err := registerUserIdentifiers(ctx, tx, user); err != nil {
+		return User{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO password_credentials(user_id,format,salt,hash,version) VALUES(?,?,?,?,1)`, user.ID, passwordFormat, salt, hash); err != nil {
 		return User{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO organization_memberships(org_id,user_id,role,state,version,created_at,updated_at) VALUES(?,?,?,'active',1,?,?)`, input.OrgID, user.ID, input.Role, now, now); err != nil {
+	generation, err := nextMembershipGeneration(ctx, tx, input.OrgID, user.ID)
+	if err != nil {
+		return User{}, err
+	}
+	membershipVersion, err := nextMembershipVersion(ctx, tx, input.OrgID, user.ID)
+	if err != nil {
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO organization_memberships(org_id,user_id,role,state,version,generation,created_at,updated_at) VALUES(?,?,?,'active',?,?,?,?)`, input.OrgID, user.ID, input.Role, membershipVersion, generation, now, now); err != nil {
 		return User{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -214,11 +269,11 @@ func (s *Store) UserPrincipal(ctx context.Context, userID, orgID int64) (Princip
 
 func scanMembership(row interface{ Scan(...any) error }) (Membership, error) {
 	var membership Membership
-	err := row.Scan(&membership.OrgID, &membership.UserID, &membership.Role, &membership.State, &membership.Version, &membership.CreatedAt, &membership.UpdatedAt)
+	err := row.Scan(&membership.OrgID, &membership.UserID, &membership.Role, &membership.State, &membership.Version, &membership.Generation, &membership.CreatedAt, &membership.UpdatedAt)
 	return membership, err
 }
 
-const membershipColumns = `org_id,user_id,role,state,version,created_at,updated_at`
+const membershipColumns = `org_id,user_id,role,state,version,generation,created_at,updated_at`
 
 func (s *Store) Membership(ctx context.Context, orgID, userID int64) (Membership, error) {
 	return scanMembership(s.db.QueryRowContext(ctx, `SELECT `+membershipColumns+` FROM organization_memberships WHERE org_id=? AND user_id=?`, orgID, userID))
@@ -271,8 +326,16 @@ func (s *Store) AddOrganizationUser(ctx context.Context, orgID, userID int64, ro
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Membership{}, err
 	}
+	generation, err := nextMembershipGeneration(ctx, tx, orgID, userID)
+	if err != nil {
+		return Membership{}, err
+	}
+	version, err := nextMembershipVersion(ctx, tx, orgID, userID)
+	if err != nil {
+		return Membership{}, err
+	}
 	now := time.Now().UnixMilli()
-	membership, err := scanMembership(tx.QueryRowContext(ctx, `INSERT INTO organization_memberships(org_id,user_id,role,state,version,created_at,updated_at) VALUES(?,?,?,'active',1,?,?) RETURNING `+membershipColumns, orgID, userID, role, now, now))
+	membership, err := scanMembership(tx.QueryRowContext(ctx, `INSERT INTO organization_memberships(org_id,user_id,role,state,version,generation,created_at,updated_at) VALUES(?,?,?,'active',?,?,?,?) RETURNING `+membershipColumns, orgID, userID, role, version, generation, now, now))
 	if err != nil {
 		return Membership{}, err
 	}
@@ -325,6 +388,11 @@ func (s *Store) changeMembership(ctx context.Context, orgID, userID, version int
 			return Membership{}, err
 		}
 	}
+	if remove {
+		if err := preserveAvailableInstanceAdmin(ctx, tx, orgID, userID); err != nil {
+			return Membership{}, err
+		}
+	}
 	state := "active"
 	if remove {
 		state = "removing"
@@ -346,8 +414,28 @@ func (s *Store) changeMembership(ctx context.Context, orgID, userID, version int
 
 // CompleteMembershipRemoval is called only after the organization permission
 // cleanup succeeds. The durable removing row blocks rejoining with stale ACLs.
+// Retaining the final revision in the ledger and deleting this row commit
+// together, so a later incarnation cannot match an old draft or cleanup job.
 func (s *Store) CompleteMembershipRemoval(ctx context.Context, orgID, userID, version int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM organization_memberships WHERE org_id=? AND user_id=? AND version=? AND state='removing'`, orgID, userID, version)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := scanMembership(tx.QueryRowContext(ctx, `SELECT `+membershipColumns+` FROM organization_memberships WHERE org_id=? AND user_id=?`, orgID, userID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrVersionConflict
+	}
+	if err != nil {
+		return err
+	}
+	if version <= 0 || current.Version != version || current.State != "removing" {
+		return ErrVersionConflict
+	}
+	if err := rememberMembershipVersion(ctx, tx, orgID, userID, current.Version); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM organization_memberships WHERE org_id=? AND user_id=? AND version=? AND state='removing'`, orgID, userID, version)
 	if err != nil {
 		return err
 	}
@@ -358,7 +446,7 @@ func (s *Store) CompleteMembershipRemoval(ctx context.Context, orgID, userID, ve
 	if count != 1 {
 		return ErrVersionConflict
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) ChangePassword(ctx context.Context, userID, version int64, password string) (User, error) {
@@ -406,12 +494,8 @@ func (s *Store) SetUserDisabled(ctx context.Context, userID, version int64, disa
 	}
 	if disabled && !user.Disabled {
 		if user.IsServerAdmin {
-			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE id!=? AND is_server_admin=1 AND disabled=0`, userID).Scan(&count); err != nil {
+			if err := ensureOtherInstanceAdmin(ctx, tx, userID); err != nil {
 				return User{}, err
-			}
-			if count == 0 {
-				return User{}, ErrLastAdministrator
 			}
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT org_id FROM organization_memberships WHERE user_id=? AND role='Admin' AND state='active'`, userID)

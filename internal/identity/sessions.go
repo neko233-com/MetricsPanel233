@@ -17,6 +17,8 @@ type Session struct {
 	ExpiresAt     int64 `json:"expires_at"`
 	IdleTimeoutMS int64 `json:"idle_timeout_ms"`
 	RevokedAt     int64 `json:"revoked_at"`
+	RotatedAt     int64 `json:"rotated_at"`
+	TokenSeen     bool  `json:"token_seen"`
 }
 
 type passwordCandidate struct {
@@ -80,11 +82,11 @@ func (s *Store) AuthenticatePassword(ctx context.Context, login, password string
 	return p, nil
 }
 
-const sessionColumns = `id,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,revoked_at`
+const sessionColumns = `id,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,revoked_at,rotated_at,token_seen`
 
 func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	var session Session
-	err := row.Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt)
+	err := row.Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt, &session.RotatedAt, &session.TokenSeen)
 	return session, err
 }
 
@@ -119,7 +121,7 @@ func (s *Store) Login(ctx context.Context, login, password string, orgID int64, 
 	if count >= 256 {
 		return Principal{}, Session{}, "", errors.New("active browser session limit reached")
 	}
-	session, err := scanSession(tx.QueryRowContext(ctx, `INSERT INTO browser_sessions(token_hash,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms) VALUES(?,?,?,?,?,?,?) RETURNING `+sessionColumns, digest, p.ID, p.OrgID, now, now, now+lifetime.Milliseconds(), idleTimeout.Milliseconds()))
+	session, err := scanSession(tx.QueryRowContext(ctx, `INSERT INTO browser_sessions(token_hash,previous_token_hash,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,rotated_at,token_seen) VALUES(?,?,?,?,?,?,?,?,?,0) RETURNING `+sessionColumns, digest, digest, p.ID, p.OrgID, now, now, now+lifetime.Milliseconds(), idleTimeout.Milliseconds(), now))
 	if err != nil {
 		return Principal{}, Session{}, "", err
 	}
@@ -130,45 +132,53 @@ func (s *Store) Login(ctx context.Context, login, password string, orgID int64, 
 }
 
 func sessionByCredential(ctx context.Context, tx *sql.Tx, digest []byte, now int64) (Session, error) {
-	session, err := scanSession(tx.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM browser_sessions WHERE token_hash=? AND revoked_at=0 AND expires_at>? AND last_seen+idle_timeout_ms>?`, digest, now, now))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Session{}, ErrUnauthenticated
-	}
-	return session, err
+	return lookupSessionCredential(ctx, tx, digest, now)
 }
 
 func (s *Store) AuthenticateSession(ctx context.Context, key string, requestedOrgID int64) (Principal, error) {
+	p, _, err := s.authenticateSession(ctx, key, requestedOrgID, 0)
+	return p, err
+}
+
+func (s *Store) authenticateSession(ctx context.Context, key string, requestedOrgID int64, rotationInterval time.Duration) (Principal, Session, error) {
 	digest, err := credentialDigest(key, sessionCredentialPrefix)
 	if err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
 	defer tx.Rollback()
 	now := time.Now().UnixMilli()
 	session, err := sessionByCredential(ctx, tx, digest, now)
 	if err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
 	if _, err := principalForUser(ctx, tx, session.UserID, session.CurrentOrgID); err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
 	if requestedOrgID == 0 {
 		requestedOrgID = session.CurrentOrgID
 	}
 	p, err := principalForUser(ctx, tx, session.UserID, requestedOrgID)
 	if err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
+	}
+	if rotationInterval > 0 && session.NeedsRotationAt(time.UnixMilli(now), rotationInterval) {
+		if err := tx.Commit(); err != nil {
+			return Principal{}, Session{}, err
+		}
+		return Principal{}, session, ErrSessionNeedsRotation
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE browser_sessions SET last_seen=max(last_seen,?) WHERE id=?`, now, session.ID); err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return Principal{}, err
+		return Principal{}, Session{}, err
 	}
-	return p, nil
+	session.LastSeen = max(session.LastSeen, now)
+	return p, session, nil
 }
 
 func (s *Store) SwitchSessionOrganization(ctx context.Context, key string, orgID int64) (Principal, error) {
@@ -244,6 +254,6 @@ func (s *Store) Logout(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE browser_sessions SET revoked_at=CASE WHEN revoked_at=0 THEN ? ELSE revoked_at END WHERE token_hash=?`, time.Now().UnixMilli(), digest)
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_sessions SET revoked_at=CASE WHEN revoked_at=0 THEN ? ELSE revoked_at END WHERE token_hash=? OR previous_token_hash=?`, time.Now().UnixMilli(), digest, digest)
 	return err
 }

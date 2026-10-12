@@ -67,7 +67,7 @@ func initializeCatalog(db *sql.DB) error {
 		}
 	} else {
 		var version int
-		if err := db.QueryRow(`SELECT version FROM identity_schema WHERE id=1`).Scan(&version); err != nil || (version != 1 && version != 2 && version != 3) {
+		if err := db.QueryRow(`SELECT version FROM identity_schema WHERE id=1`).Scan(&version); err != nil || (version < 1 || version > 5) {
 			return errors.New("unsupported or incomplete identity catalog schema")
 		}
 	}
@@ -86,9 +86,15 @@ CREATE TABLE IF NOT EXISTS organizations(id INTEGER PRIMARY KEY AUTOINCREMENT,na
 	if err := initializeAccounts(tx); err != nil {
 		return err
 	}
+	if err := initializeSessionRotation(tx); err != nil {
+		return err
+	}
+	if err := initializeMembershipGenerations(tx); err != nil {
+		return err
+	}
 	if owned == 0 {
 		now := time.Now().UnixMilli()
-		if _, err := tx.Exec(`INSERT INTO organizations(id,name,name_key,state,version,created_at,updated_at) VALUES(1,'Main Org.','main org.','active',1,?,?); INSERT INTO identity_schema(id,version) VALUES(1,3);`, now, now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO organizations(id,name,name_key,state,version,created_at,updated_at) VALUES(1,'Main Org.','main org.','active',1,?,?); INSERT INTO identity_schema(id,version) VALUES(1,5);`, now, now); err != nil {
 			return err
 		}
 	} else {
@@ -96,7 +102,7 @@ CREATE TABLE IF NOT EXISTS organizations(id INTEGER PRIMARY KEY AUTOINCREMENT,na
 		if err := tx.QueryRow(`SELECT state FROM organizations WHERE id=1`).Scan(&state); err != nil || state != string(OrganizationActive) {
 			return errors.New("identity catalog primary organization is missing or inactive")
 		}
-		if _, err := tx.Exec(`UPDATE identity_schema SET version=3 WHERE id=1`); err != nil {
+		if _, err := tx.Exec(`UPDATE identity_schema SET version=5 WHERE id=1`); err != nil {
 			return err
 		}
 	}
@@ -205,6 +211,11 @@ func (s *Store) changeOrganization(ctx context.Context, id, version int64, state
 	}
 	if !allowed {
 		return Organization{}, ErrInvalidOrganizationState
+	}
+	if org.State == OrganizationActive && state != OrganizationActive {
+		if err := preserveAvailableInstanceAdmin(ctx, tx, id, 0); err != nil {
+			return Organization{}, err
+		}
 	}
 	updated := max(time.Now().UnixMilli(), org.UpdatedAt+1)
 	org, err = scanOrganization(tx.QueryRowContext(ctx, `UPDATE organizations SET state=?,version=version+1,updated_at=? WHERE id=? AND version=? RETURNING `+organizationColumns, state, updated, id, version))
