@@ -322,6 +322,9 @@ var ErrDataSourceConflict = errors.New("datasource version changed; read the cur
 
 func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput) (model.DataSource, error) {
 	input.Defaults()
+	if input.Type == "postgres" {
+		input.Type = "grafana-postgresql-datasource"
+	}
 	if err := input.Validate(); err != nil {
 		return model.DataSource{}, err
 	}
@@ -330,7 +333,7 @@ func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput)
 		return model.DataSource{}, err
 	}
 	defer tx.Rollback()
-	if input.Type != "prometheus" {
+	if input.Type != "prometheus" && input.Type != "mysql" && input.Type != "grafana-postgresql-datasource" {
 		var payload string
 		if err := tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, input.Type).Scan(&payload); err != nil {
 			return model.DataSource{}, errors.New("datasource plugin is not installed")

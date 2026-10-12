@@ -55,7 +55,7 @@ func TestGraphMissingReferencesCyclesInvalidExpressionsAndLimits(t *testing.T) {
 	for _, body := range []string{
 		`null`, `{}`, `{"condition":"A","data":[]}`,
 		`{"orgID":2,"condition":"A","data":[{"refId":"A","datasourceUid":"sdk","model":{}}]}`,
-		`{"notification_settings":{"receiver":"unconfigured"},"condition":"A","data":[{"refId":"A","datasourceUid":"sdk","model":{}}]}`,
+		`{"notification_settings":{"receiver":"ops","group_wait":"30s"},"condition":"A","data":[{"refId":"A","datasourceUid":"sdk","model":{}}]}`,
 		`{"record":{"from":"A","target_datasource_uid":"other"},"data":[{"refId":"A","datasourceUid":"sdk","model":{}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"math","expression":"$Missing"}}]}`,
 		`{"condition":"A","data":[{"refId":"A","datasourceUid":"__expr__","model":{"type":"math","expression":"$B"}},{"refId":"B","datasourceUid":"__expr__","model":{"type":"reduce","expression":"A","reducer":"mean"}}]}`,

@@ -91,6 +91,9 @@ func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.
 }
 
 func saveAlertRuleTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, preserveRuntime bool) (model.AlertRuleView, error) {
+	if err := prepareNotificationRule(ctx, tx, &rule); err != nil {
+		return model.AlertRuleView{}, err
+	}
 	previous, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, rule.UID))
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return model.AlertRuleView{}, err
@@ -157,7 +160,10 @@ func insertAlertEvent(ctx context.Context, tx *sql.Tx, rule model.AlertRule, eve
 	if err != nil {
 		return err
 	}
-	return insertAlertAnnotation(ctx, tx, rule, event, id)
+	if err := insertAlertAnnotation(ctx, tx, rule, event, id); err != nil {
+		return err
+	}
+	return enqueueAlertNotifications(ctx, tx, rule, event, id)
 }
 func pruneAlertHistory(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM annotations WHERE id IN (SELECT annotation_id FROM annotation_alerts WHERE event_id<=(SELECT coalesce(max(id),0)-100000 FROM alert_events))`); err != nil {

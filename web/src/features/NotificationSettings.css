@@ -1,0 +1,129 @@
+.alert-workspace-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+}
+.alert-workspace-tabs button[aria-selected="true"] {
+  border-color: #ff945760;
+  background: #ff945715;
+  color: var(--orange);
+}
+.notification-settings {
+  display: grid;
+  gap: 24px;
+}
+.notification-settings .section-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.notification-settings .section-heading p {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.notification-empty {
+  padding: 24px 22px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.notification-table {
+  border-top: 1px solid var(--border);
+}
+.notification-table td {
+  vertical-align: top;
+}
+.notification-table .row-actions {
+  justify-content: flex-end;
+}
+.notification-table .row-actions button {
+  min-height: 32px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.notification-table .notification-secondary {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+  max-width: 430px;
+  overflow-wrap: anywhere;
+}
+.notification-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.notification-status.sent {
+  color: var(--green);
+}
+.notification-status.failed {
+  color: #ff9090;
+}
+.notification-status.pending,
+.notification-status.sending {
+  color: var(--orange);
+}
+.notification-policy-form {
+  border-top: 1px solid var(--border);
+  padding: 22px;
+}
+.notification-policy-form > .form-row {
+  align-items: flex-end;
+}
+.notification-policy-form .notification-route-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 0;
+  gap: 16px;
+}
+.notification-policy-route {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+.notification-policy-route label:last-child {
+  margin-bottom: 0;
+}
+.notification-route-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.notification-route-actions button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+.notification-policy-form .form-actions {
+  margin-top: 18px;
+}
+.notification-contact-form .notification-help {
+  color: var(--muted);
+  display: block;
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.notification-contact-form fieldset {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin: 0 0 18px;
+  padding: 16px;
+}
+.notification-contact-form legend {
+  padding: 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.notification-contact-form fieldset label:last-child {
+  margin-bottom: 0;
+}
+.notification-delete-warning {
+  margin-top: 14px;
+}

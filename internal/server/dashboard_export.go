@@ -42,7 +42,7 @@ func (s *Server) dashboardExportRoutes(api *http.ServeMux) {
 				return
 			}
 			if len(dashboard.Grafana) == 0 {
-				fail(w, http.StatusBadRequest, errors.New("dashboard has no original Grafana source"))
+				writeJSON(w, http.StatusOK, classicDocument(dashboard))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")

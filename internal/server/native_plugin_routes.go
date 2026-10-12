@@ -153,7 +153,13 @@ func (s *Server) nativeInstalledPluginList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	out := []map[string]any{}
+	if (query.Get("type") == "" || query.Get("type") == "datasource") && query.Get("core") != "0" {
+		out = append(out, builtinSQLPluginMetadata("mysql"), builtinSQLPluginMetadata("postgres"))
+	}
 	for _, p := range items {
+		if isSQLSource(p.ID) {
+			continue
+		}
 		if kind := query.Get("type"); kind != "" && kind != p.Type {
 			continue
 		}
@@ -188,6 +194,9 @@ func (s *Server) nativeInstalledPluginList(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) nativePluginMetadata(ctx context.Context, id string, catalog *plugins.CatalogClient) (map[string]any, error) {
+	if isSQLSource(id) {
+		return builtinSQLPluginMetadata(id), nil
+	}
 	metadata, err := s.pluginMetadata(ctx, id)
 	if err != nil {
 		return nil, err

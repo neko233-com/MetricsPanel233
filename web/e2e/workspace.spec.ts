@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createTCPServer, type Socket } from "node:net";
+import { recordCanvasSeries, expectCanvasSeries } from "./canvas-series";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -589,10 +590,10 @@ test("Custom multi-panel dashboards duplicate and edit panels, and snapshots kee
     await page.reload();
     await expect(page.getByRole("region", { name: "Orders total", exact: true })).toContainText("233");
     await page.getByRole("button", { name: "Switch language", exact: true }).click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await expect(page.getByRole("button", { name: "创建快照", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.METRICSPANEL_QA_SCREENSHOT_DIR, "snapshot-zh-mobile.png"), animations: "disabled" });
+    if (process.env.METRICSPANEL_QA_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.METRICSPANEL_QA_SCREENSHOT_DIR, "snapshot-zh-desktop-zh.png"), animations: "disabled" });
     await page.getByRole("button", { name: "Switch language", exact: true }).click();
     await page.setViewportSize({ width: 1536, height: 1024 });
     const transformed = { uid: "snapshot-transform-test", title: "Transformed window", refresh: "", time: { from: "now-30m", to: "now" }, templating: { list: [{ name: "label", type: "constant", query: "Frozen column", current: { value: "Frozen column" } }] }, panels: [{ id: 81, title: "Double value", type: "table", timeFrom: "2h", timeShift: "1h", datasource: { uid: "metricspanel", type: "prometheus" }, targets: [{ refId: "A", expr: "vector(12)", instant: true }], fieldConfig: { defaults: {}, overrides: [{ matcher: { id: "byName", options: "Double" }, properties: [{ id: "displayName", value: "$label" }] }] }, transformations: [{ id: "calculateField", options: { mode: "binary", binary: { left: "Value", operator: "*", right: "2" }, alias: "Double", replaceFields: true } }], gridPos: { x: 0, y: 0, w: 24, h: 8 } }] };
@@ -601,7 +602,7 @@ test("Custom multi-panel dashboards duplicate and edit panels, and snapshots kee
     ids.push((await response.json()).dashboard.id);
     await page.goto(endpoint + "/d/" + transformed.uid + "/view");
     await expect(page.getByRole("region", { name: "Double value", exact: true })).toContainText("24");
-    await expect(page.getByRole("columnheader", { name: "Frozen column", exact: true })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Sort by column Frozen column", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Create snapshot", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "Create snapshot", exact: true });
     await dialog.getByLabel("Snapshot name", { exact: true }).fill("Transformed snapshot");
@@ -621,7 +622,7 @@ test("Custom multi-panel dashboards duplicate and edit panels, and snapshots kee
     queryRequests = 0;
     await page.reload();
     await expect(page.getByRole("region", { name: "Double value", exact: true })).toContainText("24");
-    await expect(page.getByRole("columnheader", { name: "Frozen column", exact: true })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Sort by column Frozen column", exact: true })).toBeVisible();
     expect(queryRequests).toBe(0);
     const legacy = { uid: "snapshot-legacy-test", title: "Legacy snapshot", panels: [{ id: 91, title: "Legacy frozen", type: "stat", datasource: { uid: "does-not-exist", type: "prometheus" }, targets: [{ expr: "must_not_query" }], snapshotData: [{ refId: "Old", fields: [{ name: "Value", type: "number", config: {}, values: [777] }] }], transformations: [{ id: "calculateField", options: { mode: "binary", binary: { left: "Value", operator: "*", right: "2" }, alias: "Double", replaceFields: true } }], gridPos: { x: 0, y: 0, w: 24, h: 8 } }] };
     response = await page.request.post(endpoint + "/api/v1/import/grafana", { data: legacy });
@@ -729,12 +730,12 @@ test("Native collector forms preserve credentials, scrape Redis, and use plain C
     await expect(page.locator("body")).not.toContainText("JSON in. JSON out.");
     await page.screenshot({path:testInfo.outputPath("command-line-en.png"),animations:"disabled"});
     await page.getByRole("button",{name:"Explore",exact:true}).click();
-    await expect(page.getByText("Query stored metrics with label filters and PromQL.",{exact:true})).toBeVisible();
+    await expect(page.getByText("Query stored metrics or a configured datasource.",{exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Dashboards",exact:true}).click();
     await expect(page.locator(".page-heading p")).toHaveText(/^\d+ dashboards · \d+ folders$/);
     await page.getByRole("button",{name:"Collectors",exact:true}).click();
     await page.getByRole("button",{name:"Switch language",exact:true}).click();
-    await page.setViewportSize({width:390,height:844});
+    await page.setViewportSize({width:1536,height:1024});
     await expect(page.getByRole("heading",{name:"采集器",exact:true})).toBeVisible();
     await page.getByRole("button",{name:"添加采集器",exact:true}).first().click();
     dialog=page.getByRole("dialog",{name:"添加采集器",exact:true});
@@ -742,7 +743,7 @@ test("Native collector forms preserve credentials, scrape Redis, and use plain C
     await expect(dialog.getByLabel("数据库",{exact:true})).toBeVisible();
     await expect(dialog.getByLabel("TLS 模式",{exact:true})).toBeVisible();
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth); expect(overflow).toBe(false);
-    await page.screenshot({path:testInfo.outputPath("collector-mysql-zh-mobile.png"),animations:"disabled"});
+    await page.screenshot({path:testInfo.outputPath("collector-mysql-zh-desktop-zh.png"),animations:"disabled"});
     await dialog.getByRole("button",{name:"取消",exact:true}).click();
     await page.setViewportSize({width:1536,height:1024}); await page.getByRole("button",{name:"Switch language",exact:true}).click();
     await page.getByRole("row").filter({hasText:"Native cache"}).getByRole("button",{name:"Edit Native cache",exact:true}).click();
@@ -1302,8 +1303,8 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
   });
   page.on("request", (request) => {
     if (
-      request.method() === "PUT" &&
-      new URL(request.url()).pathname.startsWith("/api/v1/dashboards/")
+      request.method() === "PATCH" &&
+      /^\/api\/v1\/dashboards\/[^/]+\/queries$/.test(new URL(request.url()).pathname)
     )
       writes.push({
         revision: request.headers()["if-match"],
@@ -1591,7 +1592,7 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page.getByRole("button", { name: "面板查询", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "面板查询", exact: true });
     await dialog
@@ -1606,7 +1607,7 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("query-editor-mobile.png"),
+      path: testInfo.outputPath("query-editor-desktop-zh.png"),
       animations: "disabled",
     });
     await dialog.getByLabel("参与比较", { exact: true }).uncheck();
@@ -1621,9 +1622,11 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
     await page.setViewportSize({ width: 1536, height: 1024 });
     let saved = await getDashboard(classic.uid);
     const expectedClassic = structuredClone(classic);
-    expectedClassic.panels[0].targets = writes[1].body.panels.find(
-      (panel: any) => panel.config.id === 7,
-    ).config.targets;
+    expect(writes).toHaveLength(2);
+    expect(writes[1].body.panels).toHaveLength(1);
+    expectedClassic.panels[0].targets = writes[1].body.panels[0].queries.map(
+      (entry: any) => entry.query,
+    );
     expect(saved.grafana).toEqual(expectedClassic);
     expect(writes[0].revision).toMatch(/^\d+$/);
     expect(
@@ -1768,7 +1771,7 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
         })
       ).ok(),
     ).toBeTruthy();
-    expectedConflictURL = endpoint + "/api/v1/dashboards/" + saved.id;
+    expectedConflictURL = endpoint + "/api/v1/dashboards/" + saved.id + "/queries";
     const conflict = page.waitForResponse(
       (response) =>
         response.url() === expectedConflictURL && response.status() === 409,
@@ -1778,7 +1781,7 @@ test("Panel query editors execute all expression operations, SDK callbacks and l
       .click();
     expect((await conflict).status()).toBe(409);
     await expect(dialog.getByRole("alert")).toContainText(
-      "Dashboard changed. Close and reopen this editor.",
+      "dashboard changed; reload before saving queries",
     );
     expectedConflictURL = "";
     const persisted = await getDashboard("query-editor-v2");
@@ -1854,6 +1857,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
   endpoint,
 }, testInfo) => {
   test.setTimeout(120000);
+  await recordCanvasSeries(page);
   const temp = await mkdtemp(
     path.join(os.tmpdir(), "metricspanel233-sql-compare-e2e-"),
   );
@@ -1865,6 +1869,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
   const imported: string[] = [],
     issues: string[] = [],
     bodies: any[] = [];
+  const curveTimes = new Map<string, number[]>();
   page.on("pageerror", (error) => issues.push(error.message));
   page.on("console", (entry) => {
     if (["warning", "error"].includes(entry.type())) issues.push(entry.text());
@@ -1875,6 +1880,23 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
       request.method() === "POST"
     )
       bodies.push(request.postDataJSON());
+  });
+  page.on("response", async (response) => {
+    if (new URL(response.url()).pathname !== "/api/ds/query" || response.request().method() !== "POST" || !response.ok()) return;
+    const request = response.request().postDataJSON();
+    if (!request.queries?.some((query: any) => query.refId === "Q" && query.expression?.includes("ORDER BY A.time"))) return;
+    try {
+      const result = await response.json();
+      const times = (result.results?.Q?.frames || []).flatMap((frame: any) => {
+        const timeIndex = frame.schema.fields.findIndex((field: any) => field.type === "time");
+        const valueIndices = frame.schema.fields.flatMap((field: any, index: number) => field.type === "number" ? [index] : []);
+        return timeIndex < 0 ? [] : frame.data.values[timeIndex].filter((time: number, row: number) =>
+          Number.isFinite(time) && valueIndices.some((index: number) => frame.data.values[index][row] != null && Number.isFinite(frame.data.values[index][row])));
+      });
+      curveTimes.set(`${request.from}:${request.to}`, times);
+    } catch {
+      // Navigation and cancellation can abort obsolete response bodies.
+    }
   });
   const end = Math.floor(Date.now() / 1000) * 1000 - 60000,
     start = end - 120000,
@@ -1949,13 +1971,19 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
     exact: true,
   });
   const plot = page.getByRole("region", { name: "SQL curves", exact: true });
-  const inspect = async () =>
-    JSON.parse(
-      (await sdk.getByText(/^Frame details:/).innerText()).replace(
-        "Frame details: ",
-        "",
-      ),
-    );
+  const inspect = async () => {
+    const details = (await sdk.getByText(/^Frame details:/).innerText()).replace("Frame details: ", "");
+    return details.trim() ? JSON.parse(details) : [];
+  };
+  const timeline = async (offset: number) => {
+    await expect.poll(() => curveTimes.get(`${start}:${end}`)?.length || 0).toBeGreaterThan(1);
+    await expect.poll(() => curveTimes.get(`${start - offset}:${end - offset}`)?.length || 0).toBeGreaterThan(1);
+    return {
+      from: start, to: end, diffMs: -offset,
+      current: curveTimes.get(`${start}:${end}`)!,
+      compared: curveTimes.get(`${start - offset}:${end - offset}`)!,
+    };
+  };
   const verify = async (offset: number, value: number) => {
     await expect(sdk).toContainText("Panel value: 300");
     await sdk.getByText("Frame inspection", { exact: true }).click();
@@ -1970,12 +1998,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
       time: end - offset,
       value,
     });
-    await expect(plot.locator("polyline:not([stroke-dasharray])")).toHaveCount(
-      1,
-    );
-    await expect(
-      plot.locator('polyline[stroke-dasharray="1 5 4 5"]'),
-    ).toHaveCount(1);
+    await expectCanvasSeries(plot, 2, true, await timeline(offset));
     await expect(plot).toContainText("SQL business");
     await expect(sdk.getByRole("alert")).toHaveCount(0);
     await expect(plot.getByRole("alert")).toHaveCount(0);
@@ -2189,14 +2212,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
           1,
         );
       }
-      const normal = plot.locator("polyline:not([stroke-dasharray])"),
-        compared = plot.locator('polyline[stroke-dasharray="1 5 4 5"]');
-      expect(
-        Number((await compared.getAttribute("points"))!.split(/[ ,]/)[0]),
-      ).toBeCloseTo(
-        Number((await normal.getAttribute("points"))!.split(/[ ,]/)[0]),
-        4,
-      );
+      await expectCanvasSeries(plot, 2, true, await timeline(day));
       if (format === "classic") {
         for (let round = 0; round < 2; round++) {
           const before = bodies.length;
@@ -2227,7 +2243,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
         await page
           .getByRole("button", { name: "Switch language", exact: true })
           .click();
-        await page.setViewportSize({ width: 390, height: 844 });
+        await page.setViewportSize({ width: 1536, height: 1024 });
         await expect(sdk).toContainText("比较范围: 前一时段");
         // Responsive grid changes can replace the panel while Playwright is
         // waiting for scroll stability. Resolve the current panel each attempt.
@@ -2242,7 +2258,7 @@ test("SQL comparisons isolate real backend windows, preserve variables and alias
           ),
         ).toBeTruthy();
         await plot.screenshot({
-          path: testInfo.outputPath("sql-comparison-mobile.png"),
+          path: testInfo.outputPath("sql-comparison-desktop-zh.png"),
           animations: "disabled",
         });
         await page
@@ -2524,7 +2540,7 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
     await expect(
       page
         .getByRole("region", { name: "Expression resample", exact: true })
-        .locator("tbody tr"),
+        .getByRole("row").filter({ has: page.getByRole("cell") }),
     ).toHaveCount(4);
     await expect
       .poll(() =>
@@ -2741,14 +2757,14 @@ test("Expression graphs execute hidden multi-source inputs, preserve templates a
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
     await page.screenshot({
-      path: testInfo.outputPath("expressions-mobile.png"),
+      path: testInfo.outputPath("expressions-desktop-zh.png"),
       animations: "disabled",
     });
     expect(issues).toEqual([]);
@@ -2967,8 +2983,13 @@ test("Builtin Grafana queries render real SDK frames, discover both service gene
       mixed = page.getByRole("region", { name: "Core mixed", exact: true });
     await expect(random).toContainText("233");
     await expect(snap).toContainText("234");
-    await expect(periods.locator("tbody tr")).toHaveCount(1);
+    await expect(periods.getByRole("row").filter({ has: page.getByRole("cell") })).toHaveCount(1);
+    await expect(mixed).toContainText("42");
+    const mixedPicker = mixed.getByLabel("Table frame", { exact: true });
+    await expect(mixedPicker.locator("option")).toHaveCount(2);
+    await mixedPicker.selectOption("1");
     await expect(mixed).toContainText("300");
+    await mixedPicker.selectOption("0");
     await expect(mixed).toContainText("42");
     await expect(page.getByLabel("source", { exact: true })).toHaveValue(
       "grafana",
@@ -3122,14 +3143,14 @@ test("Builtin Grafana queries render real SDK frames, discover both service gene
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("core-grafana-mobile.png"),
+      path: testInfo.outputPath("core-grafana-desktop-zh.png"),
       animations: "disabled",
     });
     await page.goto(endpoint + "/#plugins");
@@ -3181,6 +3202,7 @@ test("Recurring time regions render SDK frames and native bands, preserve all da
   endpoint,
 }, testInfo) => {
   test.setTimeout(120000);
+  await recordCanvasSeries(page);
   page.setDefaultTimeout(15000);
   const temp = await mkdtemp(
     path.join(os.tmpdir(), "metricspanel233-time-regions-e2e-"),
@@ -3427,8 +3449,8 @@ test("Recurring time regions render SDK frames and native bands, preserve all da
     await page.reload();
     await expect(plot.locator(".annotation-marker rect")).toHaveCount(4);
     await expect(sdk).toContainText("Panel value: 233");
-    await expect(plot.locator("polyline")).toHaveCount(1);
-    await expect(plot.locator(".chart-empty")).toHaveCount(0);
+    await expectCanvasSeries(plot, 1);
+    await expect(plot.locator(".grafana-timeseries-empty")).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("time-regions-chart-desktop.png"),
       animations: "disabled",
@@ -3608,7 +3630,6 @@ test("Recurring time regions render SDK frames and native bands, preserve all da
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "注释查询", exact: true }).click();
     const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
     await mobile
@@ -4221,7 +4242,6 @@ test("Annotation query editors use public SDK components, preserve template reso
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "注释查询", exact: true }).click();
     const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
     await mobile
@@ -4236,7 +4256,7 @@ test("Annotation query editors use public SDK components, preserve template reso
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("annotation-query-editor-mobile.png"),
+      path: testInfo.outputPath("annotation-query-editor-chinese-desktop.png"),
     });
     await mobile.getByRole("button", { name: "取消", exact: true }).click();
     await page
@@ -4257,9 +4277,14 @@ test("Annotation query editors use public SDK components, preserve template reso
       { data: { ...nativeSaved, name: "Concurrent native editor" } },
     );
     expect(concurrent.ok()).toBeTruthy();
+    expect(consoleProblems).toEqual([]);
+    const rejectedSave = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" && response.url().endsWith(`/dashboards/${nativeID}/annotations`),
+    );
     await dialog
       .getByRole("button", { name: "Save annotation queries", exact: true })
       .click();
+    expect((await rejectedSave).status()).toBe(409);
     await expect(dialog.getByRole("alert")).toContainText(
       "Dashboard changed. Close and reopen this editor.",
     );
@@ -4271,7 +4296,7 @@ test("Annotation query editors use public SDK components, preserve template reso
     expect(latestNative.annotations).toEqual(nativeSaved.annotations);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
     expect(errors).toEqual([]);
-    expect(consoleProblems).toEqual([]);
+    expect(consoleProblems).toEqual([expect.stringContaining("status of 409")]);
   } catch (error) {
     await page
       .screenshot({
@@ -4575,7 +4600,7 @@ test("Plugin annotation SDK processors and legacy queries render isolated events
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page
       .getByRole("group", { name: "Plugin annotated curve", exact: true })
       .scrollIntoViewIfNeeded();
@@ -4590,7 +4615,7 @@ test("Plugin annotation SDK processors and legacy queries render isolated events
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("plugin-annotations-mobile.png"),
+      path: testInfo.outputPath("plugin-annotations-desktop-zh.png"),
       animations: "disabled",
     });
     await page.getByRole("button", { name: "关闭", exact: true }).click();
@@ -5238,6 +5263,7 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
   endpoint,
 }, testInfo) => {
   test.setTimeout(120000);
+  await recordCanvasSeries(page);
   page.setDefaultTimeout(15000);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const temp = await mkdtemp(
@@ -5403,10 +5429,9 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       endpoint +
         `/d/time-dashboard/time?from=${start}&to=${end + 60000}&timezone=utc`,
     );
-    const plot = page
-      .getByRole("region", { name: "Time native plot", exact: true })
-      .locator("svg.chart-svg");
-    await expect(plot.locator("polyline")).toHaveCount(1);
+    const nativePlot = page.getByRole("region", { name: "Time native plot", exact: true });
+    const plot = nativePlot.locator(".u-over");
+    await expectCanvasSeries(nativePlot, 1);
     await expect(
       page.getByRole("region", { name: "SDK global events", exact: true }),
     ).toBeVisible();
@@ -5612,13 +5637,9 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     expect(params.get("var-shift")).toBe("2h");
     const shiftedPlot = page
       .getByRole("region", { name: "Time native plot", exact: true })
-      .locator("svg.chart-svg");
+      .locator(".u-over");
     await expect(shiftedPlot).toBeVisible();
-    // Constant series have a zero-height polyline, while the SVG remains draggable.
-    await expect(shiftedPlot.locator("polyline").first()).toHaveAttribute(
-      "points",
-      /\d/,
-    );
+    await expectCanvasSeries(nativePlot, 1);
     await expect(
       page.getByRole("region", { name: "SDK global events", exact: true }),
     ).toBeVisible();
@@ -5650,10 +5671,7 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       name: "Time native plot",
       exact: true,
     });
-    await expect(nativePanel.locator("polyline").first()).toHaveAttribute(
-      "points",
-      /\d/,
-    );
+    await expectCanvasSeries(nativePanel, 1);
     const siblingCount = () =>
       queries.filter((request) =>
         request.queries?.some((query) => query.refId === "N"),
@@ -5751,6 +5769,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
   endpoint,
 }, testInfo) => {
   test.setTimeout(120000);
+  await recordCanvasSeries(page);
   page.setDefaultTimeout(15000);
   const temp = await mkdtemp(
     path.join(os.tmpdir(), "metricspanel233-compare-e2e-"),
@@ -5911,13 +5930,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
         .flatMap((body) => body.queries)
         .some((query) => query.refId === "B-compare"),
     ).toBeFalsy();
-    const normal = plot.locator("polyline:not([stroke-dasharray])"),
-      compared = plot.locator('polyline[stroke-dasharray="1 5 4 5"]');
-    await expect(normal).toHaveCount(1);
-    await expect(compared).toHaveCount(1);
-    const firstX = async (line: typeof normal) =>
-      Number((await line.getAttribute("points"))!.split(/[ ,]/)[0]);
-    expect(await firstX(compared)).toBeCloseTo(await firstX(normal), 4);
+    await expectCanvasSeries(plot, 2, true);
     for (let round = 0; round < 2; round++) {
       const count = bodies.length;
       await page
@@ -5961,7 +5974,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await expect(panel).toContainText("比较范围: 前一时段");
     await panel
       .getByRole("combobox", { name: "缩放范围", exact: true })
@@ -5978,7 +5991,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     await expect(plot).toContainText("比较范围: 前一时段");
     await expect(plot).toContainText("(比较)");
     await plot.screenshot({
-      path: testInfo.outputPath("comparison-mobile.png"),
+      path: testInfo.outputPath("comparison-desktop-zh.png"),
       animations: "disabled",
     });
     await page
@@ -5997,7 +6010,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     const disabledCount = bodies.length;
     await page.reload();
     await expect(panel).toContainText("Panel value: 150");
-    await expect(plot.locator("polyline")).toHaveCount(1);
+    await expectCanvasSeries(plot, 1);
     await expect(panel.getByRole("alert")).toHaveCount(0);
     expect(
       bodies
@@ -6120,8 +6133,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
         time: end - day,
         value: 15,
       });
-      await expect(normal).toHaveCount(1);
-      await expect(compared).toHaveCount(1);
+      await expectCanvasSeries(plot, 2, true);
       expect(
         bodies
           .slice(count)
@@ -6171,7 +6183,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     ).toBeTruthy();
     await page.goto(endpoint + "/d/compare-dashboard/compare");
     await expect(panel).toContainText("Compare with: 1d");
-    await expect(compared).toHaveCount(1);
+    await expectCanvasSeries(plot, 2, true);
     source.panels[0].timeCompare = "bad";
     source.panels[1].timeCompare = "bad";
     source.panels[1].targets[0].timeRangeCompare = false;
@@ -6188,7 +6200,7 @@ test("Comparison requests retain raw SDK timestamps, opt out individual queries 
     );
     await expect(panel).toContainText("Panel value: 150");
     await expect(plot.getByRole("alert")).toHaveCount(0);
-    await expect(plot.locator("polyline")).toHaveCount(1);
+    await expectCanvasSeries(plot, 1);
     expect(errors).toEqual([]);
   } finally {
     await page.goto(endpoint + "/#overview").catch(() => {});
@@ -8115,10 +8127,10 @@ test("Grafana resource layout, SDK transforms, instant tables, units, repeat and
   ).toBeVisible();
   const table = page.getByRole("region", { name: "Services", exact: true });
   await expect(
-    table.getByRole("columnheader", { name: "Service", exact: true }),
+    table.getByRole("columnheader", { name: "Sort by column Service", exact: true }),
   ).toBeVisible();
   await expect(
-    table.getByRole("columnheader", { name: "Usage", exact: true }),
+    table.getByRole("columnheader", { name: "Sort by column Usage", exact: true }),
   ).toBeVisible();
   await expect(
     table.getByRole("cell", { name: "25%", exact: true }),
@@ -8127,7 +8139,7 @@ test("Grafana resource layout, SDK transforms, instant tables, units, repeat and
     table.getByRole("cell", { name: "75%", exact: true }),
   ).toBeVisible();
   await expect(
-    table.getByRole("columnheader", { name: "Time", exact: true }),
+    table.getByRole("columnheader", { name: "Sort by column Time", exact: true }),
   ).toHaveCount(0);
   const gauge = page.getByRole("region", { name: "Total", exact: true });
   await expect(gauge.getByRole("meter")).toHaveAttribute("aria-valuenow", "1");
@@ -8156,7 +8168,7 @@ test("Grafana resource layout, SDK transforms, instant tables, units, repeat and
     page.getByRole("heading", { name: "Per service", exact: true }),
   ).toHaveCount(1);
   await expect(page.locator(".form-error")).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,

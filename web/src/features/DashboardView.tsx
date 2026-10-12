@@ -1,8 +1,9 @@
 import { t as tr } from "../i18n";
-import { useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
+import { Plus, RefreshCw, Pencil } from "lucide-react";
 import {
   api,
+  ApiError,
   formatValue,
   jsonBody,
   message,
@@ -24,6 +25,26 @@ import { RefreshPicker } from "../components/RefreshPicker";
 import { AnnotationQueriesButton } from "../components/AnnotationQueriesButton";
 import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
 import { DashboardHistoryButton } from "../components/DashboardHistoryButton";
+import { panelPosition, placeAddedPanel } from "../grafana/layout";
+import { nativePanelForSDK } from "../grafana/panel-queries";
+import {
+  DashboardVariableBar,
+  DashboardVariablesButton,
+  useDashboardVariables,
+} from "../components/DashboardVariables";
+import { DashboardVariablesEditor } from "../components/DashboardVariablesEditor";
+import { layoutPanels } from "../grafana/layout";
+import { queryValues } from "../grafana/variables";
+import {
+  DashboardLayoutButton,
+  DashboardLayoutEditor,
+} from "./DashboardLayoutEditor";
+const GrafanaPanel = lazy(() => import("../grafana/GrafanaPanel"));
+const PanelQueriesEditor = lazy(() =>
+  import("../components/PanelQueriesEditor").then((module) => ({
+    default: module.PanelQueriesEditor,
+  })),
+);
 export function DashboardView({
   dashboard,
   stats,
@@ -51,34 +72,99 @@ export function DashboardView({
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
 }) {
-  const [editor, setEditor] = useState<{ panel: Panel | "new"; baseline: Dashboard } | null>(null);
-  const [removing, setRemoving] = useState<{ panel: Panel; baseline: Dashboard } | null>(null);
-  const [removalError, setRemovalError] = useState(""), [removalBusy, setRemovalBusy] = useState(false);
+  const [editor, setEditor] = useState<{
+    panel: Panel | "new";
+    baseline: Dashboard;
+  } | null>(null);
+  const [removing, setRemoving] = useState<{
+    panel: Panel;
+    baseline: Dashboard;
+  } | null>(null);
+  const [removalError, setRemovalError] = useState(""),
+    [removalBusy, setRemovalBusy] = useState(false);
+  const [editingLayout, setEditingLayout] = useState(false);
+  const [editingQueries, setEditingQueries] = useState(false);
+  const [editingVariables, setEditingVariables] = useState(false);
+  const variableState = useDashboardVariables(dashboard, range, tick);
+  const options = Object.fromEntries(
+    Object.entries(variableState.choices).map(([name, choices]) => [
+      name,
+      choices.map((choice) => choice.value),
+    ]),
+  );
+  const entries = layoutPanels(
+    dashboard.panels,
+    variableState.values,
+    options,
+  ).map((entry) => ({
+    ...entry,
+    values: queryValues(
+      entry.values,
+      variableState.variables,
+      variableState.choices,
+    ),
+  }));
   const openEditor = (panel?: Panel) => {
     const baseline = structuredClone(dashboard);
-    setEditor({ panel: panel ? baseline.panels.find((item) => item.id === panel.id)! : "new", baseline });
+    setEditor({
+      panel: panel
+        ? baseline.panels.find((item) => item.id === panel.id)!
+        : "new",
+      baseline,
+    });
   };
-  async function save(baseline: Dashboard, panels: Panel[]) {
-    await api(`/dashboards/${encodeURIComponent(baseline.id)}`, {
-      method: "PUT",
+  async function save(baseline: Dashboard, body: unknown) {
+    await api(`/dashboards/${encodeURIComponent(baseline.id)}/panels`, {
+      method: "PATCH",
       headers: { "If-Match": String(baseline.updated_at) },
-      body: jsonBody({ ...baseline, panels }),
+      body: jsonBody(body),
     });
     await reload();
   }
-  const chart = (p: Panel, i: number) => (
-    <Chart
-      key={p.id}
-      panel={p}
-      range={range}
-      tick={tick}
-      annotationDashboard={dashboard}
-      mint={i === 2}
-      onRange={onRange}
-      onEdit={() => openEditor(p)}
-      onRemove={() => { setRemovalError(""); setRemoving({ panel: p, baseline: structuredClone(dashboard) }); }}
-    />
-  );
+  const remove = (p: Panel) => {
+    setRemovalError("");
+    setRemoving({ panel: p, baseline: structuredClone(dashboard) });
+  };
+  const chart = (
+    p: Panel,
+    i: number,
+    values = variableState.effective,
+    sourcePanel = p,
+  ) =>
+    !!variableState.variables.length ||
+    p.config?.targets !== undefined ||
+    !["timeseries", "stat", "table", undefined].includes(p.visualization) ? (
+      <Suspense
+        fallback={
+          <section className="chart-panel" aria-busy="true">
+            {tr("Loading metrics…")}
+          </section>
+        }
+      >
+        <GrafanaPanel
+          panel={nativePanelForSDK(p)}
+          values={values}
+          range={range}
+          tick={tick}
+          dashboard={dashboard}
+          onRange={onRange}
+          onEdit={() => openEditor(sourcePanel)}
+          onRemove={() => remove(sourcePanel)}
+        />
+      </Suspense>
+    ) : (
+      <Chart
+        key={p.id}
+        panel={p}
+        range={range}
+        tick={tick}
+        annotationDashboard={dashboard}
+        mint={i === 2}
+        onRange={onRange}
+        onEdit={() => openEditor(sourcePanel)}
+        onRemove={() => remove(sourcePanel)}
+      />
+    );
   return (
     <>
       <div className="page-heading dashboard-heading">
@@ -94,14 +180,33 @@ export function DashboardView({
           </p>
         </div>
         <div className="toolbar">
+          <DashboardVariablesButton onClick={() => setEditingVariables(true)} />
+          <button
+            disabled={!dashboard.panels.length}
+            onClick={() => setEditingQueries(true)}
+          >
+            <Pencil size={17} />
+            {tr("Panel queries")}
+          </button>
+          <DashboardLayoutButton
+            disabled={!dashboard.panels.length}
+            onClick={() => setEditingLayout(true)}
+          />
           <DashboardHistoryButton dashboard={dashboard} reload={reload} />
           <DashboardSnapshotButton
             dashboard={dashboard}
+            panels={entries.map((entry) => ({
+              ...entry,
+              panel: variableState.variables.length
+                ? nativePanelForSDK(entry.panel)
+                : entry.panel,
+            }))}
             range={range}
             reload={reload}
           />
           <AnnotationQueriesButton
             dashboard={dashboard}
+            values={variableState.effective}
             range={range}
             reload={reload}
           />
@@ -157,126 +262,191 @@ export function DashboardView({
           </div>
         </div>
       ) : null}
-      <div className="chart-grid">
-        {(dashboard.id === "system"
-          ? dashboard.panels.slice(0, 2)
-          : dashboard.panels
-        ).map(chart)}
+      <DashboardVariableBar state={variableState} />
+      <div className="chart-grid dashboard-panel-grid">
+        {variableState.ready &&
+          entries.map(({ panel, sourcePanel, values, x, y, w, h }, index) => {
+            return (
+              <div
+                className="dashboard-panel-cell"
+                key={panel.id}
+                data-panel-id={
+                  sourcePanel.config?.repeat ? panel.id : sourcePanel.id
+                }
+                style={{
+                  gridColumn: `${x + 1} / span ${w}`,
+                  gridRow: `${y + 1} / span ${h}`,
+                }}
+              >
+                {chart(panel, index, values, sourcePanel)}
+              </div>
+            );
+          })}
       </div>
-      {dashboard.id === "system" || !dashboard.panels.length ? (
-        <div className="secondary-grid">
-          <div>
-            {dashboard.panels[2] ? (
-              chart(dashboard.panels[2], 2)
-            ) : (
-              <div className="empty-workspace">
-                <h2>{tr("Add your first metric panel")}</h2>
-                <p>{tr("Select a metric to start plotting live data.")}</p>
-                <button onClick={() => openEditor()} className="primary">
-                  <Plus size={18} />
-                  {tr("Add panel")}
-                </button>
-              </div>
-            )}
-          </div>
-          {dashboard.id === "system" ? (
-            <section className="status-panel">
-              <div className="panel-heading">
-                <h2>{tr("Collection status")}</h2>
-              </div>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{tr("Name")}</th>
-                      <th>{tr("Status")}</th>
-                      <th>{tr("Last seen")}</th>
-                      <th>{tr("Uptime")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="mono">{tr("metricspanel")}</td>
-                      <td>
-                        <span className="status healthy">
-                          <i />
-                          {tr("healthy")}
-                        </span>
-                      </td>
-                      <td className="mono">
-                        {timeAgo(stats?.last_sample || 0)}
-                      </td>
-                      <td className="mono">
-                        {duration(
-                          Date.now() - (stats?.started_at || Date.now()),
-                        )}
-                      </td>
-                    </tr>
-                    {targets.map((t) => (
-                      <tr key={t.id}>
-                        <td title={t.url}>{t.name}</td>
-                        <td>
-                          <span
-                            className={`status ${!t.enabled ? "muted" : t.last_error ? "unhealthy" : t.last_scrape ? "healthy" : "muted"}`}
-                          >
-                            <i />
-                            {tr(
-                              !t.enabled
-                                ? "paused"
-                                : t.last_error
-                                  ? "error"
-                                  : t.last_scrape
-                                    ? "healthy"
-                                    : "pending",
-                            )}
-                          </span>
-                        </td>
-                        <td className="mono">{timeAgo(t.last_scrape)}</td>
-                        <td className="mono">
-                          {t.samples}
-                          {tr("samples")}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
+      {!dashboard.panels.length ? (
+        <div className="empty-workspace">
+          <h2>{tr("Add your first metric panel")}</h2>
+          <p>{tr("Select a metric to start plotting live data.")}</p>
+          <button onClick={() => openEditor()} className="primary">
+            <Plus size={18} />
+            {tr("Add panel")}
+          </button>
         </div>
       ) : null}
-      {dashboard.id === "system" && dashboard.panels.length > 3 && (
-        <div className="chart-grid extra-charts">
-          {dashboard.panels.slice(3).map((p, i) => chart(p, i + 3))}
-        </div>
+      {dashboard.id === "system" ? (
+        <section className="status-panel dashboard-collection-status">
+          <div className="panel-heading">
+            <h2>{tr("Collection status")}</h2>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr("Name")}</th>
+                  <th>{tr("Status")}</th>
+                  <th>{tr("Last seen")}</th>
+                  <th>{tr("Uptime")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="mono">{tr("metricspanel")}</td>
+                  <td>
+                    <span className="status healthy">
+                      <i />
+                      {tr("healthy")}
+                    </span>
+                  </td>
+                  <td className="mono">{timeAgo(stats?.last_sample || 0)}</td>
+                  <td className="mono">
+                    {duration(Date.now() - (stats?.started_at || Date.now()))}
+                  </td>
+                </tr>
+                {targets.map((t) => (
+                  <tr key={t.id}>
+                    <td title={t.url}>{t.name}</td>
+                    <td>
+                      <span
+                        className={`status ${!t.enabled ? "muted" : t.last_error ? "unhealthy" : t.last_scrape ? "healthy" : "muted"}`}
+                      >
+                        <i />
+                        {tr(
+                          !t.enabled
+                            ? "paused"
+                            : t.last_error
+                              ? "error"
+                              : t.last_scrape
+                                ? "healthy"
+                                : "pending",
+                        )}
+                      </span>
+                    </td>
+                    <td className="mono">{timeAgo(t.last_scrape)}</td>
+                    <td className="mono">
+                      {t.samples}
+                      {tr("samples")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+      {editingLayout ? (
+        <DashboardLayoutEditor
+          dashboard={dashboard}
+          reload={reload}
+          onClose={() => setEditingLayout(false)}
+        />
+      ) : null}
+      {editingVariables && (
+        <DashboardVariablesEditor
+          dashboard={dashboard}
+          range={range}
+          values={variableState.values}
+          reload={reload}
+          onClose={() => setEditingVariables(false)}
+        />
       )}
+      {editingQueries ? (
+        <Suspense fallback={<p role="status">{tr("Loading datasource…")}</p>}>
+          <PanelQueriesEditor
+            dashboard={dashboard}
+            values={variableState.effective}
+            range={range}
+            reload={reload}
+            onClose={() => setEditingQueries(false)}
+          />
+        </Suspense>
+      ) : null}
       {editor && (
         <PanelEditor
           panel={editor.panel === "new" ? undefined : editor.panel}
           metrics={metrics}
           onClose={() => setEditor(null)}
           onSave={async (p) => {
-            await save(
-              editor.baseline,
-              editor.panel === "new" || p.id !== editor.panel.id
-                ? [...editor.baseline.panels, p]
-                : editor.baseline.panels.map((item) => (item.id === p.id ? p : item)),
-            );
+            const added = editor.panel === "new" || p.id !== editor.panel.id;
+            const position = added
+              ? panelPosition(
+                  placeAddedPanel(p, editor.baseline.panels),
+                  editor.baseline.panels.length,
+                )
+              : undefined;
+            const {
+              id,
+              title,
+              metric,
+              expr,
+              aggregation,
+              unit,
+              visualization,
+              labels,
+            } = p;
+            await save(editor.baseline, {
+              action:
+                editor.panel !== "new" && p.id !== editor.panel.id
+                  ? "duplicate"
+                  : "save",
+              sourceId: editor.panel === "new" ? undefined : editor.panel.id,
+              panel: {
+                id,
+                title,
+                metric,
+                expr,
+                aggregation,
+                unit,
+                visualization,
+                labels,
+              },
+              position,
+            });
             setEditor(null);
             notify(tr("Panel saved"));
           }}
         />
       )}
       {removing && (
-        <Dialog title={tr("Remove panel")} onClose={() => { if (!removalBusy) setRemoving(null); }}>
+        <Dialog
+          title={tr("Remove panel")}
+          onClose={() => {
+            if (!removalBusy) setRemoving(null);
+          }}
+        >
           <p>
             {tr("Remove \u201C")}
             {removing.panel.title}
             {tr("\u201D from this dashboard?")}
           </p>
-          {removalError && <p className="form-error" role="alert">{tr(removalError)}</p>}
+          {removalError && (
+            <p className="form-error" role="alert">
+              {tr(removalError)}
+            </p>
+          )}
           <div className="form-actions">
-            <button disabled={removalBusy} onClick={() => setRemoving(null)}>{tr("Cancel")}</button>
+            <button disabled={removalBusy} onClick={() => setRemoving(null)}>
+              {tr("Cancel")}
+            </button>
             <button
               className="danger"
               disabled={removalBusy}
@@ -284,15 +454,21 @@ export function DashboardView({
                 setRemovalBusy(true);
                 setRemovalError("");
                 try {
-                  await save(
-                    removing.baseline,
-                    removing.baseline.panels.filter((p) => p.id !== removing.panel.id),
-                  );
+                  await save(removing.baseline, {
+                    action: "delete",
+                    sourceId: removing.panel.id,
+                  });
                   setRemoving(null);
                   notify(tr("Panel removed"));
                 } catch (e) {
-                  setRemovalError(message(e));
-                } finally { setRemovalBusy(false); }
+                  setRemovalError(
+                    e instanceof ApiError && e.status === 409
+                      ? tr("Dashboard changed. Close and reopen this editor.")
+                      : message(e),
+                  );
+                } finally {
+                  setRemovalBusy(false);
+                }
               }}
             >
               {tr("Remove panel")}
@@ -325,8 +501,12 @@ function PanelEditor({
   const [labels, setLabels] = useState(JSON.stringify(panel?.labels || {}));
   const [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
+  const configured = panel?.config?.targets !== undefined;
   return (
-    <Dialog title={tr(panel ? "Edit panel" : "Add panel")} onClose={saving ? () => {} : onClose}>
+    <Dialog
+      title={tr(panel ? "Edit panel" : "Add panel")}
+      onClose={saving ? () => {} : onClose}
+    >
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -351,7 +531,11 @@ function PanelEditor({
               labels: parseLabels(labels),
             });
           } catch (e) {
-            setError(message(e));
+            setError(
+              e instanceof ApiError && e.status === 409
+                ? tr("Dashboard changed. Close and reopen this editor.")
+                : message(e),
+            );
             setSaving(false);
           }
         }}
@@ -377,47 +561,65 @@ function PanelEditor({
             <option value="timeseries">{tr("Time series")}</option>
             <option value="stat">{tr("Stat")}</option>
             <option value="table">{tr("Table")}</option>
+            <option value="gauge">{tr("Gauge")}</option>
+            <option value="bargauge">{tr("Bar gauge")}</option>
+            {visualization &&
+            !["timeseries", "stat", "table", "gauge", "bargauge"].includes(
+              visualization,
+            ) ? (
+              <option value={visualization}>{visualization}</option>
+            ) : null}
           </select>
         </label>
-        <label>
-          {tr("Metric")}
-          <input
-            list="metric-options"
-            value={metric}
-            onChange={(e) => setMetric(e.target.value)}
-            required
-            placeholder={tr("Select or enter a metric")}
-          />
-          <datalist id="metric-options">
-            {metrics.map((m) => (
-              <option key={m.name} value={m.name} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          {tr("PromQL expression")}
-          <textarea
-            className="mono"
-            value={expr}
-            onChange={(e) => setExpr(e.target.value)}
-            placeholder="sum(rate(app_requests_total[5m]))"
-            rows={2}
-          />
-        </label>
+        {configured ? (
+          <p className="subtle">
+            {tr("Edit datasource queries using Panel queries.")}
+          </p>
+        ) : (
+          <>
+            <label>
+              {tr("Metric")}
+              <input
+                list="metric-options"
+                value={metric}
+                onChange={(e) => setMetric(e.target.value)}
+                required
+                placeholder={tr("Select or enter a metric")}
+              />
+              <datalist id="metric-options">
+                {metrics.map((m) => (
+                  <option key={m.name} value={m.name} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              {tr("PromQL expression")}
+              <textarea
+                className="mono"
+                value={expr}
+                onChange={(e) => setExpr(e.target.value)}
+                placeholder="sum(rate(app_requests_total[5m]))"
+                rows={2}
+              />
+            </label>
+          </>
+        )}
         <div className="form-row">
-          <label>
-            {tr("Aggregation")}
-            <select
-              value={aggregation}
-              onChange={(e) => setAggregation(e.target.value)}
-            >
-              {aggregations.map((a) => (
-                <option key={a} value={a}>
-                  {tr(a)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!configured && (
+            <label>
+              {tr("Aggregation")}
+              <select
+                value={aggregation}
+                onChange={(e) => setAggregation(e.target.value)}
+              >
+                {aggregations.map((a) => (
+                  <option key={a} value={a}>
+                    {tr(a)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             {tr("Unit")}
             <select value={unit} onChange={(e) => setUnit(e.target.value)}>
@@ -430,16 +632,18 @@ function PanelEditor({
             </select>
           </label>
         </div>
-        <label>
-          {tr("Label filters")}
-          <small>{tr("JSON equality filters")}</small>
-          <textarea
-            className="mono"
-            value={labels}
-            onChange={(e) => setLabels(e.target.value)}
-            rows={2}
-          />
-        </label>
+        {!configured && (
+          <label>
+            {tr("Label filters")}
+            <small>{tr("JSON equality filters")}</small>
+            <textarea
+              className="mono"
+              value={labels}
+              onChange={(e) => setLabels(e.target.value)}
+              rows={2}
+            />
+          </label>
+        )}
         {error && (
           <p className="form-error" role="alert">
             {error}

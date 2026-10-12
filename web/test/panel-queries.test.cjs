@@ -42,6 +42,47 @@ function dashboard(grafana) {
   };
 }
 const json = (value) => JSON.parse(JSON.stringify(value));
+test("native query editing exposes legacy expressions as new queries and preserves configured SQL", () => {
+  const legacy = {
+    metric: "requests_total",
+    labels: { zone: 'a"b', service: "api" },
+    aggregation: "rate",
+    visualization: "gauge",
+    unit: "seconds",
+  };
+  const queries = exported.initialPanelQueries(legacy);
+  assert.equal(
+    queries[0].expr,
+    'rate(requests_total{service="api",zone="a\\\"b"}[$__rate_interval])',
+  );
+  assert.equal(queries[0].range, true);
+  const panel = exported.nativePanelForSDK(legacy);
+  assert.equal(panel.config.type, "gauge");
+  assert.equal(panel.config.fieldConfig.defaults.unit, "s");
+  const configured = {
+    ...legacy,
+    config: {
+      type: "table",
+      targets: [
+        {
+          refId: "A",
+          rawSql: "SELECT 233",
+          datasource: { uid: "sql", type: "mysql" },
+        },
+      ],
+      opaque: "keep",
+    },
+  };
+  assert.equal(
+    exported.initialPanelQueries(configured),
+    configured.config.targets,
+  );
+  assert.equal(exported.nativePanelForSDK(configured).config.opaque, "keep");
+  assert.deepEqual(
+    json(exported.initialPanelQueries({ ...legacy, config: { targets: [] } })),
+    [],
+  );
+});
 test("classic and V1 panel edits preserve rows, envelopes, other panels and unknown fields", () => {
   const panel = {
     id: 7,

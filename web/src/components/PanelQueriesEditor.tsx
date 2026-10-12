@@ -29,7 +29,7 @@ import {
 import {
   panelWithQueries,
   validatePanelQueries,
-  withPanelQueries,
+  initialPanelQueries,
 } from "../grafana/panel-queries";
 import { resolveTimeRange, type TimeSelection } from "../grafana/time-range";
 import { Dialog } from "./Dialog";
@@ -69,9 +69,13 @@ export function PanelQueriesEditor({
         .filter((panel) => panel.visualization !== "row")
         .map((panel) => [
           panel.id,
-          (panel.config?.targets || []).map((query) => ({
+          (dashboard.grafana
+            ? panel.config?.targets || []
+            : initialPanelQueries(panel)
+          ).map((query) => ({
             key: counter.current++,
-            originalRef: query.refId,
+            originalRef:
+              panel.config?.targets === undefined ? undefined : query.refId,
             query: structuredClone(query),
           })),
         ]),
@@ -188,7 +192,10 @@ export function PanelQueriesEditor({
         values,
         range,
         new Subject(),
-        { dashboardUID: dashboardUID(baseline.current) },
+        {
+          dashboardUID: dashboardUID(baseline.current),
+          app: CoreApp.PanelEditor,
+        },
       ).subscribe({
         next: (update) => {
           setPreview(update);
@@ -238,21 +245,29 @@ export function PanelQueriesEditor({
     stop();
     setError("");
     try {
-      let updated = baseline.current;
-      for (const id of dirty) {
-        const entries = allDrafts[id];
-        updated = withPanelQueries(
-          updated,
-          id,
-          entries.map((entry) => entry.query),
-          entries.map((entry) => entry.originalRef),
-        );
-      }
-      await api(`/dashboards/${encodeURIComponent(updated.id)}`, {
-        method: "PUT",
-        headers: { "If-Match": String(baseline.current.updated_at) },
-        body: jsonBody(updated),
-      });
+      const panels = Array.from(dirty, (id) => ({
+        id,
+        queries: allDrafts[id].map((entry) => ({
+          originalRef: entry.originalRef,
+          baseline:
+            entry.originalRef == null
+              ? undefined
+              : baseline.current.panels
+                  .find((panel) => panel.id === id)
+                  ?.config?.targets?.find(
+                    (query) => query.refId === entry.originalRef,
+                  ),
+          query: entry.query,
+        })),
+      }));
+      await api(
+        `/dashboards/${encodeURIComponent(baseline.current.id)}/queries`,
+        {
+          method: "PATCH",
+          headers: { "If-Match": String(baseline.current.updated_at) },
+          body: jsonBody({ panels }),
+        },
+      );
       await reload();
       onClose();
     } catch (error) {

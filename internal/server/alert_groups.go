@@ -30,7 +30,12 @@ func (s *Server) alertGroupRoutes(api *http.ServeMux) {
 			return
 		}
 		store.SortAlertGroup(matches)
-		writeJSON(w, 200, alerting.ExportGrafanaGroup(folder, group, matches[0].IntervalSeconds, matches))
+		exported, err := s.exportNotificationGroup(r.Context(), folder, group, matches[0].IntervalSeconds, matches)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, exported)
 	})
 	api.HandleFunc("PUT "+path, func(w http.ResponseWriter, r *http.Request) {
 		var input alerting.GrafanaGroup
@@ -72,7 +77,12 @@ func (s *Server) alertGroupRoutes(api *http.ServeMux) {
 			ruleError(w, err)
 			return
 		}
-		writeJSON(w, 200, alerting.ExportGrafanaGroup(folder, group, input.Interval, views))
+		exported, err := s.exportNotificationGroup(r.Context(), folder, group, input.Interval, views)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, exported)
 	})
 	api.HandleFunc("DELETE "+path, func(w http.ResponseWriter, r *http.Request) {
 		_, err := s.Alerts.ReplaceRuleGroup(r.Context(), r.PathValue("folder"), r.PathValue("group"), 5, []model.AlertRule{}, "api")

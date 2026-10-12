@@ -245,7 +245,8 @@ func nativeClassicDocument(d model.Dashboard) map[string]any {
 	panels := []any{}
 	for i, panel := range d.Panels {
 		config := dashboardJSONObjects(panel.Config)
-		if config == nil {
+		if config == nil || config["type"] == nil || config["targets"] == nil {
+			positionConfig := config
 			visual := panel.Visualization
 			if visual == "" {
 				visual = "timeseries"
@@ -291,6 +292,18 @@ func nativeClassicDocument(d model.Dashboard) map[string]any {
 				unit = "short"
 			}
 			config = map[string]any{"id": i + 1, "title": panel.Title, "type": visual, "datasource": map[string]any{"uid": "metricspanel", "type": "prometheus"}, "targets": targets, "gridPos": map[string]int{"h": 8, "w": 12, "x": i % 2 * 12, "y": i / 2 * 8}, "fieldConfig": map[string]any{"defaults": map[string]any{"unit": unit}, "overrides": []any{}}, "options": map[string]any{}}
+			for key, value := range positionConfig {
+				config[key] = value
+			}
+		}
+		if config["id"] == nil {
+			config["id"] = i + 1
+		}
+		if config["title"] == nil {
+			config["title"] = panel.Title
+		}
+		if config["type"] == nil {
+			config["type"] = panel.Visualization
 		}
 		panels = append(panels, config)
 	}

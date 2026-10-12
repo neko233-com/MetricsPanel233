@@ -64,7 +64,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db, Path: path}
 	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
-		for _, table := range []string{"datasources", "app_settings", "target_connections"} {
+		for _, table := range []string{"datasources", "app_settings", "target_connections", "alert_contact_points"} {
 			var exists int
 			if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
 				db.Close()
@@ -173,6 +173,10 @@ CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(i
 		return nil, err
 	}
 	if err := s.backfillDashboardHistory(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.InitNotifications(); err != nil {
 		db.Close()
 		return nil, err
 	}

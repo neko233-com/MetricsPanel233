@@ -68,12 +68,18 @@ Usage: metricspanel <command> [flags]
   targets      catalog | exporters | list | add | set | delete | scrape
   dashboards   list | save | export | delete | community | import-community
                preview-grafana | import-grafana | move | library-add | library-unlink
-               history | version | version-export | compare | restore
+               history | version | version-export | compare | restore | layout | queries
+               panels | annotation-queries | variables
   folders      list | get | create | save | move | delete
   library      list | get | save | model | connections | delete
   annotations  list | get | save | patch | tags | delete | graphite
   patterns     capture | list | get | search | delete (persistent vector analysis)
   alerts       list | get | save | import-grafana | preview | evaluate | history | delete | group-get | group-save | group-delete
+  contacts     list | get | save | test | delete (alert webhook contact points)
+  notifications list | retry | policy | policy-save | groups (routing and durable delivery records)
+  silences list | get | save | expire | preview (label matching and timed notification muting)
+  mute-timings list | get | save | delete | preview (calendar intervals with timezones)
+  notification-templates list | get | save | delete | preview (named notification content)
   plugins      list | get | search | info | versions | install | catalog | enable | disable | delete
                settings | configure (Grafana application settings)
   datasources  list | get | save | query | health | delete
@@ -106,7 +112,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "contacts" || command == "notifications" || command == "silences" || command == "mute-timings" || command == "notification-templates" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -166,6 +172,8 @@ func run(args []string) error {
 	annotationAlertID := f.Int64("alert-id", 0, "annotation legacy alert numeric ID")
 	pluginVersion := f.String("plugin-version", "", "exact Grafana catalog plugin version")
 	catalogQuery := f.String("query", "", "plugin catalog search text")
+	silenceState := f.String("state", "", "silence list state: active, pending or expired; empty returns all")
+	silenceFilter := f.String("filter", "", "silence matcher filter, e.g. service=api or service=~api.*")
 	communityRevision := f.Int("community-revision", 0, "Grafana.com dashboard revision; 0 loads latest")
 	importUID := f.String("uid", "", "imported Grafana dashboard UID override")
 	importInputs := f.String("inputs", "{}", "Grafana import input bindings as a JSON string map; datasource values are UIDs")
@@ -185,11 +193,11 @@ func run(args []string) error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
 	}
-	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink" && action != "restore"))) {
-		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add, library-unlink and restore")
+	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink" && action != "restore" && action != "layout" && action != "queries" && action != "panels" && action != "annotation-queries" && action != "variables"))) {
+		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add, library-unlink, restore, layout, queries, panels, annotation-queries and variables")
 	}
-	if *dashboardMessage != "" && (command != "dashboards" || action != "save" && action != "restore") {
-		return errors.New("--message is only supported by dashboards save and restore")
+	if *dashboardMessage != "" && (command != "dashboards" || action != "save" && action != "restore" && action != "layout" && action != "queries" && action != "panels" && action != "annotation-queries" && action != "variables") {
+		return errors.New("--message is only supported by dashboards save, restore, layout, queries, panels, annotation-queries and variables")
 	}
 	if utf8.RuneCountInString(*dashboardMessage) > 500 {
 		return errors.New("--message must contain at most 500 characters")
@@ -713,6 +721,208 @@ func run(args []string) error {
 			return err
 		}
 		return request("POST", "/api/v1/ingest", body)
+	case "notification-templates":
+		path := "/api/v1/alerting/notification-templates"
+		switch action {
+		case "list":
+			return request("GET", path, nil)
+		case "get", "delete":
+			if *id == "" {
+				return errors.New("--id template group name is required")
+			}
+			method := "GET"
+			if action == "delete" {
+				method = "DELETE"
+			}
+			return request(method, path+"/"+url.PathEscape(*id), nil)
+		case "save", "preview":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("notification template file must be JSON")
+			}
+			method := "POST"
+			if action == "preview" {
+				path += "/preview"
+				if *id != "" {
+					var preview map[string]json.RawMessage
+					if err := json.Unmarshal(data, &preview); err != nil || preview == nil {
+						return errors.New("notification template preview file must be a JSON object")
+					}
+					var name string
+					if raw, ok := preview["name"]; ok {
+						if err := json.Unmarshal(raw, &name); err != nil || (name != "" && name != *id) {
+							return errors.New("notification template preview name does not match --id")
+						}
+					}
+					preview["name"], _ = json.Marshal(*id)
+					data, err = json.Marshal(preview)
+					if err != nil {
+						return err
+					}
+				}
+			} else if *id != "" {
+				method = "PUT"
+				path += "/" + url.PathEscape(*id)
+			}
+			return request(method, path, json.RawMessage(data))
+		default:
+			return errors.New("notification-templates requires list, get, save, delete or preview")
+		}
+	case "mute-timings":
+		path := "/api/v1/alerting/mute-timings"
+		switch action {
+		case "list":
+			return request("GET", path, nil)
+		case "preview":
+			if *id != "" {
+				path += "/" + url.PathEscape(*id)
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("mute timing preview file must be JSON with an RFC3339 at timestamp")
+			}
+			return request("POST", path+"/preview", json.RawMessage(data))
+		case "get", "delete":
+			if *id == "" {
+				return errors.New("--id timing name is required")
+			}
+			path += "/" + url.PathEscape(*id)
+			if action == "get" {
+				return request("GET", path, nil)
+			}
+			if action == "delete" {
+				return request("DELETE", path, nil)
+			}
+			return errors.New("unsupported mute timing action")
+		case "save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("mute timing file must be JSON")
+			}
+			method := "POST"
+			if *id != "" {
+				method = "PUT"
+				path += "/" + url.PathEscape(*id)
+			}
+			return request(method, path, json.RawMessage(data))
+		default:
+			return errors.New("mute-timings requires list, get, save, delete or preview")
+		}
+	case "silences":
+		path := "/api/v1/alerting/silences"
+		switch action {
+		case "list":
+			params := url.Values{}
+			if *silenceState != "" {
+				if *silenceState != "active" && *silenceState != "pending" && *silenceState != "expired" {
+					return errors.New("silences --state must be active, pending or expired")
+				}
+				for _, state := range []string{"active", "pending", "expired"} {
+					params.Set(state, strconv.FormatBool(state == *silenceState))
+				}
+			}
+			if *silenceFilter != "" {
+				params.Add("filter", *silenceFilter)
+			}
+			return request("GET", path+"?"+params.Encode(), nil)
+		case "get", "expire":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			method := "GET"
+			if action == "expire" {
+				method = "DELETE"
+			}
+			return request(method, path+"/"+url.PathEscape(*id), nil)
+		case "save", "preview":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(data, &fields) != nil || fields == nil {
+				return errors.New("silence file must be a JSON object")
+			}
+			if action == "preview" {
+				path += "/preview"
+			} else if *id != "" {
+				fields["id"], _ = json.Marshal(*id)
+			}
+			return request("POST", path, fields)
+		default:
+			return errors.New("silences requires list, get, save, expire or preview")
+		}
+	case "contacts":
+		path := "/api/v1/alerting/contact-points"
+		switch action {
+		case "list":
+			return request("GET", path, nil)
+		case "save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("contact point file must be JSON")
+			}
+			method := "POST"
+			if *id != "" {
+				method, path = "PUT", path+"/"+url.PathEscape(*id)
+			}
+			return request(method, path, json.RawMessage(data))
+		case "get", "test", "delete":
+			if *id == "" {
+				return errors.New("--id is required")
+			}
+			path += "/" + url.PathEscape(*id)
+			method := "GET"
+			if action == "test" {
+				method, path = "POST", path+"/test"
+			}
+			if action == "delete" {
+				method = "DELETE"
+			}
+			return request(method, path, nil)
+		default:
+			return errors.New("contacts requires list, get, save, test or delete")
+		}
+	case "notifications":
+		switch action {
+		case "groups":
+			return request("GET", "/api/v1/alerting/notification-groups", nil)
+		case "retry":
+			if deliveryID, err := strconv.ParseInt(*id, 10, 64); err != nil || deliveryID <= 0 {
+				return errors.New("retry requires a positive delivery --id")
+			}
+			return request("POST", "/api/v1/alerting/notifications/"+url.PathEscape(*id)+"/retry", nil)
+		case "list":
+			if *limit < 1 || *limit > 1000 {
+				return errors.New("notifications --limit must be 1–1000")
+			}
+			return request("GET", "/api/v1/alerting/notifications?limit="+strconv.Itoa(*limit), nil)
+		case "policy":
+			return request("GET", "/api/v1/alerting/notification-policy", nil)
+		case "policy-save":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("notification policy file must be JSON")
+			}
+			return request("PUT", "/api/v1/alerting/notification-policy", json.RawMessage(data))
+		default:
+			return errors.New("notifications requires list, retry, policy, policy-save or groups")
+		}
 	case "targets":
 		switch action {
 		case "catalog":
@@ -756,6 +966,22 @@ func run(args []string) error {
 		}
 	case "dashboards":
 		switch action {
+		case "layout", "queries", "panels", "annotation-queries", "variables":
+			if *id == "" || *dashboardRevision <= 0 {
+				return fmt.Errorf("%s requires --id and positive --revision", action)
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return fmt.Errorf("%s file must be JSON", action)
+			}
+			resource := action
+			if action == "annotation-queries" {
+				resource = "annotations"
+			}
+			return request("PATCH", "/api/v1/dashboards/"+url.PathEscape(*id)+"/"+resource, json.RawMessage(data))
 		case "history", "version", "version-export", "compare", "restore":
 			if *id == "" {
 				return errors.New("--id is required")
@@ -992,7 +1218,7 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 	if c.disableProvenance {
 		req.Header.Set("X-Disable-Provenance", "true")
 	}
-	if c.dashboardRevision > 0 && method == "PUT" && strings.HasPrefix(path, "/api/v1/dashboards/") {
+	if c.dashboardRevision > 0 && (method == "PUT" || method == "PATCH") && strings.HasPrefix(path, "/api/v1/dashboards/") {
 		req.Header.Set("If-Match", strconv.FormatInt(c.dashboardRevision, 10))
 	}
 	if c.dashboardMessage != "" && (strings.HasPrefix(path, "/api/v1/dashboards") || path == "/api/v1/import/grafana") {
@@ -1167,7 +1393,7 @@ func schema() any {
 	result["commands"] = append(result["commands"].([]string), "alerts preview --file FILE|- [--at UNIX_MS] (read-only graph or native rule; partial errors retain frames and exit 1)")
 	routes["PUT"] = append(routes["PUT"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
 	routes["DELETE"] = append(routes["DELETE"], "/api/v1/alerts/rules/{uid}", "/api/v1/provisioning/alert-rules/{uid}")
-	result["alerting"] = map[string]any{"conditions": []string{"presence (returned samples fire, including zero)", "nonzero (boolean expressions)"}, "states": []string{"Normal", "Pending", "Firing", "Recovering", "NoData", "Error"}, "durability": "SQLite WAL control-plane state, timers and last 100000 transitions survive restarts", "limits": map[string]int{"rules": 1000, "instances_per_query": 1000, "concurrent_evaluations": 4}, "notifications": "external notification delivery is not yet implemented"}
+	result["alerting"] = map[string]any{"conditions": []string{"presence (returned samples fire, including zero)", "nonzero (boolean expressions)"}, "states": []string{"Normal", "Pending", "Firing", "Recovering", "NoData", "Error"}, "durability": "SQLite WAL control-plane state, timers and last 100000 transitions survive restarts", "limits": map[string]int{"rules": 1000, "instances_per_query": 1000, "concurrent_evaluations": 4}, "notifications": "webhook contact points, policy/per-rule routing and durable firing/resolved delivery with bounded retries"}
 	result["alert_recovery"] = map[string]any{"model": "threshold.conditions[0].unloadEvaluator; only allowed on the alert condition", "evaluation": "query-label fingerprints choose loading versus inverted recovery predicate; Pending/Firing with empty reason are loaded; Recovering/Normal/NoData/Error and policy reasons use loading", "durability": "runtime.instances[].result_fingerprint persists raw query identity independently of configured labels; pending/recovery timers survive restart", "queries": "loadedFingerprints decimal uint64 strings; legacy fingerprints v1 loadedDimensions frames accepted; a new list takes precedence", "provisioning": "stored models remain unchanged; alert evaluation overrides client-provided cached dimensions using persisted state", "boundaries": "all comparison/range operators; strict or inclusive boundaries follow the selected evaluator; nullable inputs remain no-data", "agent": "alerts save --file examples/alerts/graph-recovery-memory.json; get/evaluate/history and Grafana group reconciliation"}
 	result["alert_templates"] = map[string]any{"variables": []string{"$labels: query labels plus pinned reserved alertname/folder context; excludes configured rule labels", "$values: numeric captures by RefID; range frames excluded; exact/subset/superset label matches", "$value: numeric when exactly one datasource capture, otherwise stable evaluation string"}, "classic": "only indexed classic matches K0/K1/etc with labels and nullable values; condition query labels are removed", "functions": "upstream Prometheus text functions plus Grafana filterLabels/filterLabelsRe/removeLabels/removeLabelsRe/mergeLabelValues/graphLink/tableLink; query() is a no-op", "durability": "rendered instance annotations, template warnings and transition annotations persist; original templates retained in rule definitions", "errors": "parse/runtime/budget errors retain original field text and add template_errors; alert truth and health are unchanged", "limits": map[string]int{"label_bytes": 512, "annotation_bytes": 4096, "steps_per_field": 50000, "capture_work": 2000000}, "links": "externalURL/pathPrefix use serve --root-url or METRICSPANEL_ROOT_URL", "agent": "alerts save/import-grafana and get/evaluate/history expose templates and rendered values; examples/alerts/template-memory.json", "editor": "English/Chinese per-instance summary/description and expandable template warnings"}
 	groupPath := "/api/v1/provisioning/folder/{folder}/rule-groups/{group}"
@@ -1176,7 +1402,7 @@ func schema() any {
 	}
 	result["commands"] = append(result["commands"].([]string), "alerts group-get --folder-uid UID --group NAME", "alerts group-save --folder-uid UID --group NAME --file FILE|- [--disable-provenance]", "alerts group-delete --folder-uid UID --group NAME")
 	result["alert_groups"] = map[string]any{"contract": "Grafana provisioning GET/PUT/DELETE; URL folder/name override payload; interval 5–86400 seconds; at most 1000 total rules", "replacement": "all rules replace atomically; omitted/null rules only update interval; explicit [] clears group; removed rules retain transition history and annotations", "state": "identical PUT and GET/PUT preserve versions and runtime; interval/order/provenance/move changes retain pending timers; evaluation changes reset state", "ordering": "array order survives restart; moving a UID normalizes its source group", "concurrency": "single-rule mutations serialized with group writes; every affected UID gate acquired together; any active affected evaluation returns HTTP 409 before writing", "provenance": "X-Disable-Provenance header or CLI --disable-provenance sets all rules editable; provenance is metadata and does not restrict native edits", "agent": "examples/alerts/grafana-group.json; use returned UIDs for idempotent reconciliation; group-delete returns JSON null for HTTP 204", "pending": []string{"folder and organization permission management", "App Platform rule APIs", "group provisioning file-format export"}}
-	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions", "SQL over backend frames"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese visual graph, backend SDK QueryEditor with UnifiedAlerting context, six expression operations, per-query windows, reorder/delete, raw JSON and lossless opaque models; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"external notifications and Alertmanager", "remaining Grafana core datasource editors"}}
+	result["alert_graphs"] = map[string]any{"execution": "grafana; empty expr, nonzero condition; raw grafana.condition/data graph persisted", "sources": "configured Prometheus, built-in Grafana and installed backend SDK datasources; existence/backend checked before save", "expressions": []string{"math with multiple references and SDK label joins", "reduce including dropNN/replaceNN", "resample", "threshold", "compound classic_conditions", "SQL over backend frames"}, "time": "scheduled timestamp frozen for every query; individual relativeTimeRange from/to offsets; 31-day maximum", "headers": []string{"FromAlert=true", "X-Cache-Skip=true", "X-Grafana-Org-Id=1"}, "state": "single/multiple numeric frames; nullable values apply per-instance no-data policy; datasource NoData takes priority; nonzero NaN/Inf follow Grafana truth and persist value_text safely", "matches": "classic match diagnostics persisted in runtime.instances[].matches; maximum 1 MiB per frame", "recording": "finite graph results are ingested atomically; missing values skipped; nonfinite values return a recording error", "agent": "alerts save --file examples/alerts/graph-memory.json; alerts import-grafana --file FILE; GET output can be saved with current version", "editor": "English/Chinese visual graph, backend SDK QueryEditor with UnifiedAlerting context, six expression operations, per-query windows, reorder/delete, raw JSON and lossless opaque models; native PromQL conversion discards stale graphs", "compatibility": "existing rules without execution=grafana retain their PromQL evaluation path", "pending": []string{"notification grouping/repeats, silences, mute timings and remaining Alertmanager APIs", "remaining Grafana core datasource editors"}}
 	result["alert_preview"] = map[string]any{"api": "POST /api/v1/alerts/preview with grafana graph and optional at Unix milliseconds; 0 uses server time", "output": "per-RefID SDK frames/errors, condition_values with labels/value/missing/satisfied and optional condition_error; NaN/Inf use null value plus value_text", "capacity": "shares four evaluation slots with scheduler; queued/active requests cancel, maximum 20 seconds", "state": "no rule identity, persistence, history, timer advance, annotations, notifications or recording writes; recovery thresholds use fresh dimensions", "agent": "alerts preview --file FILE|- [--at UNIX_MS]; native grafana rule or provisioning graph; JSON frames retained and exit 1 on partial errors"}
 	result["pattern_analysis"] = map[string]any{"dimensions": 64, "normalizations": []string{"shape", "raw"}, "distance": "L2 (smaller is closer; not a probability)", "capture_min_coverage": 0.75, "max_gap_buckets": 8, "capture_max_series": 200, "search_limit": 100, "sqlite": "exact scan, at most 50000 filtered vectors", "clickhouse": "persistent HNSW; --exact disables approximate indexing", "idempotency": "content-addressed immutable windows; explicit start/end make repeat capture reproducible"}
 	result["commands"] = append(result["commands"].([]string), "plugins list", "plugins get --id ID", "plugins install --file PACKAGE.zip", "plugins catalog --id ID --plugin-version EXACT", "plugins enable --id ID", "plugins disable --id ID", "plugins delete --id PACKAGE_ID", "datasources list", "datasources get --id UID", "datasources save --file FILE|- [--id UID] (update requires version)", "datasources health --id UID", "datasources delete --id UID")
@@ -1264,5 +1490,6 @@ func schema() any {
 	result["annotations"].(map[string]any)["datasource_queries"] = map[string]any{"sdk": []string{"AnnotationSupport.getDefaultQuery", "prepareAnnotation", "prepareQuery", "processEvents", "legacy annotationQuery"}, "standard": "SDK merge plus case-insensitive field, constant text and skip mappings; comma-separated tags; legacy string migration", "request": "actual panel TimeRange, timezone, variable datasource UID, ScopedVars with interval/from/to/range and __annotation", "lifecycle": "observable streaming updates, named isolated errors, refcounted shared subscriptions, HTTP/gRPC cancellation on unmount; late legacy promises ignored", "identity": "native IDs and each external datasource namespace remain separate; external records are read-only and not ingested", "agent": "annotations list reads native storage; datasources query reads prepared raw frames; frontend SDK callbacks execute in browser", "limits": map[string]int{"idle_seconds": 60, "frame_rows": 10000, "events_per_query": 1000, "cache_entries": 200}}
 	result["annotations"].(map[string]any)["configuration_editor"] = map[string]any{"sdk": "AnnotationSupport.QueryEditor before components.QueryEditor; official datasource context, range and preview PanelData; onChange, onAnnotationChange and onRunQuery", "native": "optional dashboard annotations array; 32 queries and 128 KiB in SQLite extras; absent uses builtin defaults, [] disables all; retained by dashboard CLI save/export", "templates": "classic/V1/V2 original envelopes and unknown fields retained; unmodified V2 query resources unchanged", "controls": "datasource, enable, color, ordering, panel filters, builtin tags, PromQL, standard event mappings and advanced JSON", "preview": "actual datasource frames and events; 60 second idle timeout; cancellation on stop or unmount", "save": "cancel/preview do not write; detected version changes since opening require reopening"}
 	result["annotations"].(map[string]any)["time_regions"] = map[string]any{"query": "builtin target.queryType timeRegions plus target.timeRegion; native/classic/V1/V2", "editor": "Chinese/English weekday/time or advanced Cron, timezone and duration; real preview", "parser": "Croner 9.1.0 as pinned by Grafana 13.2.3; five/six fields, names, L and #", "timezone": "browser/utc/IANA; omitted uses browser; new queries default to dashboard timezone; starts follow DST, SDK-converted duration is added as fixed milliseconds", "window": "actual panel range; full overlapping regions preserved; end equal to lower bound excluded, start equal to upper bound included", "limits": map[string]int{"regions_per_query": 1000}, "events": "namespaced read-only native bands and SDK time/timeEnd/text annotation frames; never persisted", "agent": "dashboard save/export preserves configuration; annotations list reads stored records only; recurrence executes in browser"}
+	addMonitoringWorkflowsSchema(result, routes)
 	return result
 }

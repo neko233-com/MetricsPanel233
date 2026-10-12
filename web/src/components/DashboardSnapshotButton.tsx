@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { Dialog } from "./Dialog";
 import type { TimeSelection } from "../grafana/time-range";
 import type { SnapshotPanel } from "../grafana/dashboard-snapshot";
+import { panelPosition } from "../grafana/layout";
 
 export function DashboardSnapshotButton({
   dashboard,
@@ -63,10 +64,7 @@ export function DashboardSnapshotButton({
                   dashboard.panels.map((panel, index) => ({
                     panel,
                     values: {},
-                    x: (index % 2) * 12,
-                    y: Math.floor(index / 2) * 10,
-                    w: 12,
-                    h: 10,
+                    ...panelPosition(panel, index),
                   }));
                 const snapshot = await captureDashboardSnapshot(
                   dashboard,

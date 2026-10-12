@@ -17,11 +17,20 @@ import {
   dashboardUID,
 } from "../api";
 import { t, getLocale } from "../i18n";
-import { queryValues, variableOptions } from "../grafana/variables";
+import { queryValues } from "../grafana/variables";
+import {
+  DashboardVariableBar,
+  DashboardVariablesButton,
+  useDashboardVariables,
+} from "../components/DashboardVariables";
+import { DashboardVariablesEditor } from "../components/DashboardVariablesEditor";
 import { layoutPanels } from "../grafana/layout";
 import { DashboardSnapshotButton } from "../components/DashboardSnapshotButton";
 import { DashboardHistoryButton } from "../components/DashboardHistoryButton";
-import type { VariableValues } from "../grafana/engine";
+import {
+  DashboardLayoutButton,
+  DashboardLayoutEditor,
+} from "./DashboardLayoutEditor";
 import type { FrameUpdate } from "../grafana/engine";
 import type { PluginExtensionPanelContext } from "@grafana/data";
 import { LoadingState } from "@grafana/data";
@@ -40,24 +49,6 @@ const PanelQueriesEditor = lazy(() =>
     default: module.PanelQueriesEditor,
   })),
 );
-function selectedVariables(
-  variables: Dashboard["variables"],
-  params: URLSearchParams,
-): VariableValues {
-  return Object.fromEntries(
-    (variables || []).map((variable) => {
-      const selected = params.getAll(`var-${variable.name}`);
-      if (selected.length)
-        return [variable.name, variable.multi ? selected : selected[0]];
-      const current =
-        variable.current ||
-        variable.options[0] ||
-        (variable.include_all ? "$__all" : "");
-      return [variable.name, variable.multi ? current.split("|") : current];
-    }),
-  );
-}
-
 function PanelCell({
   panel,
   values,
@@ -181,89 +172,23 @@ export function TemplateView({
   onRefreshChoice: (value: string) => void;
   reload: () => Promise<void>;
 }) {
-  const variables = dashboard.variables || [];
+  const variableState = useDashboardVariables(dashboard, range, tick);
+  const { variables, values, effective, error } = variableState;
+  const options = Object.fromEntries(
+    Object.entries(variableState.choices).map(([name, choices]) => [
+      name,
+      choices.map((choice) => choice.value),
+    ]),
+  );
+  const key = JSON.stringify(values);
+  const [editingVariables, setEditingVariables] = useState(false);
   const [editingQueries, setEditingQueries] = useState(false);
+  const [editingLayout, setEditingLayout] = useState(false);
   const [exporting, setExporting] = useState(false),
     [exportError, setExportError] = useState("");
-  const [values, setValues] = useState<VariableValues>(() =>
-    selectedVariables(variables, new URLSearchParams(location.search)),
-  );
-  useEffect(() => {
-    const restore = () =>
-      setValues(
-        selectedVariables(variables, new URLSearchParams(location.search)),
-      );
-    window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
-  }, [dashboard.id, JSON.stringify(variables)]);
-  const [options, setOptions] = useState<Record<string, string[]>>({}),
-    [error, setError] = useState("");
-  const key = JSON.stringify(values),
-    effective = useMemo(
-      () => queryValues(values, variables),
-      [key, dashboard.id],
-    );
-  useEffect(() => {
-    let active = true;
-    void import("../grafana/plugin-runtime").then((runtime) => {
-      if (active) runtime.setPluginVariables(effective, range, variables);
-    });
-    return () => {
-      active = false;
-    };
-  }, [key, range, dashboard.id, JSON.stringify(variables)]);
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    for (const [name, value] of Object.entries(values)) {
-      params.delete(`var-${name}`);
-      for (const choice of Array.isArray(value) ? value : [value])
-        params.append(`var-${name}`, choice);
-    }
-    history.replaceState(
-      history.state,
-      "",
-      `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`,
-    );
-  }, [key]);
-  useEffect(() => {
-    const controller = new AbortController();
-    void Promise.all(
-      variables.map(
-        async (v) =>
-          [
-            v.name,
-            await variableOptions(v, effective, range, controller.signal),
-          ] as const,
-      ),
-    )
-      .then((entries) => {
-        setOptions(Object.fromEntries(entries));
-        setError("");
-        setValues((old) => {
-          const next = { ...old };
-          let changed = false;
-          for (const [name, choices] of entries)
-            if (
-              (!next[name] ||
-                (Array.isArray(next[name]) && !next[name].length)) &&
-              choices.length
-            ) {
-              next[name] = variables.find((v) => v.name === name)?.multi
-                ? [choices[0]]
-                : choices[0];
-              changed = true;
-            }
-          return changed ? next : old;
-        });
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(message(e));
-      });
-    return () => controller.abort();
-  }, [dashboard.id, key, range]);
   const panels = useMemo(
     () => layoutPanels(dashboard.panels, values, options),
-    [dashboard.panels, key, options],
+    [dashboard.panels, key, JSON.stringify(options)],
   );
   const extensionDashboard = useMemo(() => {
     const original = dashboard.grafana as
@@ -298,12 +223,21 @@ export function TemplateView({
           </p>
         </div>
         <div className="toolbar">
+          <DashboardVariablesButton onClick={() => setEditingVariables(true)} />
+          <DashboardLayoutButton
+            disabled={!dashboard.panels.length}
+            onClick={() => setEditingLayout(true)}
+          />
           <DashboardHistoryButton dashboard={dashboard} reload={reload} />
           <DashboardSnapshotButton
             dashboard={dashboard}
             panels={panels.map((entry) => ({
               ...entry,
-              values: queryValues(entry.values, variables),
+              values: queryValues(
+                entry.values,
+                variables,
+                variableState.choices,
+              ),
             }))}
             range={range}
             reload={reload}
@@ -353,63 +287,7 @@ export function TemplateView({
           </button>
         </div>
       </div>
-      {!!variables.length && (
-        <div className="template-variables">
-          {variables
-            .filter(
-              (v) =>
-                v.type !== "constant" &&
-                v.config?.hide !== 2 &&
-                v.config?.hide !== "hideVariable",
-            )
-            .map((v) => (
-              <label key={v.name}>
-                {v.config?.label || v.name}
-                {v.type === "textbox" ? (
-                  <input
-                    aria-label={v.name}
-                    value={String(values[v.name] || "")}
-                    onChange={(e) =>
-                      setValues((old) => ({ ...old, [v.name]: e.target.value }))
-                    }
-                  />
-                ) : (
-                  <select
-                    aria-label={v.name}
-                    multiple={v.multi}
-                    value={
-                      v.multi
-                        ? Array.isArray(values[v.name])
-                          ? values[v.name]
-                          : [String(values[v.name] || "")]
-                        : String(values[v.name] || "")
-                    }
-                    onChange={(e) =>
-                      setValues((old) => ({
-                        ...old,
-                        [v.name]: v.multi
-                          ? Array.from(e.target.selectedOptions).map(
-                              (o) => o.value,
-                            )
-                          : e.target.value,
-                      }))
-                    }
-                  >
-                    {v.include_all && (
-                      <option value="$__all">{t("All")}</option>
-                    )}
-                    {(options[v.name] || v.options).map((value) => (
-                      <option key={value} value={value}>
-                        {v.config?.options?.find((o) => o.value === value)
-                          ?.text || value}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </label>
-            ))}
-        </div>
-      )}
+      <DashboardVariableBar state={variableState} />
       {(exportError || error) && (
         <p className="form-error" role="alert">
           {exportError || error}
@@ -417,24 +295,34 @@ export function TemplateView({
       )}
       <div className="grafana-grid">
         <Suspense fallback={<p>{t("Loading metrics…")}</p>}>
-          {panels.map(({ panel, values: scoped, x, y, w, h }) => (
-            <PanelCell
-              key={panel.id}
-              style={{
-                gridColumn: `${x + 1} / span ${w}`,
-                gridRow: `${y + 1} / span ${h}`,
-              }}
-              panel={panel}
-              values={queryValues(scoped, variables)}
-              range={range}
-              onRange={onRange}
-              tick={tick}
-              dashboard={extensionDashboard}
-              annotationDashboard={dashboard}
-            />
-          ))}
+          {variableState.ready &&
+            panels.map(({ panel, values: scoped, x, y, w, h }) => (
+              <PanelCell
+                key={panel.id}
+                style={{
+                  gridColumn: `${x + 1} / span ${w}`,
+                  gridRow: `${y + 1} / span ${h}`,
+                }}
+                panel={panel}
+                values={queryValues(scoped, variables, variableState.choices)}
+                range={range}
+                onRange={onRange}
+                tick={tick}
+                dashboard={extensionDashboard}
+                annotationDashboard={dashboard}
+              />
+            ))}
         </Suspense>
       </div>
+      {editingVariables && (
+        <DashboardVariablesEditor
+          dashboard={dashboard}
+          range={range}
+          values={values}
+          reload={reload}
+          onClose={() => setEditingVariables(false)}
+        />
+      )}
       {editingQueries ? (
         <Suspense fallback={<p role="status">{t("Loading…")}</p>}>
           <PanelQueriesEditor
@@ -445,6 +333,13 @@ export function TemplateView({
             onClose={() => setEditingQueries(false)}
           />
         </Suspense>
+      ) : null}
+      {editingLayout ? (
+        <DashboardLayoutEditor
+          dashboard={dashboard}
+          reload={reload}
+          onClose={() => setEditingLayout(false)}
+        />
       ) : null}
     </>
   );

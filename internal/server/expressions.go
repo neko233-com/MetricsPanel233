@@ -24,11 +24,13 @@ func (s *Server) expressionSourceQuery(ctx context.Context, uid string, queries 
 		return nil, "", err
 	}
 	response := backend.Responses{}
-	if ds.Type == "prometheus" || ds.Type == "grafana" {
+	if ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
 		for _, q := range queries {
 			var frames data.Frames
 			var err error
-			if ds.Type == "prometheus" {
+			if isSQLSource(ds.Type) {
+				frames, err = s.querySQLSource(ctx, ds, q)
+			} else if ds.Type == "prometheus" {
 				frames, err = s.queryPrometheusSource(ctx, ds, q)
 			} else {
 				frames, err = s.queryGrafanaSource(ctx, q)

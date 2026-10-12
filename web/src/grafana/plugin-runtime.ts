@@ -12,6 +12,7 @@ import i18next from "i18next";
 import { registerOptionEditors } from "./option-editors";
 import { createLiveService } from "./live-runtime";
 import { grafanaMeta } from "./grafana-meta";
+import { isSQLDatasource } from "./sql-types";
 import { filterSourceSettings, resolveSourceSettings } from "./source-settings";
 import { isExpressionRef } from "./expression-ref";
 import { installAppEvents } from "./app-events";
@@ -70,6 +71,7 @@ let loggersInitialized = false;
 let sourceSettingsCore:
   | typeof import("metricspanel/sdk-source-settings")
   | undefined;
+let sqlSourceCore: typeof import("./sql-source") | undefined;
 let variableValues: InterpolationValues = {},
   variableRange: TimeSelection = "30m";
 let sources: DataSourceSettings[] = [];
@@ -327,6 +329,7 @@ async function init(): Promise<Runtime> {
       { ExpressionSource, expressionSettings },
       expressionCore,
       { GrafanaQueryEditor },
+      sqlSources,
     ] = await Promise.all([
       import("@grafana/runtime"),
       import("@grafana/ui"),
@@ -337,12 +340,14 @@ async function init(): Promise<Runtime> {
       import("./expression-source"),
       import("metricspanel/sdk-expression-source"),
       import("./GrafanaQueryEditor"),
+      import("./sql-source"),
     ]);
     if (!loggersInitialized) {
       logging.initializeLoggersRegistry();
       loggersInitialized = true;
     }
     sourceSettingsCore = sourceSettings;
+    sqlSourceCore = sqlSources;
     const expressionSource = new ExpressionSource(expressionSettings);
     expressionCore.setExpressionDataSourceInstance(expressionSource);
     sourceLoader.setDataSourcePluginImporter(async (meta) => {
@@ -353,6 +358,10 @@ async function init(): Promise<Runtime> {
       if (meta.id === "grafana")
         return new Data.DataSourcePlugin(LocalGrafana).setQueryEditor(
           GrafanaQueryEditor,
+        ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
+      if (isSQLDatasource(meta.id))
+        return new Data.DataSourcePlugin(sqlSources.LocalSQL).setQueryEditor(
+          sqlSources.SQLQueryEditor,
         ) as unknown as Data.DataSourcePlugin<Data.DataSourceApi>;
       return (await loadPlugin(meta.id))
         .plugin as Data.DataSourcePlugin<Data.DataSourceApi>;
@@ -365,15 +374,33 @@ async function init(): Promise<Runtime> {
     runtime.setGrafanaLiveSrv(createLiveService());
     runtime.setTemplateSrv({
       getVariables: () =>
-        Object.entries(variableValues).map(([name, value]) => ({
-          ...variableDefinitions.find((variable) => variable.name === name)
-            ?.config,
-          name,
-          type:
-            variableDefinitions.find((variable) => variable.name === name)
-              ?.type || "custom",
-          current: { value },
-        })) as Data.TypedVariableModel[],
+        Object.entries(variableValues).map(([name, value]) => {
+          const definition = variableDefinitions.find(
+            (variable) => variable.name === name,
+          );
+          return {
+            ...definition?.config,
+            name,
+            type: definition?.type || "custom",
+            multi: definition?.multi || false,
+            includeAll: definition?.include_all || false,
+            current: {
+              value,
+              text: Array.isArray(value)
+                ? value.map(
+                    (value) =>
+                      definition?.config?.options?.find(
+                        (option) => option.value === value,
+                      )?.text || value,
+                  )
+                : typeof value === "string"
+                  ? definition?.config?.options?.find(
+                      (option) => option.value === value,
+                    )?.text || value
+                  : value,
+            },
+          };
+        }) as Data.TypedVariableModel[],
       replace: (text = "", scoped, format) => {
         const values = { ...variableValues };
         for (const [name, v] of Object.entries(scoped || {}))
@@ -507,6 +534,8 @@ async function init(): Promise<Runtime> {
         } else if (settings.type === "grafana") {
           instance = new LocalGrafana(settings);
           instance.components = { QueryEditor: GrafanaQueryEditor };
+        } else if (isSQLDatasource(settings.type)) {
+          instance = new sqlSources.LocalSQL(settings);
         } else {
           const module = await loadPlugin(settings.type);
           const plugin =
@@ -599,9 +628,11 @@ async function reloadSources() {
               alerting: true,
               builtIn: false,
             }
-          : plugins.find((p) => p.id === ds.type)
-            ? pluginMeta(plugins.find((p) => p.id === ds.type)!)
-            : ds.meta,
+          : isSQLDatasource(ds.type)
+            ? sqlSourceCore!.sqlSourceMeta(ds.type)
+            : plugins.find((p) => p.id === ds.type)
+              ? pluginMeta(plugins.find((p) => p.id === ds.type)!)
+              : ds.meta,
     jsonData: ds.jsonData || {},
   }));
   sourceSettingsCore?.syncDataSourceInstanceSettings({

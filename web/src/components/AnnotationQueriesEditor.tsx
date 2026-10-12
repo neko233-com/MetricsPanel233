@@ -21,6 +21,7 @@ import {
 import { defer, from, map, of, timeout, type Subscription } from "rxjs";
 import {
   api,
+  ApiError,
   dashboardUID,
   jsonBody,
   message,
@@ -32,6 +33,7 @@ import { Dialog } from "./Dialog";
 import {
   readAnnotationDrafts,
   withAnnotationQueries,
+  rawAnnotationQueries,
   annotationSource,
   nativeAnnotationParams,
   validateAnnotationConfig,
@@ -52,7 +54,7 @@ import {
   setPluginVariables,
 } from "../grafana/plugin-runtime";
 
-type Draft = AnnotationDraft & { key: string };
+type Draft = AnnotationDraft & { key: string; originalIndex?: number };
 type Loaded = {
   datasource: DataSourceApi;
   settings: DataSourceInstanceSettings;
@@ -149,10 +151,13 @@ export default function AnnotationQueriesEditor({
   onClose: () => void;
 }) {
   const baseVersion = useRef(dashboard.updated_at);
+  const baseline = useRef(dashboard);
+  const originalQueries = useRef(rawAnnotationQueries(dashboard));
   const [drafts, setDrafts] = useState<Draft[]>(() =>
-    readAnnotationDrafts(dashboard).map((draft) => ({
+    readAnnotationDrafts(dashboard).map((draft, index) => ({
       ...draft,
       key: crypto.randomUUID(),
+      originalIndex: index < originalQueries.current.length ? index : undefined,
     })),
   );
   const [selected, select] = useState(drafts[0]?.key || "");
@@ -420,23 +425,36 @@ export default function AnnotationQueriesEditor({
           setError("");
           stop();
           try {
-            const latest = (await api<Dashboard[]>("/dashboards")).find(
-              (item) => item.id === dashboard.id,
+            const updated = withAnnotationQueries(baseline.current, drafts);
+            const queries = rawAnnotationQueries(updated);
+            await api(
+              `/dashboards/${encodeURIComponent(dashboard.id)}/annotations`,
+              {
+                method: "PATCH",
+                headers: { "If-Match": String(baseVersion.current) },
+                body: jsonBody({
+                  queries: drafts.map((draft, index) => ({
+                    originalIndex: draft.originalIndex,
+                    baseline:
+                      draft.originalIndex == null
+                        ? undefined
+                        : originalQueries.current[draft.originalIndex],
+                    query: queries[index],
+                  })),
+                }),
+              },
             );
-            if (!latest || latest.updated_at !== baseVersion.current)
-              throw new Error(
-                "Dashboard changed. Close and reopen this editor.",
-              );
-            const updated = withAnnotationQueries(latest, drafts);
-            await api(`/dashboards/${encodeURIComponent(dashboard.id)}`, {
-              method: "PUT",
-              body: jsonBody(updated),
-            });
             annotationsChanged();
             await reload();
             onClose();
           } catch (error) {
-            setError(t(message(error)));
+            setError(
+              t(
+                error instanceof ApiError && error.status === 409
+                  ? "Dashboard changed. Close and reopen this editor."
+                  : message(error),
+              ),
+            );
           } finally {
             setSaving(false);
           }

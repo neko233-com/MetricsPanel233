@@ -7,10 +7,23 @@ import {
 } from "../api";
 import type { VariableValues } from "./engine";
 import { resolveTimeRange, type TimeSelection } from "./time-range";
+import {
+  parseCustomChoices,
+  variableDefault,
+  variableOrder,
+  validSelection,
+  type VariableChoice,
+} from "./variable-model";
+const sameSourceType = (actual: string, wanted: string) =>
+  actual === wanted ||
+  [actual, wanted].every((type) =>
+    ["postgres", "grafana-postgresql-datasource"].includes(type),
+  );
 
 export function queryValues(
   values: VariableValues,
   variables: Variable[],
+  choices?: Record<string, VariableChoice[]>,
 ): InterpolationValues {
   return Object.fromEntries(
     variables.map((v) => {
@@ -19,18 +32,70 @@ export function queryValues(
         value === "$__all" ||
         (Array.isArray(value) && value.includes("$__all"))
       )
-        return [v.name, { raw: v.config?.allValue || ".*" }];
+        return [
+          v.name,
+          v.config?.allValue
+            ? { raw: v.config.allValue }
+            : (
+                choices?.[v.name] ||
+                (v.options || []).map((value) => ({ text: value, value }))
+              ).map((choice) => choice.value),
+        ];
       return [v.name, value ?? ""];
     }),
   );
 }
-export async function variableOptions(
+export async function variableChoices(
   variable: Variable,
   values: InterpolationValues,
   range: TimeSelection,
   signal: AbortSignal,
-): Promise<string[]> {
-  let result = variable.options;
+): Promise<VariableChoice[]> {
+  signal.throwIfAborted();
+  let result = variable.options || [];
+  let labels = new Map(
+    (variable.config?.options || []).map((option) => [
+      String(option.value),
+      String(option.text),
+    ]),
+  );
+  if (variable.type === "custom" || variable.type === "interval") {
+    const parsed = parseCustomChoices(
+      interpolate(variable.query, values, range),
+    );
+    result = parsed.map((choice) => choice.value);
+    labels = new Map(parsed.map((choice) => [choice.value, choice.text]));
+    if (variable.type === "interval" && variable.config?.auto) {
+      const { start, end } = resolveTimeRange(range);
+      const count = Math.max(1, Number(variable.config.auto_count) || 30);
+      const min = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/.exec(
+        variable.config.auto_min || "10s",
+      );
+      const scale = {
+        ms: 1,
+        s: 1000,
+        m: 60000,
+        h: 3600000,
+        d: 86400000,
+        w: 604800000,
+      };
+      const floor = min
+        ? Number(min[1]) * scale[min[2] as keyof typeof scale]
+        : 10000;
+      const auto = `${Math.max(1, Math.ceil(Math.max(floor, (end - start) / count) / 1000))}s`;
+      result.unshift(auto);
+      labels.set(auto, `Auto (${auto})`);
+    }
+  }
+  if (variable.type === "constant" || variable.type === "textbox") {
+    const value = interpolate(
+      variable.query || String(variableDefault(variable)),
+      values,
+      range,
+    );
+    result = [value];
+    labels.set(value, value);
+  }
   if (variable.type === "datasource") {
     const sources = await api<{ uid: string; name: string; type: string }[]>(
       "/api/datasources",
@@ -50,10 +115,15 @@ export async function variableOptions(
     result = sources
       .filter(
         (source) =>
-          (!type || source.type === type) &&
+          (!type ||
+            source.type === type ||
+            [source.type, type].every((value) =>
+              ["postgres", "grafana-postgresql-datasource"].includes(value),
+            )) &&
           (!regex || regex.test(source.name)),
       )
       .map((source) => source.uid);
+    labels = new Map(sources.map((source) => [source.uid, source.name]));
   }
   if (variable.type === "query") {
     let prefix = "/prometheus";
@@ -77,11 +147,13 @@ export async function variableOptions(
                 source.isDefault &&
                 (typeof ref === "string" ||
                   !ref.type ||
-                  source.type === ref.type),
+                  sameSourceType(source.type, ref.type)),
             ) ||
             sources.find(
               (source) =>
-                typeof ref === "object" && ref.type && source.type === ref.type,
+                typeof ref === "object" &&
+                ref.type &&
+                sameSourceType(source.type, ref.type),
             );
       if (!source)
         throw new Error(
@@ -120,11 +192,24 @@ export async function variableOptions(
         );
         signal.throwIfAborted();
         result = options.map((option) => String(option.value ?? option.text));
+        labels = new Map(
+          options.map((option) => [
+            String(option.value ?? option.text),
+            String(option.text ?? option.value),
+          ]),
+        );
       }
     }
     if (prometheusQuery) {
       const { start, end } = resolveTimeRange(range);
-      const query = interpolate(variable.query, values, range),
+      const model = variable.config?.query;
+      const raw =
+        typeof model === "string"
+          ? model
+          : model && typeof model === "object"
+            ? String((model as Record<string, unknown>).query || variable.query)
+            : variable.query;
+      const query = interpolate(raw, values, range),
         params = new URLSearchParams({
           start: String(start / 1000),
           end: String(end / 1000),
@@ -176,15 +261,33 @@ export async function variableOptions(
         );
     }
   }
+  let choices = result.map((value) => ({
+    value: String(value),
+    text: labels.get(String(value)) ?? String(value),
+  }));
   if (variable.type !== "datasource" && variable.config?.regex) {
     const raw = interpolate(variable.config.regex, values, range);
     const pattern = raw.startsWith("/")
       ? raw.slice(1, raw.lastIndexOf("/"))
       : raw;
     const regex = new RegExp(pattern);
-    result = result.flatMap((value) => {
-      const match = regex.exec(value);
-      return match ? [match.groups?.value || match[1] || match[0]] : [];
+    choices = choices.flatMap((choice) => {
+      regex.lastIndex = 0;
+      const match = regex.exec(
+        variable.config?.regexApplyTo === "text" ? choice.text : choice.value,
+      );
+      if (!match) return [];
+      if (match.groups?.text || match.groups?.value)
+        return [
+          {
+            text: match.groups.text || choice.text,
+            value: match.groups.value || choice.value,
+          },
+        ];
+      const captured = match[1];
+      return [
+        { value: captured || choice.value, text: captured || choice.text },
+      ];
     });
   }
   const sort = variable.config?.sort;
@@ -199,8 +302,8 @@ export async function variableOptions(
       "naturalAsc",
       "naturalDesc",
     ].includes(sort);
-    result = [...result].sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric, sensitivity: "base" }),
+    choices = [...choices].sort((a, b) =>
+      a.text.localeCompare(b.text, undefined, { numeric, sensitivity: "base" }),
     );
     if (
       [
@@ -214,7 +317,50 @@ export async function variableOptions(
         "naturalDesc",
       ].includes(sort)
     )
-      result.reverse();
+      choices.reverse();
   }
-  return [...new Set(result)];
+  signal.throwIfAborted();
+  return [...new Map(choices.map((choice) => [choice.value, choice])).values()];
+}
+
+export async function variableOptions(
+  variable: Variable,
+  values: InterpolationValues,
+  range: TimeSelection,
+  signal: AbortSignal,
+): Promise<string[]> {
+  return (await variableChoices(variable, values, range, signal)).map(
+    (choice) => choice.value,
+  );
+}
+
+export async function resolveVariables(
+  variables: Variable[],
+  requested: VariableValues,
+  range: TimeSelection,
+  signal: AbortSignal,
+  load = variableChoices,
+) {
+  const values: VariableValues = {},
+    choices: Record<string, VariableChoice[]> = {};
+  for (const variable of variableOrder(variables)) {
+    signal.throwIfAborted();
+    choices[variable.name] = await load(
+      variable,
+      queryValues(values, variables, choices),
+      range,
+      signal,
+    );
+    signal.throwIfAborted();
+    values[variable.name] = validSelection(
+      variable,
+      requested[variable.name] ?? variableDefault(variable),
+      choices[variable.name],
+    );
+  }
+  return {
+    values,
+    choices,
+    effective: queryValues(values, variables, choices),
+  };
 }

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type KeyboardEvent } from "react";
 import {
   Bell,
   ChevronDown,
@@ -19,6 +19,7 @@ import {
   type Metric,
 } from "../api";
 import { Dialog } from "../components/Dialog";
+import { NotificationSettings } from "./NotificationSettings";
 import { getLocale, t } from "../i18n";
 import {
   validateAlertEditorGraph,
@@ -59,6 +60,7 @@ type Rule = {
   annotations: Labels;
   paused: boolean;
   record?: string;
+  notification_receiver?: string;
   folder_uid: string;
   group: string;
   version: number;
@@ -129,6 +131,19 @@ export function Alerts({
     [busy, setBusy] = useState<string | null>(null),
     [filter, setFilter] = useState("all"),
     [loaded, setLoaded] = useState(false);
+  const [section, setSection] = useState<"rules" | "notifications">("rules");
+  function moveSection(event: KeyboardEvent<HTMLButtonElement>) {
+    const next = ["ArrowLeft", "Home"].includes(event.key)
+      ? "rules"
+      : ["ArrowRight", "End"].includes(event.key)
+        ? "notifications"
+        : null;
+    if (next) {
+      event.preventDefault();
+      setSection(next);
+      document.getElementById(`alert-${next}-tab`)?.focus();
+    }
+  }
   const reload = () => setRevision((v) => v + 1);
   useEffect(() => {
     const controller = new AbortController();
@@ -207,342 +222,395 @@ export function Alerts({
             )}
           </p>
         </div>
-        <button className="primary" onClick={() => setEditor("new")}>
-          <Plus size={18} />
-          {t("Create alert")}
+        {section === "rules" && (
+          <button className="primary" onClick={() => setEditor("new")}>
+            <Plus size={18} />
+            {t("Create alert")}
+          </button>
+        )}
+      </div>
+      <div
+        className="alert-workspace-tabs"
+        role="tablist"
+        aria-label={getLocale() === "zh" ? "告警管理" : "Alert management"}
+      >
+        <button
+          role="tab"
+          id="alert-rules-tab"
+          tabIndex={section === "rules" ? 0 : -1}
+          aria-selected={section === "rules"}
+          aria-controls="alert-rules-panel"
+          onKeyDown={moveSection}
+          onClick={() => setSection("rules")}
+        >
+          {t("Alert rules")}
+        </button>
+        <button
+          role="tab"
+          id="alert-notifications-tab"
+          tabIndex={section === "notifications" ? 0 : -1}
+          aria-selected={section === "notifications"}
+          aria-controls="alert-notifications-panel"
+          onKeyDown={moveSection}
+          onClick={() => setSection("notifications")}
+        >
+          {getLocale() === "zh" ? "通知" : "Notifications"}
         </button>
       </div>
-      <div className="alert-summary">
-        {[
-          { label: "Rules", value: rules.length, style: "" },
-          {
-            label: "Firing instances",
-            value: counts.firing,
-            style: counts.firing ? "danger" : "",
-          },
-          {
-            label: "Pending instances",
-            value: counts.pending,
-            style: "warning",
-          },
-          { label: "Paused rules", value: counts.paused, style: "" },
-        ].map((v) => (
-          <div key={v.label} className={`alert-summary-card ${v.style}`}>
-            <span>{t(v.label)}</span>
-            <strong>{v.value}</strong>
-          </div>
-        ))}
-      </div>
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-      <section className="list-panel alert-rules">
-        <div className="section-heading">
-          <h2>
-            <Bell size={18} />
-            {t("Alert rules")}
-            <span>{rules.length}</span>
-          </h2>
-          <div className="alert-filters" aria-label={t("Filter rules")}>
-            {["all", "firing", "paused"].map((v) => (
-              <button
-                key={v}
-                className={filter === v ? "active" : ""}
-                onClick={() => setFilter(v)}
-              >
-                {t(v === "all" ? "All" : v === "firing" ? "Firing" : "Paused")}
-              </button>
+      {section === "notifications" ? (
+        <div
+          role="tabpanel"
+          id="alert-notifications-panel"
+          aria-labelledby="alert-notifications-tab"
+        >
+          <NotificationSettings tick={tick} notify={notify} />
+        </div>
+      ) : (
+        <div
+          role="tabpanel"
+          id="alert-rules-panel"
+          aria-labelledby="alert-rules-tab"
+        >
+          <div className="alert-summary">
+            {[
+              { label: "Rules", value: rules.length, style: "" },
+              {
+                label: "Firing instances",
+                value: counts.firing,
+                style: counts.firing ? "danger" : "",
+              },
+              {
+                label: "Pending instances",
+                value: counts.pending,
+                style: "warning",
+              },
+              { label: "Paused rules", value: counts.paused, style: "" },
+            ].map((v) => (
+              <div key={v.label} className={`alert-summary-card ${v.style}`}>
+                <span>{t(v.label)}</span>
+                <strong>{v.value}</strong>
+              </div>
             ))}
           </div>
-        </div>
-        {!loaded && !error ? (
-          <div className="empty-workspace">{t("Loading rules…")}</div>
-        ) : shown.length === 0 ? (
-          <div className="empty-workspace">
-            <Bell size={32} />
-            <h2>
-              {t(
-                rules.length
-                  ? "No rules match this filter"
-                  : "No alert rules yet",
-              )}
-            </h2>
-            <p>
-              {t(
-                "Watch an exporter, service or metric with a single PromQL condition.",
-              )}
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
             </p>
-            {rules.length === 0 && (
-              <button className="primary" onClick={() => setEditor("new")}>
-                {t("Create alert")}
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="alert-rule-list">
-            {shown.map((rule) => {
-              const states = rule.runtime.instances;
-              const state = rule.paused
-                ? "Paused"
-                : states.some((v) => firing(v.state))
-                  ? "Firing"
-                  : states.some((v) => v.state === "Pending")
-                    ? "Pending"
-                    : rule.runtime.last_evaluation
-                      ? "Normal"
-                      : "Not evaluated";
-              return (
-                <article key={rule.uid} className="alert-rule">
-                  <div className="alert-rule-row">
-                    <button
-                      className="alert-rule-title"
-                      onClick={() =>
-                        setExpanded(expanded === rule.uid ? null : rule.uid)
-                      }
-                      aria-expanded={expanded === rule.uid}
-                    >
-                      {expanded === rule.uid ? (
-                        <ChevronDown size={17} />
-                      ) : (
-                        <ChevronRight size={17} />
-                      )}
-                      <div>
-                        <strong>{rule.title}</strong>
-                        <code>
-                          {rule.execution === "grafana"
-                            ? t("Grafana query graph")
-                            : rule.expr}
-                        </code>
-                      </div>
-                    </button>
-                    <div className="alert-rule-status">
-                      <span className={`status ${stateClass(state)}`}>
-                        <i />
-                        {stateText(state)}
-                      </span>
-                      <small>
-                        {rule.runtime.last_evaluation
-                          ? timeAgo(rule.runtime.last_evaluation)
-                          : t("Waiting for evaluation")}
-                      </small>
-                    </div>
-                    <div className="row-actions">
-                      <button
-                        className="icon-button"
-                        aria-label={`${t("Evaluate")} ${rule.title}`}
-                        title={t("Evaluate now")}
-                        disabled={busy === rule.uid || rule.paused}
-                        onClick={() => void act(rule, "evaluate")}
-                      >
-                        <Play size={16} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label={`${t(rule.paused ? "Resume" : "Pause")} ${rule.title}`}
-                        disabled={busy === rule.uid}
-                        onClick={() => void act(rule, "pause")}
-                      >
-                        <Pause size={16} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label={`${t("Edit")} ${rule.title}`}
-                        disabled={busy === rule.uid}
-                        onClick={() => setEditor(rule)}
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        className="icon-button danger-hover"
-                        aria-label={`${t("Delete")} ${rule.title}`}
-                        disabled={busy === rule.uid}
-                        onClick={() => setRemoving(rule)}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                  {rule.runtime.error && (
-                    <p className="collector-error alert-rule-error">
-                      {rule.runtime.error}
-                    </p>
+          )}
+          <section className="list-panel alert-rules">
+            <div className="section-heading">
+              <h2>
+                <Bell size={18} />
+                {t("Alert rules")}
+                <span>{rules.length}</span>
+              </h2>
+              <div className="alert-filters" aria-label={t("Filter rules")}>
+                {["all", "firing", "paused"].map((v) => (
+                  <button
+                    key={v}
+                    className={filter === v ? "active" : ""}
+                    onClick={() => setFilter(v)}
+                  >
+                    {t(
+                      v === "all"
+                        ? "All"
+                        : v === "firing"
+                          ? "Firing"
+                          : "Paused",
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!loaded && !error ? (
+              <div className="empty-workspace">{t("Loading rules…")}</div>
+            ) : shown.length === 0 ? (
+              <div className="empty-workspace">
+                <Bell size={32} />
+                <h2>
+                  {t(
+                    rules.length
+                      ? "No rules match this filter"
+                      : "No alert rules yet",
                   )}
-                  {expanded === rule.uid && (
-                    <div className="alert-detail">
-                      <div className="alert-rule-meta">
-                        <span>
-                          {t("Every")} <b>{rule.interval_seconds}s</b>
-                        </span>
-                        <span>
-                          {t("Pending period")} <b>{rule.for_seconds}s</b>
-                        </span>
-                        <span>
-                          {t("Keep firing for")}{" "}
-                          <b>{rule.keep_firing_for_seconds}s</b>
-                        </span>
-                        <span>
-                          {t("Evaluation")} <b>{rule.runtime.duration_ms}ms</b>
-                        </span>
-                        <span>
-                          {t("Group")}{" "}
-                          <b>
-                            {rule.folder_uid}/{rule.group}
-                          </b>
-                        </span>
-                        {rule.record && (
-                          <span>
-                            {t("Recording metric")} <b>{rule.record}</b>
-                          </span>
-                        )}
-                      </div>
-                      {states.length ? (
-                        <div className="table-scroll">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>{t("Instance labels")}</th>
-                                <th>{t("State")}</th>
-                                <th>{t("Value")}</th>
-                                <th>{t("Active since")}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {states.map((v) => (
-                                <tr key={v.key}>
-                                  <td className="mono">
-                                    {labelText(v.labels)}
-                                    {v.annotations?.summary && (
-                                      <p className="alert-instance-summary">
-                                        {v.annotations.summary}
-                                      </p>
-                                    )}
-                                    {v.annotations?.description && (
-                                      <p className="alert-instance-description">
-                                        {v.annotations.description}
-                                      </p>
-                                    )}
-                                    {!!v.template_errors?.length && (
-                                      <details className="alert-template-warnings">
-                                        <summary>
-                                          {t("Template warnings")}
-                                        </summary>
-                                        {v.template_errors.map(
-                                          (error, index) => (
-                                            <p key={index}>{error}</p>
-                                          ),
-                                        )}
-                                      </details>
-                                    )}
-                                    {v.reason && (
-                                      <small className="subtle">
-                                        {t(v.reason)}
-                                      </small>
-                                    )}
-                                  </td>
-                                  <td>
-                                    <span
-                                      className={`status ${stateClass(v.state)}`}
-                                    >
-                                      <i />
-                                      {stateText(v.state)}
-                                    </span>
-                                  </td>
-                                  <td className="mono">
-                                    {v.value_text ||
-                                      (v.value === null
-                                        ? "—"
-                                        : v.value.toLocaleString(undefined, {
-                                            maximumFractionDigits: 4,
-                                          }))}
-                                  </td>
-                                  <td>
-                                    {v.active_at ? dateText(v.active_at) : "—"}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <p className="subtle">
-                          {t(
-                            rule.paused
-                              ? "Evaluation is paused."
-                              : rule.record
-                                ? "Results are written as stored metrics."
-                                : "No instances in the last evaluation.",
+                </h2>
+                <p>
+                  {t(
+                    "Watch an exporter, service or metric with a single PromQL condition.",
+                  )}
+                </p>
+                {rules.length === 0 && (
+                  <button className="primary" onClick={() => setEditor("new")}>
+                    {t("Create alert")}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="alert-rule-list">
+                {shown.map((rule) => {
+                  const states = rule.runtime.instances;
+                  const state = rule.paused
+                    ? "Paused"
+                    : states.some((v) => firing(v.state))
+                      ? "Firing"
+                      : states.some((v) => v.state === "Pending")
+                        ? "Pending"
+                        : rule.runtime.last_evaluation
+                          ? "Normal"
+                          : "Not evaluated";
+                  return (
+                    <article key={rule.uid} className="alert-rule">
+                      <div className="alert-rule-row">
+                        <button
+                          className="alert-rule-title"
+                          onClick={() =>
+                            setExpanded(expanded === rule.uid ? null : rule.uid)
+                          }
+                          aria-expanded={expanded === rule.uid}
+                        >
+                          {expanded === rule.uid ? (
+                            <ChevronDown size={17} />
+                          ) : (
+                            <ChevronRight size={17} />
                           )}
+                          <div>
+                            <strong>{rule.title}</strong>
+                            <code>
+                              {rule.execution === "grafana"
+                                ? t("Grafana query graph")
+                                : rule.expr}
+                            </code>
+                          </div>
+                        </button>
+                        <div className="alert-rule-status">
+                          <span className={`status ${stateClass(state)}`}>
+                            <i />
+                            {stateText(state)}
+                          </span>
+                          <small>
+                            {rule.runtime.last_evaluation
+                              ? timeAgo(rule.runtime.last_evaluation)
+                              : t("Waiting for evaluation")}
+                          </small>
+                        </div>
+                        <div className="row-actions">
+                          <button
+                            className="icon-button"
+                            aria-label={`${t("Evaluate")} ${rule.title}`}
+                            title={t("Evaluate now")}
+                            disabled={busy === rule.uid || rule.paused}
+                            onClick={() => void act(rule, "evaluate")}
+                          >
+                            <Play size={16} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            aria-label={`${t(rule.paused ? "Resume" : "Pause")} ${rule.title}`}
+                            disabled={busy === rule.uid}
+                            onClick={() => void act(rule, "pause")}
+                          >
+                            <Pause size={16} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            aria-label={`${t("Edit")} ${rule.title}`}
+                            disabled={busy === rule.uid}
+                            onClick={() => setEditor(rule)}
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            className="icon-button danger-hover"
+                            aria-label={`${t("Delete")} ${rule.title}`}
+                            disabled={busy === rule.uid}
+                            onClick={() => setRemoving(rule)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      {rule.runtime.error && (
+                        <p className="collector-error alert-rule-error">
+                          {rule.runtime.error}
                         </p>
                       )}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-      <section className="list-panel alert-history">
-        <div className="section-heading">
-          <h2>
-            <History size={18} />
-            {t("Recent state changes")}
-          </h2>
-          <span className="subtle">{t("Last 20 transitions")}</span>
-        </div>
-        {history.length ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("Rule / Instance")}</th>
-                  <th>{t("Transition")}</th>
-                  <th>{t("Time")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((event) => (
-                  <tr key={event.id}>
-                    <td>
-                      <strong>
-                        {event.labels.alertname ||
-                          rules.find((r) => r.uid === event.uid)?.title ||
-                          event.uid}
-                      </strong>
-                      <div className="subtle mono">
-                        {labelText(event.labels)}
-                      </div>
-                      {event.reason && (
-                        <small className="subtle">{t(event.reason)}</small>
+                      {expanded === rule.uid && (
+                        <div className="alert-detail">
+                          <div className="alert-rule-meta">
+                            <span>
+                              {t("Every")} <b>{rule.interval_seconds}s</b>
+                            </span>
+                            <span>
+                              {t("Pending period")} <b>{rule.for_seconds}s</b>
+                            </span>
+                            <span>
+                              {t("Keep firing for")}{" "}
+                              <b>{rule.keep_firing_for_seconds}s</b>
+                            </span>
+                            <span>
+                              {t("Evaluation")}{" "}
+                              <b>{rule.runtime.duration_ms}ms</b>
+                            </span>
+                            <span>
+                              {t("Group")}{" "}
+                              <b>
+                                {rule.folder_uid}/{rule.group}
+                              </b>
+                            </span>
+                            {rule.record && (
+                              <span>
+                                {t("Recording metric")} <b>{rule.record}</b>
+                              </span>
+                            )}
+                          </div>
+                          {states.length ? (
+                            <div className="table-scroll">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>{t("Instance labels")}</th>
+                                    <th>{t("State")}</th>
+                                    <th>{t("Value")}</th>
+                                    <th>{t("Active since")}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {states.map((v) => (
+                                    <tr key={v.key}>
+                                      <td className="mono">
+                                        {labelText(v.labels)}
+                                        {v.annotations?.summary && (
+                                          <p className="alert-instance-summary">
+                                            {v.annotations.summary}
+                                          </p>
+                                        )}
+                                        {v.annotations?.description && (
+                                          <p className="alert-instance-description">
+                                            {v.annotations.description}
+                                          </p>
+                                        )}
+                                        {!!v.template_errors?.length && (
+                                          <details className="alert-template-warnings">
+                                            <summary>
+                                              {t("Template warnings")}
+                                            </summary>
+                                            {v.template_errors.map(
+                                              (error, index) => (
+                                                <p key={index}>{error}</p>
+                                              ),
+                                            )}
+                                          </details>
+                                        )}
+                                        {v.reason && (
+                                          <small className="subtle">
+                                            {t(v.reason)}
+                                          </small>
+                                        )}
+                                      </td>
+                                      <td>
+                                        <span
+                                          className={`status ${stateClass(v.state)}`}
+                                        >
+                                          <i />
+                                          {stateText(v.state)}
+                                        </span>
+                                      </td>
+                                      <td className="mono">
+                                        {v.value_text ||
+                                          (v.value === null
+                                            ? "—"
+                                            : v.value.toLocaleString(
+                                                undefined,
+                                                {
+                                                  maximumFractionDigits: 4,
+                                                },
+                                              ))}
+                                      </td>
+                                      <td>
+                                        {v.active_at
+                                          ? dateText(v.active_at)
+                                          : "—"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="subtle">
+                              {t(
+                                rule.paused
+                                  ? "Evaluation is paused."
+                                  : rule.record
+                                    ? "Results are written as stored metrics."
+                                    : "No instances in the last evaluation.",
+                              )}
+                            </p>
+                          )}
+                        </div>
                       )}
-                    </td>
-                    <td>
-                      <span
-                        className={`alert-transition ${stateClass(event.to)}`}
-                      >
-                        {stateText(event.from)} <ChevronRight size={13} />{" "}
-                        {stateText(event.to)}
-                      </span>
-                    </td>
-                    <td>{dateText(event.timestamp)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="alert-history-empty">
-            {t("Transitions appear when an instance changes state.")}
-          </div>
-        )}
-      </section>
-      <p className="subtle alert-note">
-        {t(
-          "Local evaluations and durable history. External notification delivery is not available yet.",
-        )}
-      </p>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+          <section className="list-panel alert-history">
+            <div className="section-heading">
+              <h2>
+                <History size={18} />
+                {t("Recent state changes")}
+              </h2>
+              <span className="subtle">{t("Last 20 transitions")}</span>
+            </div>
+            {history.length ? (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("Rule / Instance")}</th>
+                      <th>{t("Transition")}</th>
+                      <th>{t("Time")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((event) => (
+                      <tr key={event.id}>
+                        <td>
+                          <strong>
+                            {event.labels.alertname ||
+                              rules.find((r) => r.uid === event.uid)?.title ||
+                              event.uid}
+                          </strong>
+                          <div className="subtle mono">
+                            {labelText(event.labels)}
+                          </div>
+                          {event.reason && (
+                            <small className="subtle">{t(event.reason)}</small>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className={`alert-transition ${stateClass(event.to)}`}
+                          >
+                            {stateText(event.from)} <ChevronRight size={13} />{" "}
+                            {stateText(event.to)}
+                          </span>
+                        </td>
+                        <td>{dateText(event.timestamp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="alert-history-empty">
+                {t("Transitions appear when an instance changes state.")}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
       {editor && (
         <AlertEditor
           rule={editor}
@@ -647,8 +715,32 @@ function AlertEditor({
     [annotationJSON, setAnnotationJSON] = useState(
       JSON.stringify(original?.annotations || {}),
     ),
+    [notificationReceiver, setNotificationReceiver] = useState(
+      original?.notification_receiver || "",
+    ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [contacts, setContacts] = useState<
+    { uid: string; name: string; disabled: boolean }[]
+  >([]);
+  const [contactError, setContactError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<{ uid: string; name: string; disabled: boolean }[]>(
+      "/alerting/contact-points",
+      { signal: controller.signal },
+    )
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          setContacts(value);
+          setContactError("");
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setContactError(message(reason));
+      });
+    return () => controller.abort();
+  }, []);
   let graph: AlertQueryGraph | null = null;
   let graphError = "";
   if (execution === "grafana") {
@@ -702,6 +794,7 @@ function AlertEditor({
               error_state: errorState,
               labels: JSON.parse(labelJSON),
               annotations: JSON.parse(annotationJSON),
+              notification_receiver: notificationReceiver,
               ...(execution === "grafana"
                 ? { grafana: JSON.parse(graphJSON) }
                 : original &&
@@ -903,6 +996,46 @@ function AlertEditor({
             </select>
           </label>
         </div>
+        <label>
+          {getLocale() === "zh" ? "联系点覆盖" : "Contact point override"}
+          <select
+            aria-label={
+              getLocale() === "zh" ? "联系点覆盖" : "Contact point override"
+            }
+            value={notificationReceiver}
+            disabled={busy || !!contactError}
+            onChange={(event) => setNotificationReceiver(event.target.value)}
+          >
+            <option value="">
+              {getLocale() === "zh"
+                ? "使用通知策略"
+                : "Use notification policy"}
+            </option>
+            {notificationReceiver &&
+              !contacts.some(
+                (contact) => contact.uid === notificationReceiver,
+              ) && (
+                <option value={notificationReceiver}>
+                  {notificationReceiver}
+                </option>
+              )}
+            {contacts.map((contact) => (
+              <option key={contact.uid} value={contact.uid}>
+                {contact.name}
+                {contact.disabled
+                  ? getLocale() === "zh"
+                    ? "（已停用）"
+                    : " (disabled)"
+                  : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {contactError && (
+          <p role="alert" className="form-error">
+            {contactError}
+          </p>
+        )}
         <details className="alert-extra">
           <summary>{t("Labels and annotations")}</summary>
           <label>

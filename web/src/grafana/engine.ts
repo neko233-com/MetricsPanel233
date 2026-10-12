@@ -238,7 +238,7 @@ export function watchFrames(
   values: InterpolationValues,
   range: TimeSelection,
   refresh: Observable<unknown>,
-  context: { dashboardUID?: string; sampledAt?: number } = {},
+  context: { dashboardUID?: string; sampledAt?: number; app?: string } = {},
 ): Observable<FrameUpdate> {
   let sampledAt = context.sampledAt ?? Date.now();
   const trigger = refresh.pipe(
@@ -376,7 +376,7 @@ export function watchFrames(
                 }).map(([name, value]) => [name, { text: value, value }]),
               ),
               timezone: resolved.timezone,
-              app: "dashboard",
+              app: context.app || "dashboard",
               startTime: Date.now(),
               maxDataPoints: 240,
             }),

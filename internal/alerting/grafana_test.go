@@ -65,7 +65,9 @@ func TestLegacyGrafanaRejectsUnsupportedGraphsWithoutPersistence(t *testing.T) {
 	for _, mutate := range []func(*GrafanaRule){func(g *GrafanaRule) { g.Data[0].DatasourceUID = "loki" }, func(g *GrafanaRule) { g.Condition = "missing" }, func(g *GrafanaRule) {
 		g.Data[0].DatasourceUID = "__expr__"
 		g.Data[0].Model = json.RawMessage(`{"type":"reduce","expression":"A"}`)
-	}, func(g *GrafanaRule) { g.For = "-1s" }, func(g *GrafanaRule) { g.OrgID = 2 }, func(g *GrafanaRule) { g.NotificationSettings = json.RawMessage(`{"receiver":"slack"}`) }, func(g *GrafanaRule) {
+	}, func(g *GrafanaRule) { g.For = "-1s" }, func(g *GrafanaRule) { g.OrgID = 2 }, func(g *GrafanaRule) {
+		g.NotificationSettings = json.RawMessage(`{"receiver":"ops","group_interval":"5m"}`)
+	}, func(g *GrafanaRule) {
 		g.Data[0].DatasourceUID = "__expr__"
 		g.Data[0].Model = json.RawMessage(`{"type":"resample"}`)
 	}} {

@@ -159,7 +159,7 @@ export function Chart({
       y: (v: number) => 185 - ((v - min) / span) * 155,
     };
   }, [data, plotWidth]);
-  const visibleSeries = data?.series.slice(0, 8) || [];
+  const visibleSeries = data?.series || [];
   const latest = visibleSeries[0]?.points.at(-1)?.value;
   const color = mint ? palette[1] : palette[0];
   const legendName =

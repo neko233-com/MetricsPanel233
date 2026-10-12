@@ -3,6 +3,7 @@
 package alertgraph
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,8 +51,8 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 	if p.OrgID != 0 && p.OrgID != 1 {
 		return nil, errors.New("only organization 1 is supported")
 	}
-	if len(p.NotificationSettings) > 0 && string(p.NotificationSettings) != "null" {
-		return nil, errors.New("notification_settings requires a notification integration, which is not configured")
+	if _, err := NotificationReceiver(p.NotificationSettings); err != nil {
+		return nil, err
 	}
 	if p.Record != nil {
 		if p.Record.TargetDatasourceUID != "" && p.Record.TargetDatasourceUID != "metricspanel" {
@@ -183,6 +184,26 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 		}
 	}
 	return &p, nil
+}
+
+// NotificationReceiver validates the executable part of a rule's direct
+// contact-point override. Receiver existence is checked by the control store.
+func NotificationReceiver(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", nil
+	}
+	var settings struct {
+		Receiver string `json:"receiver"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		return "", errors.New("notification_settings currently supports receiver only; notification grouping and mute timing overrides are unavailable")
+	}
+	if settings.Receiver == "" || len(settings.Receiver) > 256 {
+		return "", errors.New("notification_settings requires a receiver of 1–256 bytes")
+	}
+	return settings.Receiver, nil
 }
 
 // All ranges use the caller's scheduled timestamp, including relativeTimeRange

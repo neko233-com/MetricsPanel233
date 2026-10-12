@@ -1,6 +1,50 @@
 import type { Dashboard, Panel } from "../api";
 import type { GrafanaTarget } from "./engine";
 
+export function initialPanelQueries(panel: Panel): GrafanaTarget[] {
+  if (panel.config?.targets !== undefined) return panel.config.targets || [];
+  let expressions = panel.expressions?.length
+    ? panel.expressions
+    : panel.expr
+      ? [panel.expr]
+      : [];
+  if (!expressions.length && panel.metric) {
+    const filters = Object.entries(panel.labels || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, value]) => `${name}=${JSON.stringify(value)}`);
+    let expr = panel.metric + (filters.length ? `{${filters.join(",")}}` : "");
+    if (panel.aggregation === "rate") expr = `rate(${expr}[$__rate_interval])`;
+    else if (["avg", "sum", "min", "max"].includes(panel.aggregation))
+      expr = `${panel.aggregation}(${expr})`;
+    expressions = [expr];
+  }
+  return expressions.map((expr, index) => ({
+    refId: index < 26 ? String.fromCharCode(65 + index) : `Q${index + 1}`,
+    expr,
+    datasource: { uid: "metricspanel", type: "prometheus" },
+    instant: panel.visualization === "stat",
+    range: panel.visualization !== "stat",
+  }));
+}
+
+export function nativePanelForSDK(panel: Panel): Panel {
+  const unit =
+    panel.unit === "seconds"
+      ? "s"
+      : panel.unit === "count"
+        ? "short"
+        : panel.unit;
+  return {
+    ...panel,
+    config: {
+      type: panel.visualization || "timeseries",
+      fieldConfig: { defaults: { unit }, overrides: [] },
+      ...panel.config,
+      targets: initialPanelQueries(panel),
+    },
+  };
+}
+
 export function validatePanelQueries(queries: GrafanaTarget[]) {
   if (queries.length > 32) throw new Error("At most 32 panel queries");
   const refs = new Set<string>();

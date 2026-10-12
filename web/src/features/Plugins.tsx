@@ -11,7 +11,8 @@ import {
 } from "lucide-react";
 import { api, jsonBody, message } from "../api";
 import { Dialog } from "../components/Dialog";
-import { t } from "../i18n";
+import { getLocale, t } from "../i18n";
+import { isSQLDatasource, POSTGRES_DATASOURCE } from "../grafana/sql-types";
 import type { InstalledPlugin } from "../grafana/plugin-runtime";
 import { AppSettingsEditor } from "./AppSettingsEditor";
 import { PluginCatalog } from "./PluginCatalog";
@@ -22,6 +23,8 @@ type Source = {
   name: string;
   type: string;
   url: string;
+  user?: string;
+  database?: string;
   access: string;
   orgId: number;
   version: number;
@@ -525,6 +528,8 @@ function SourceDialog({
           name: "",
           type: "prometheus",
           url: "",
+          user: "",
+          database: "",
           version: 0,
           uid: "",
           isDefault: false,
@@ -532,17 +537,59 @@ function SourceDialog({
           basicAuth: false,
           basicAuthUser: "",
         }
-      : source;
+      : {
+          ...source,
+          type: source.type === "postgres" ? POSTGRES_DATASOURCE : source.type,
+        };
   const [form, setForm] = useState(initial),
     [json, setJSON] = useState(JSON.stringify(initial.jsonData, null, 2)),
     [key, setKey] = useState(""),
     [password, setPassword] = useState(""),
+    [sqlPassword, setSQLPassword] = useState(""),
+    [tlsSecrets, setTLSSecrets] = useState<Record<string, string>>({}),
+    [clearSQLSecrets, setClearSQLSecrets] = useState<string[]>([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const sql = isSQLDatasource(form.type);
+  const text = (en: string, zh: string) => (getLocale() === "zh" ? zh : en);
+  let sqlOptions: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(json);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      sqlOptions = parsed;
+  } catch {
+    /* Invalid advanced JSON is reported on save. */
+  }
+  function patchSQLSettings(update: Record<string, unknown>) {
+    try {
+      const parsed = JSON.parse(json);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new Error(
+          text(
+            "Connection settings must be a JSON object",
+            "连接设置必须是 JSON 对象",
+          ),
+        );
+      setJSON(JSON.stringify({ ...parsed, ...update }, null, 2));
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    }
+  }
+  function clearSecret(key: string, clear: boolean) {
+    setClearSQLSecrets((current) =>
+      clear
+        ? [...current.filter((name) => name !== key), key]
+        : current.filter((name) => name !== key),
+    );
+  }
   return (
     <Dialog
       title={t(source === "new" ? "Add datasource" : "Edit datasource")}
-      onClose={onClose}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      style={sql ? { width: 720 } : undefined}
     >
       <form
         onSubmit={async (e) => {
@@ -552,8 +599,16 @@ function SourceDialog({
           try {
             const jsonData = JSON.parse(json);
             const secureJsonData: Record<string, string> = {};
-            if (key) secureJsonData.apiKey = key;
-            if (password) secureJsonData.basicAuthPassword = password;
+            if (sql) {
+              if (sqlPassword && !clearSQLSecrets.includes("password"))
+                secureJsonData.password = sqlPassword;
+              for (const [name, value] of Object.entries(tlsSecrets))
+                if (value && !clearSQLSecrets.includes(name))
+                  secureJsonData[name] = value;
+            } else {
+              if (key) secureJsonData.apiKey = key;
+              if (password) secureJsonData.basicAuthPassword = password;
+            }
             await api(
               source === "new"
                 ? "/api/datasources"
@@ -566,6 +621,17 @@ function SourceDialog({
                   orgId: 1,
                   jsonData,
                   secureJsonData,
+                  ...(sql
+                    ? {
+                        basicAuth: false,
+                        secureJsonFields: {
+                          ...(source === "new" ? {} : source.secureJsonFields),
+                          ...Object.fromEntries(
+                            clearSQLSecrets.map((name) => [name, false]),
+                          ),
+                        },
+                      }
+                    : {}),
                 }),
               },
             );
@@ -588,10 +654,13 @@ function SourceDialog({
         <label>
           {t("Plugin type")}
           <select
+            aria-label={t("Plugin type")}
             value={form.type}
             onChange={(e) => setForm({ ...form, type: e.target.value })}
           >
             <option value="prometheus">Prometheus</option>
+            <option value="mysql">MySQL</option>
+            <option value={POSTGRES_DATASOURCE}>PostgreSQL</option>
             {plugins
               .filter((p) => p.type === "datasource" && p.enabled)
               .map((p) => (
@@ -604,10 +673,17 @@ function SourceDialog({
         <label>
           URL
           <input
-            type="url"
+            type={sql ? "text" : "url"}
+            aria-label="URL"
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
-            placeholder="http://localhost:9090"
+            placeholder={
+              sql
+                ? form.type === "mysql"
+                  ? "127.0.0.1:3306"
+                  : "127.0.0.1:5432"
+                : "http://localhost:9090"
+            }
           />
         </label>
         <label className="checkbox-label">
@@ -618,20 +694,268 @@ function SourceDialog({
           />
           {t("Use as default datasource")}
         </label>
-        <label>
-          {t("API key")}
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder={
-              source !== "new" && source.secureJsonFields.apiKey
-                ? t("Configured; leave empty to keep")
-                : ""
-            }
-          />
-        </label>
+        {sql ? (
+          <>
+            <div className="form-row">
+              <label>
+                {text("Database user", "数据库用户")}
+                <input
+                  aria-label={text("Database user", "数据库用户")}
+                  required
+                  maxLength={512}
+                  value={form.user || ""}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setForm({ ...form, user: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                {text("Database name", "数据库名称")}
+                <input
+                  aria-label={text("Database name", "数据库名称")}
+                  required
+                  maxLength={512}
+                  value={form.database || String(sqlOptions.database || "")}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setForm({ ...form, database: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+            <label>
+              {text("Database password", "数据库密码")}
+              <input
+                aria-label={text("Database password", "数据库密码")}
+                type="password"
+                autoComplete="new-password"
+                maxLength={16384}
+                value={sqlPassword}
+                disabled={busy || clearSQLSecrets.includes("password")}
+                onChange={(event) => setSQLPassword(event.target.value)}
+                placeholder={
+                  source !== "new" && source.secureJsonFields.password
+                    ? t("Configured; leave empty to keep")
+                    : ""
+                }
+              />
+            </label>
+            {source !== "new" && source.secureJsonFields.password && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={clearSQLSecrets.includes("password")}
+                  disabled={busy}
+                  onChange={(event) =>
+                    clearSecret("password", event.target.checked)
+                  }
+                />
+                {text(
+                  "Remove stored database password",
+                  "删除已保存的数据库密码",
+                )}
+              </label>
+            )}
+            <div className="form-row">
+              <label>
+                {text("TLS mode", "TLS 模式")}
+                <select
+                  aria-label={text("TLS mode", "TLS 模式")}
+                  disabled={busy}
+                  value={String(
+                    sqlOptions.sslmode ||
+                      (form.type === "mysql" ? "disable" : "verify-full"),
+                  )}
+                  onChange={(event) =>
+                    patchSQLSettings({ sslmode: event.target.value })
+                  }
+                >
+                  {["disable", "require", "verify-ca", "verify-full"].map(
+                    (mode) => (
+                      <option key={mode}>{mode}</option>
+                    ),
+                  )}
+                </select>
+              </label>
+              <label>
+                {text("Query timeout (seconds)", "查询超时（秒）")}
+                <input
+                  aria-label={text("Query timeout (seconds)", "查询超时（秒）")}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={Number(sqlOptions.queryTimeout ?? 20)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    patchSQLSettings({
+                      queryTimeout: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                {text("Maximum result rows", "最大结果行数")}
+                <input
+                  aria-label={text("Maximum result rows", "最大结果行数")}
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={Number(sqlOptions.maxRows ?? 10000)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    patchSQLSettings({ maxRows: Number(event.target.value) })
+                  }
+                />
+              </label>
+            </div>
+            <details>
+              <summary>
+                {text(
+                  "TLS certificates and connection pool",
+                  "TLS 证书与连接池",
+                )}
+              </summary>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={Boolean(sqlOptions.tlsAuthWithCACert)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    patchSQLSettings({
+                      tlsAuthWithCACert: event.target.checked,
+                    })
+                  }
+                />
+                {text("Use custom CA certificate", "使用自定义 CA 证书")}
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={Boolean(sqlOptions.tlsAuth)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    patchSQLSettings({ tlsAuth: event.target.checked })
+                  }
+                />
+                {text(
+                  "Client certificate authentication",
+                  "客户端证书身份验证",
+                )}
+              </label>
+              {[
+                ["tlsCACert", text("CA certificate (PEM)", "CA 证书（PEM）")],
+                [
+                  "tlsClientCert",
+                  text("Client certificate (PEM)", "客户端证书（PEM）"),
+                ],
+                [
+                  "tlsClientKey",
+                  text("Client private key (PEM)", "客户端私钥（PEM）"),
+                ],
+              ].map(([name, label]) => (
+                <div key={name}>
+                  <label>
+                    {label}
+                    <textarea
+                      aria-label={label}
+                      className="mono"
+                      rows={3}
+                      maxLength={16384}
+                      value={tlsSecrets[name] || ""}
+                      disabled={busy || clearSQLSecrets.includes(name)}
+                      onChange={(event) =>
+                        setTLSSecrets((current) => ({
+                          ...current,
+                          [name]: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        source !== "new" && source.secureJsonFields[name]
+                          ? t("Configured; leave empty to keep")
+                          : "-----BEGIN CERTIFICATE-----"
+                      }
+                    />
+                  </label>
+                  {source !== "new" && source.secureJsonFields[name] && (
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={clearSQLSecrets.includes(name)}
+                        disabled={busy}
+                        onChange={(event) =>
+                          clearSecret(name, event.target.checked)
+                        }
+                      />
+                      {text("Remove stored", "删除已保存的")} {label}
+                    </label>
+                  )}
+                </div>
+              ))}
+              <div className="form-row">
+                {[
+                  [
+                    "maxOpenConns",
+                    text("Open connections", "最大连接数"),
+                    2,
+                    1,
+                    10,
+                  ],
+                  [
+                    "maxIdleConns",
+                    text("Idle connections", "空闲连接数"),
+                    2,
+                    0,
+                    10,
+                  ],
+                  [
+                    "connMaxLifetime",
+                    text("Connection lifetime (seconds)", "连接有效期（秒）"),
+                    600,
+                    60,
+                    3600,
+                  ],
+                ].map(([name, label, defaultValue, minimum, maximum]) => (
+                  <label key={name}>
+                    {label}
+                    <input
+                      aria-label={String(label)}
+                      type="number"
+                      disabled={busy}
+                      min={Number(minimum)}
+                      max={
+                        name === "maxIdleConns"
+                          ? Number(sqlOptions.maxOpenConns ?? 2)
+                          : Number(maximum)
+                      }
+                      value={Number(sqlOptions[String(name)] ?? defaultValue)}
+                      onChange={(event) =>
+                        patchSQLSettings({
+                          [String(name)]: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
+          </>
+        ) : (
+          <label>
+            {t("API key")}
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={
+                source !== "new" && source.secureJsonFields.apiKey
+                  ? t("Configured; leave empty to keep")
+                  : ""
+              }
+            />
+          </label>
+        )}
         <details>
           <summary>{t("Advanced settings")}</summary>
           <label>
@@ -643,17 +967,19 @@ function SourceDialog({
               onChange={(e) => setJSON(e.target.value)}
             />
           </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={form.basicAuth}
-              onChange={(e) =>
-                setForm({ ...form, basicAuth: e.target.checked })
-              }
-            />
-            {t("HTTP Basic authentication")}
-          </label>
-          {form.basicAuth && (
+          {!sql && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={form.basicAuth}
+                onChange={(e) =>
+                  setForm({ ...form, basicAuth: e.target.checked })
+                }
+              />
+              {t("HTTP Basic authentication")}
+            </label>
+          )}
+          {!sql && form.basicAuth && (
             <>
               <label>
                 {t("Username")}

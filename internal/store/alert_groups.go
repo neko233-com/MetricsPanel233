@@ -43,7 +43,7 @@ func comparableAlertRule(rule model.AlertRule, evaluation bool) []byte {
 	if len(rule.Grafana) > 0 {
 		var graph map[string]json.RawMessage
 		if json.Unmarshal(rule.Grafana, &graph) == nil {
-			for _, key := range []string{"id", "uid", "title", "orgID", "folderUID", "ruleGroup", "for", "keepFiringFor", "noDataState", "execErrState", "annotations", "labels", "isPaused", "updated", "provenance"} {
+			for _, key := range []string{"id", "uid", "title", "orgID", "folderUID", "ruleGroup", "for", "keepFiringFor", "noDataState", "execErrState", "annotations", "labels", "isPaused", "updated", "provenance", "notification_settings"} {
 				delete(graph, key)
 			}
 			rule.Grafana, _ = json.Marshal(graph)
@@ -108,6 +108,9 @@ func (s *Store) ReplaceAlertRuleGroup(ctx context.Context, folder, group string,
 		rule := &rules[i]
 		rule.FolderUID, rule.Group, rule.IntervalSeconds, rule.GroupIndex, rule.Provenance = folder, group, interval, i, &provenance
 		rule.Defaults()
+		if err := prepareNotificationRule(ctx, tx, rule); err != nil {
+			return nil, fmt.Errorf("%w: rule %d: %v", ErrInvalidAlertGroup, i, err)
+		}
 		if err := rule.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: rule %d: %v", ErrInvalidAlertGroup, i, err)
 		}

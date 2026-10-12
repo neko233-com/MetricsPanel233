@@ -48,7 +48,9 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 			resourceError(w, err)
 			return
 		}
-		if r.PathValue("group") != ds.Type+".datasource.grafana.app" {
+		group := r.PathValue("group")
+		groupKind := strings.TrimSuffix(group, ".datasource.grafana.app")
+		if group != groupKind+".datasource.grafana.app" || sqlSourceKind(groupKind) != sqlSourceKind(ds.Type) {
 			fail(w, 404, errors.New("datasource API group does not match its plugin"))
 			return
 		}
@@ -106,7 +108,7 @@ func (s *Server) chunkedRoutes(api *http.ServeMux) {
 				return
 			}
 			seen[query.RefID] = true
-			if ds.Type != "__expr__" && (query.Datasource != nil && (query.Datasource.UID != "" && query.Datasource.UID != ds.UID || query.Datasource.Type != "" && query.Datasource.Type != ds.Type) || query.DatasourceID != 0 && query.DatasourceID != ds.ID) {
+			if ds.Type != "__expr__" && (query.Datasource != nil && (query.Datasource.UID != "" && query.Datasource.UID != ds.UID || query.Datasource.Type != "" && sqlSourceKind(query.Datasource.Type) != sqlSourceKind(ds.Type)) || query.DatasourceID != 0 && query.DatasourceID != ds.ID) {
 				fail(w, 400, errors.New("query datasource must match the connection"))
 				return
 			}
@@ -416,12 +418,14 @@ func (s *Server) streamQueryGroups(w http.ResponseWriter, r *http.Request, group
 			}
 			queries := groups[uid]
 			var err error
-			if ds := sources[uid]; ds.Type == "prometheus" || ds.Type == "grafana" {
+			if ds := sources[uid]; ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
 				producer := backend.NewChunkedDataWriter(backend.DataFrameFormat_JSON, writer.onChunk)
 				for _, query := range queries {
 					var frames data.Frames
 					var queryErr error
-					if ds.Type == "grafana" {
+					if isSQLSource(ds.Type) {
+						frames, queryErr = s.querySQLSource(ctx, ds, query)
+					} else if ds.Type == "grafana" {
 						frames, queryErr = s.queryGrafanaSource(ctx, query)
 					} else {
 						frames, queryErr = s.queryPrometheusSource(ctx, ds, query)

@@ -32,6 +32,19 @@ function createHarness(options = {}) {
     }),
   };
   const module = { exports: {} };
+  const model = { exports: {} };
+  vm.runInNewContext(
+    ts.transpileModule(
+      fs.readFileSync("src/grafana/variable-model.ts", "utf8"),
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2022,
+        },
+      },
+    ).outputText,
+    { module: model, exports: model.exports, URLSearchParams },
+  );
   const code = ts.transpileModule(
     fs.readFileSync("src/grafana/variables.ts", "utf8"),
     {
@@ -56,12 +69,14 @@ function createHarness(options = {}) {
             }
           : id === "./plugin-runtime"
             ? runtime
-            : require(id),
+            : id === "./variable-model"
+              ? model.exports
+              : require(id),
     module,
     URLSearchParams,
     AbortController,
   });
-  return { ...module.exports, calls, finds };
+  return { ...model.exports, ...module.exports, calls, finds };
 }
 const variable = {
   name: "host",
@@ -213,5 +228,211 @@ test("An aborted SDK variable request cannot return stale choices", async () => 
       controller.signal,
     ),
     /abort/i,
+  );
+});
+
+test("SDK variable choices retain dynamic labels and regex named text/value captures", async () => {
+  const h = createHarness({
+    find: async () => [
+      { text: "East cluster", value: "east" },
+      { text: "West cluster", value: "west" },
+    ],
+  });
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await h.variableChoices(
+          { ...variable, config: { datasource: "custom" } },
+          {},
+          "1h",
+          new AbortController().signal,
+        ),
+      ),
+    ),
+    [
+      { text: "East cluster", value: "east" },
+      { text: "West cluster", value: "west" },
+    ],
+  );
+  const named = createHarness({
+    find: async () => [
+      { text: "ignored", value: "East:east" },
+      { text: "ignored", value: "West:west" },
+    ],
+  });
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await named.variableChoices(
+          {
+            ...variable,
+            config: {
+              datasource: "custom",
+              regex: "/^(?<text>[^:]+):(?<value>.+)$/",
+            },
+          },
+          {},
+          "1h",
+          new AbortController().signal,
+        ),
+      ),
+    ),
+    [
+      { text: "East", value: "east" },
+      { text: "West", value: "west" },
+    ],
+  );
+});
+
+test("Custom choices retain separate labels and escaped comma values", () => {
+  const h = createHarness();
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        h.parseCustomChoices("East : east, West : west, comma\\,value"),
+      ),
+    ),
+    [
+      { text: "East", value: "east" },
+      { text: "West", value: "west" },
+      { text: "comma,value", value: "comma,value" },
+    ],
+  );
+});
+
+test("Variables resolve upstream choices before dependents even when display order is reversed", async () => {
+  const h = createHarness(),
+    calls = [];
+  const variables = [
+    {
+      ...variable,
+      name: "host",
+      query: 'label_values(up{region="$region"},instance)',
+    },
+    {
+      ...variable,
+      name: "region",
+      type: "custom",
+      query: "east,west",
+      current: "east",
+    },
+  ];
+  const result = await h.resolveVariables(
+    variables,
+    { region: "west", host: "obsolete" },
+    "1h",
+    new AbortController().signal,
+    async (v, values) => {
+      calls.push({ name: v.name, values: { ...values } });
+      return v.name === "region"
+        ? [{ text: "West", value: "west" }]
+        : [{ text: "Server West", value: values.region + "-host" }];
+    },
+  );
+  assert.deepEqual(
+    calls.map((call) => call.name),
+    ["region", "host"],
+  );
+  assert.equal(calls[1].values.region, "west");
+  assert.equal(result.values.host, "west-host");
+  assert.throws(
+    () =>
+      h.variableOrder([
+        { ...variable, name: "a", query: "$b" },
+        { ...variable, name: "b", query: "${a}" },
+      ]),
+    /dependency cycle/,
+  );
+});
+
+test("Canceled dependent resolution never invokes a downstream query", async () => {
+  const h = createHarness(),
+    controller = new AbortController(),
+    calls = [];
+  await assert.rejects(
+    h.resolveVariables(
+      [
+        { ...variable, name: "first" },
+        { ...variable, name: "last", query: "$first" },
+      ],
+      {},
+      "1h",
+      controller.signal,
+      async (v) => {
+        calls.push(v.name);
+        controller.abort();
+        return [{ text: "stale", value: "stale" }];
+      },
+    ),
+    /abort/i,
+  );
+  assert.deepEqual(calls, ["first"]);
+});
+
+test("All expands actual choices unless a custom raw All expression is configured", () => {
+  const h = createHarness(),
+    variables = [
+      {
+        ...variable,
+        name: "region",
+        multi: true,
+        include_all: true,
+        options: ["east", "west"],
+      },
+    ];
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(h.queryValues({ region: ["$__all"] }, variables)),
+    ),
+    { region: ["east", "west"] },
+  );
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        h.queryValues({ region: ["$__all"] }, [
+          { ...variables[0], config: { allValue: "east.*" } },
+        ]),
+      ),
+    ),
+    { region: { raw: "east.*" } },
+  );
+});
+
+test("URL multivalues and defaults preserve literal pipes, hidden constants and unrelated params", () => {
+  const h = createHarness(),
+    variables = [
+      {
+        ...variable,
+        name: "region",
+        multi: true,
+        config: { current: { value: ["pipe|literal", "west"] } },
+      },
+      { ...variable, name: "fixed", type: "constant", query: "233" },
+    ];
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        h.selectedVariables(
+          variables,
+          new URLSearchParams("var-region=east&var-region=west&var-fixed=bad"),
+        ),
+      ),
+    ),
+    { region: ["east", "west"], fixed: "233" },
+  );
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(h.selectedVariables(variables, new URLSearchParams())),
+    ),
+    { region: ["pipe|literal", "west"], fixed: "233" },
+  );
+  const params = h.variableURL(
+    new URLSearchParams("from=now-1h&var-removed=stale"),
+    variables,
+    { region: ["east", "west"], fixed: "233" },
+  );
+  assert.equal(
+    params.toString(),
+    "from=now-1h&var-region=east&var-region=west",
   );
 });

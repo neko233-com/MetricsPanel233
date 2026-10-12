@@ -1176,6 +1176,7 @@ func TestDockerEndToEnd(t *testing.T) {
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_http_requests_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go exporter not scraped")
 			require.Eventually(t, func() bool { v, ok := e.value(address, "business_push_total"); return ok && v > 0 }, 30*time.Second, 500*time.Millisecond, "Go JSON push not ingested")
 			e.verifyNativeCollectors(address)
+			e.verifySQLDataSources(address, true)
 			e.verifyExpressionGraph(address)
 			e.verifySQL(address, false)
 			e.verifyAlertGraph(address, false)
@@ -1334,8 +1335,10 @@ func TestDockerEndToEnd(t *testing.T) {
 		address := e.address(service)
 		require.Eventually(t, func() bool { value, ok := e.value(address, "restart_marker"); return ok && value == 234 }, 60*time.Second, 500*time.Millisecond, "single-container restart lost durable state")
 		e.verifyNativeCollectors(address)
+		e.verifySQLDataSources(address, false)
 		e.verifyDashboardSnapshot(address, false)
 		assert.Equal(t, resourceConnections[service], e.verifyDashboardResources(address, service, false), "single-container restart changed library connection identities")
 		assert.Equal(t, historyEvidence[service], e.verifyDashboardHistory(address, service, false), "single-container restart changed dashboard history or exports")
 	}
+	e.waitSQLBrowserQA()
 }

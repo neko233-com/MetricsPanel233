@@ -70,6 +70,13 @@ This is a single-instance implementation, with no claimed distributed or product
 
 ## Grafana compatibility
 
+Work is verified against Grafana 13.2.3 OSS. Full replacement remains unfinished. See the [core datasource and visualization matrix](docs/grafana-compatibility.md) and [product acceptance checklist](docs/grafana-product-parity.md).
+
+Native and imported dashboards share the Panel queries editor for Prometheus, SQL, expressions and installed SDK sources. Title edits and duplication preserve their query models. The pinned Grafana SDK table renders the complete result, with sorting, pagination, field formatting and footer calculations.
+
+The Variables editor supports query, custom, constant, textbox, datasource and interval variables, default values, labels, regex, sorting, multi-selection and All. Dependent queries load in dependency order; URL selections reach panel queries, annotations and snapshots. Variables, queries, annotations, panels and layout use revision-checked atomic saves and version history. Changed fields merge into stored raw models to preserve unknown numbers and plugin settings. Renaming a variable does not rewrite existing query references.
+
+Built-in MySQL/MariaDB and PostgreSQL SQL datasources serve Explore, dashboards and expression graphs. Queries use encrypted connection settings, persistent pools, read-only transactions, typed table/time-series frames, macros, null handling and SQL variable options. PostgreSQL accepts the official grafana-postgresql-datasource ID and the postgres alias. Queries are bounded to 20 seconds and 10,000 rows. The visual SQL builder and remaining core datasource editors are unfinished. See metricspanel schema for the dashboards queries, panels, variables and annotation-queries PATCH file contracts.
 Custom dashboards support multiple time series, stat and table panels, with add/edit/duplicate/delete controls. They display a uniform panel grid without collection status or a CLI promotional strip.
 
 Create snapshot freezes the selected window and all panel data, visualizations, layout and display options. Repeated template panels expand using current variable selections. The independently saved dashboard survives source updates or source-dashboard deletion, uses only builtin snapshot queries, and defaults to fixed bounds with refresh off. Snapshot data lives in the durable control database and never enters monitoring samples. Export with `dashboards export --id ID --format grafana` and import with `dashboards save --file FILE`. The CLI lists/exports/imports/deletes snapshots; capture currently runs in the browser and has no single-step CLI command. Limits are 512 KiB/panel and 4 MiB/snapshot; shorten the window if exceeded. Anonymous sharing, expiry deletion and Grafana `/api/snapshots` routes remain pending.
@@ -136,9 +143,9 @@ Everyday workflows still required for a complete Grafana replacement:
 
 | Workflow | Available | Missing |
 | --- | --- | --- |
-| Dashboard editing | Multiple panels, imports, query editing, variable selection, snapshots and history | Drag/resize layout editing, variable configuration, full field and transformation editors |
-| Alert notifications | Scheduled evaluation, query graphs, rule groups, state history and annotations | Contact points, notification policies, external delivery/retries and Alertmanager silences |
-| Datasources and Explore | Prometheus, Grafana queries and installed SDK datasource plugins | Builtin arbitrary MySQL/PostgreSQL SQL queries and complete logs/traces workflows; direct collectors gather fixed metrics only |
+| Dashboard editing | Multiple panels, imports, query editing, 24-column drag/resize layout editing, configuration/selection of six variable types, snapshots and history | Full field and transformation editors, ad hoc and group-by variables |
+| Alert notifications | Scheduled evaluation, query graphs, rule groups, history, annotations, webhook contacts, recursive routes, grouping/repeats, silences, mute timings, notification template previews and durable delivery/retries | Email/Slack integrations, complete Grafana template functions/default formatting, inhibition and remaining Alertmanager APIs |
+| Datasources and Explore | Prometheus, Grafana, MySQL/MariaDB and PostgreSQL SQL queries, installed SDK datasource plugins | Official SQL visual Builder, remaining core datasources and complete logs/traces workflows; direct collectors gather fixed metrics only |
 | Users and permissions | Workspace token, same-origin checks and encrypted connection secrets | Users, organizations, teams, roles, folder permissions and independent service accounts |
 | Agents and sharing | JSON CLI, API discovery, resource configuration and version operations | One-step CLI snapshot capture, anonymous sharing and expiration management |
 
@@ -356,7 +363,7 @@ Panel teardown removes only its own subscriptions; sibling panels and applicatio
 
 `AppEvents.alertSuccess/alertWarning/alertError/alertInfo` show four native notification severities with title, detail and Error.message.
 Text is rendered without HTML and bounded to 8192 characters. Errors/warnings use `role=alert`; dismiss controls support Chinese and English.
-These are browser notifications; server alert notification delivery remains outstanding. The theme is currently dark-only.
+These are browser notifications; server webhook notifications are configured in Alerts → Notifications. The theme is currently dark-only.
 Native CopyPanelEvent handling, global hover/select from native charts and other app core services still need implementation.
 An independent app and two SDK panels test real query updates, duplicate prevention, unmount/remount, coalescing, notifications and mobile layout.
 See the [Grafana event subscription contract](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events).
@@ -471,7 +478,7 @@ The upstream Prometheus text functions are extended with Grafana filterLabels/re
 
 Instance details show rendered summary/description and expandable warnings as plain text. Source templates, instance annotations and transition annotations persist, while Prometheus alerts returns rendered annotations. Use `metricspanel alerts save --file examples/alerts/template-memory.json` and alerts get/evaluate/history to inspect source and results. See the [template reference](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) and [pinned implementation](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go).
 
-Unavailable datasources, malformed nodes and cycles fail before save. External notifications/Alertmanager and remaining core datasource editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
+Unavailable datasources, malformed nodes and cycles fail before save. Webhook delivery is implemented; full Alertmanager and remaining core datasource editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
 
 ## Automated verification
 

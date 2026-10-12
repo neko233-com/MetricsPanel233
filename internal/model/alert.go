@@ -33,6 +33,7 @@ type AlertRule struct {
 	Record                   string            `json:"record,omitempty"`
 	FolderUID                string            `json:"folder_uid"`
 	Group                    string            `json:"group"`
+	NotificationReceiver     string            `json:"notification_receiver,omitempty"`
 	GroupIndex               int               `json:"group_index,omitempty"`
 	Provenance               *string           `json:"provenance,omitempty"`
 	Version                  int               `json:"version"`
@@ -113,6 +114,9 @@ func (r AlertRule) Validate() error {
 	}
 	if len(r.FolderUID) > 100 || len(r.Group) > 100 || r.GroupIndex < 0 || r.GroupIndex >= 1000 || len(r.Annotations) > 32 {
 		return errors.New("folder/group limit: 100 bytes; group index: 0–999; annotation limit: 32")
+	}
+	if len(r.NotificationReceiver) > 256 || (r.Record != "" && r.NotificationReceiver != "") {
+		return errors.New("alert notification receiver must be at most 256 bytes and cannot be set for a recording rule")
 	}
 	if r.Provenance != nil && *r.Provenance != "" && *r.Provenance != "api" {
 		return errors.New("provenance must be empty or api")

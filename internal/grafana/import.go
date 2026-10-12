@@ -3,6 +3,7 @@
 package grafana
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -71,17 +72,26 @@ func importDashboard(data []byte, allowEmpty bool) (ImportResult, error) {
 		result.Warnings = append(result.Warnings, warnings...)
 		for _, variable := range source.Variables {
 			var v struct {
-				Kind string         `json:"kind"`
-				Spec map[string]any `json:"spec"`
+				Kind       string         `json:"kind"`
+				Spec       map[string]any `json:"spec"`
+				Group      string         `json:"group"`
+				Datasource struct {
+					Name string `json:"name"`
+				} `json:"datasource"`
 			}
-			if err := json.Unmarshal(variable, &v); err != nil {
+			decoder := json.NewDecoder(bytes.NewReader(variable))
+			decoder.UseNumber()
+			if err := decoder.Decode(&v); err != nil {
 				return result, err
 			}
-			types := map[string]string{"QueryVariable": "query", "CustomVariable": "custom", "ConstantVariable": "constant", "TextVariable": "textbox", "DatasourceVariable": "datasource", "IntervalVariable": "interval", "AdhocVariable": "adhoc"}
+			types := map[string]string{"QueryVariable": "query", "CustomVariable": "custom", "ConstantVariable": "constant", "TextVariable": "textbox", "DatasourceVariable": "datasource", "IntervalVariable": "interval", "AdhocVariable": "adhoc", "GroupByVariable": "groupby"}
 			if v.Spec == nil {
 				return result, fmt.Errorf("variable %q needs a spec", v.Kind)
 			}
 			v.Spec["type"] = types[v.Kind]
+			if v.Datasource.Name != "" {
+				v.Spec["datasource"] = map[string]any{"uid": v.Datasource.Name, "type": v.Group}
+			}
 			if query, ok := v.Spec["query"].(map[string]any); ok {
 				if name, _ := object(query["datasource"])["name"].(string); name != "" {
 					v.Spec["datasource"] = map[string]any{"uid": name, "type": query["group"]}

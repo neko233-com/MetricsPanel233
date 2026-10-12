@@ -450,6 +450,13 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 	return view, nil
 }
 func (e *Engine) Run(ctx context.Context) {
+	var notifications sync.WaitGroup
+	notifications.Add(1)
+	go func() {
+		defer notifications.Done()
+		e.RunNotifications(ctx)
+	}()
+	defer notifications.Wait()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var workers sync.WaitGroup

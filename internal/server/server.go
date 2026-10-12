@@ -46,6 +46,7 @@ type Server struct {
 	Started           time.Time
 	requests          atomic.Uint64
 	dashboardImportMu sync.Mutex
+	sqlSources        sqlSourcePool
 }
 
 func New(s *store.Store, token string, retention int) *Server {
@@ -113,11 +114,17 @@ func (s *Server) Handler() http.Handler {
 	s.grafanaRoutes(api, promRoutes)
 	s.dashboardCatalogRoutes(api)
 	s.dashboardResourceRoutes(api)
+	s.dashboardLayoutRoutes(api)
+	s.dashboardQueryRoutes(api)
+	s.dashboardPanelRoutes(api)
+	s.dashboardAnnotationRoutes(api)
+	s.dashboardVariableRoutes(api)
 	s.dashboardHistoryRoutes(api)
 	s.dashboardHistoryResourceRoutes(api)
 	s.patternRoutes(api)
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
+	s.notificationRoutes(api)
 	s.pluginRoutes(api, mux)
 	s.appRoutes(api)
 	s.chunkedRoutes(api)
@@ -128,7 +135,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 503, err)
 			return
 		}
-                writeJSON(w, 200, map[string]any{"status": "ok", "version": "0.1.1", "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
+		writeJSON(w, 200, map[string]any{"status": "ok", "version": "0.1.1", "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
 	})
 	api.HandleFunc("GET /api/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.Metrics(r.Context())
@@ -481,6 +488,7 @@ func (s *Server) prometheus(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 func (s *Server) RunBackground(ctx context.Context) {
+	defer s.CloseSQLSources()
 	defer s.Plugins.Close()
 	defer s.Live.Close()
 	collectorDone := make(chan struct{})

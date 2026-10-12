@@ -126,7 +126,12 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 		}
 		out := []alerting.GrafanaRule{}
 		for _, rule := range rules {
-			out = append(out, alerting.ExportGrafana(rule.AlertRule))
+			value, err := s.exportNotificationRule(r.Context(), rule.AlertRule)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
+			out = append(out, value)
 		}
 		writeJSON(w, 200, out)
 	})
@@ -136,7 +141,12 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 			ruleError(w, err)
 			return
 		}
-		writeJSON(w, 200, alerting.ExportGrafana(rule.AlertRule))
+		value, err := s.exportNotificationRule(r.Context(), rule.AlertRule)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, value)
 	})
 	grafSave := func(w http.ResponseWriter, r *http.Request) {
 		var g alerting.GrafanaRule
@@ -181,7 +191,12 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 		if r.Method == "PUT" {
 			code = 200
 		}
-		writeJSON(w, code, alerting.ExportGrafana(value.AlertRule))
+		exported, err := s.exportNotificationRule(r.Context(), value.AlertRule)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, code, exported)
 	}
 	api.HandleFunc("POST /api/v1/provisioning/alert-rules", grafSave)
 	api.HandleFunc("PUT /api/v1/provisioning/alert-rules/{uid}", grafSave)

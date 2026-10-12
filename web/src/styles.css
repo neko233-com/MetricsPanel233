@@ -586,6 +586,7 @@ pre {
 .grafana-value strong {
   font-size: clamp(24px, 3vw, 42px);
   font-weight: 500;
+  line-height: 1.15;
 }
 .grafana-value svg {
   width: 160px;
@@ -599,6 +600,30 @@ pre {
 .grafana-table {
   flex: 1;
   overflow: auto;
+}
+.grafana-sdk-table {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.grafana-table-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.grafana-table-frame-picker {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 0 12px 8px;
+}
+.grafana-table-frame-picker select {
+  width: auto;
+  max-width: 400px;
 }
 .grafana-text {
   padding: 0 16px 16px;

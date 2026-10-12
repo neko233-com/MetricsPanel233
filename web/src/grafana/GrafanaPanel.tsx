@@ -8,8 +8,8 @@ import {
   type Field,
 } from "@grafana/data";
 import DOMPurify from "dompurify";
+import { Pencil, Trash2 } from "lucide-react";
 import { marked } from "marked";
-import { Chart } from "../components/Chart";
 import {
   message,
   dashboardUID,
@@ -19,8 +19,8 @@ import {
 } from "../api";
 import { useAnnotations } from "./annotations";
 import { AnnotationEditor } from "../components/AnnotationEditor";
-import { t, getLocale } from "../i18n";
-import { watchFrames, framesAsSeries } from "./engine";
+import { t } from "../i18n";
+import { watchFrames } from "./engine";
 import { Subject } from "rxjs";
 import type { FrameUpdate } from "./engine";
 import { PanelZoomControls } from "../components/PanelZoomControls";
@@ -30,6 +30,8 @@ import {
   type TimeSelection,
 } from "./time-range";
 const PluginPanel = lazy(() => import("./PluginPanel"));
+const GrafanaTable = lazy(() => import("./GrafanaTable"));
+const GrafanaTimeSeries = lazy(() => import("./GrafanaTimeSeries"));
 
 function display(
   field: Field,
@@ -54,6 +56,8 @@ export default function GrafanaPanel({
   onUpdate,
   onRange,
   dashboard,
+  onEdit,
+  onRemove,
 }: {
   panel: Panel;
   values: InterpolationValues;
@@ -62,6 +66,8 @@ export default function GrafanaPanel({
   tick: number;
   onUpdate?: (update: FrameUpdate) => void;
   dashboard?: Dashboard;
+  onEdit?: () => void;
+  onRemove?: () => void;
 }) {
   const [frames, setFrames] = useState<DataFrame[]>([]),
     [error, setError] = useState(""),
@@ -153,30 +159,54 @@ export default function GrafanaPanel({
       onReset={() => setLocalZoom(undefined)}
     />
   );
-  const series = useMemo(
-    () => framesAsSeries(frames, effective),
-    [frames, queryRange, inputRange, getLocale()],
+  const editActions = (
+    <div className="panel-actions">
+      {onEdit ? (
+        <button
+          className="icon-button"
+          aria-label={`${t("Edit")} ${t(panel.title)}`}
+          onClick={onEdit}
+        >
+          <Pencil size={15} />
+        </button>
+      ) : null}
+      {onRemove ? (
+        <button
+          className="icon-button"
+          aria-label={`${t("Remove")} ${t(panel.title)}`}
+          onClick={onRemove}
+        >
+          <Trash2 size={15} />
+        </button>
+      ) : null}
+    </div>
   );
   if (type === "timeseries") {
-    const first = frames
-      .flatMap((f) => f.fields)
-      .find((f) => f.type === FieldType.number);
     return (
-      <Chart
-        panel={panel}
-        range={effective}
-        timeInfo={timeInfo}
-        controls={zoomControls}
-        annotations={annotations.events}
-        annotationDashboard={dashboard}
-        annotationError={annotations.error}
-        tick={tick}
-        result={series}
-        resultError={error}
-        streaming={streaming}
-        onRange={changePanelRange}
-        formatter={(v) => (first ? display(first, v).text : String(v))}
-      />
+      <Suspense
+        fallback={
+          <section className="chart-panel" role="status">
+            {t("Loading metrics…")}
+          </section>
+        }
+      >
+        <GrafanaTimeSeries
+          panel={panel}
+          frames={frames}
+          range={effective}
+          timeInfo={timeInfo}
+          controls={zoomControls}
+          annotations={annotations.events}
+          annotationDashboard={dashboard}
+          annotationError={annotations.error}
+          loading={loading}
+          queryError={error}
+          streaming={streaming}
+          onRange={changePanelRange}
+          onEdit={onEdit}
+          onRemove={onRemove}
+        />
+      </Suspense>
     );
   }
   if (type === "row")
@@ -203,6 +233,7 @@ export default function GrafanaPanel({
           controls={
             <>
               {zoomControls}
+              {editActions}
               {dashboard && (
                 <AnnotationEditor
                   dashboard={dashboard}
@@ -281,6 +312,7 @@ export default function GrafanaPanel({
     >
       <div className="panel-heading">
         <h2 title={config?.description}>{panel.title}</h2>
+        {editActions}
         {streaming && (
           <span className="status healthy" role="status">
             <i />
@@ -309,41 +341,14 @@ export default function GrafanaPanel({
           />
         ))}
       {type === "table" && (
-        <div className="table-scroll grafana-table">
-          {frames.map((frame, fi) => (
-            <table key={fi}>
-              <thead>
-                <tr>
-                  {frame.fields.map((field, i) => (
-                    <th key={i}>{getFieldDisplayName(field, frame, frames)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from(
-                  { length: Math.min(frame.length, 500) },
-                  (_, row) => (
-                    <tr key={row}>
-                      {frame.fields.map((field, i) => (
-                        <td
-                          key={i}
-                          style={{
-                            color: display(field, field.values[row]).color,
-                          }}
-                        >
-                          {display(field, field.values[row]).text}
-                        </td>
-                      ))}
-                    </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          ))}
-          {frames.some((f) => f.length > 500) && (
-            <p>{t("Showing first 500 rows")}</p>
-          )}
-        </div>
+        <Suspense fallback={<p role="status">{t("Loading metrics…")}</p>}>
+          <GrafanaTable
+            panel={panel}
+            frames={frames}
+            values={values}
+            range={effective}
+          />
+        </Suspense>
       )}
       {["stat", "gauge", "bargauge"].includes(type) && (
         <div

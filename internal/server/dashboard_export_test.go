@@ -42,6 +42,8 @@ func TestDashboardExportsPreserveRawSourceAndRequireAuthentication(t *testing.T)
 		require.Equal(t, http.StatusBadRequest, call(handler, "GET", path+suffix, "", token, "").Code)
 	}
 	require.Equal(t, http.StatusNotFound, call(handler, "GET", "/api/v1/dashboard-exports/missing", "", token, "").Code)
-	require.Equal(t, http.StatusBadRequest, call(handler, "GET", "/api/v1/dashboard-exports/system?format=grafana", "", token, "").Code)
+	nativeExport := call(handler, "GET", "/api/v1/dashboard-exports/system?format=grafana", "", token, "")
+	require.Equal(t, http.StatusOK, nativeExport.Code)
+	require.Contains(t, nativeExport.Body.String(), "metricspanel_memory_bytes")
 	require.Equal(t, http.StatusOK, call(handler, "GET", "/api/v1/dashboard-exports/system?format=native", "", token, "").Code)
 }

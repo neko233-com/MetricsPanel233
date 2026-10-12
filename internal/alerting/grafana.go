@@ -150,10 +150,10 @@ func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) 
 	if g.OrgID != 0 && g.OrgID != 1 {
 		return r, errors.New("only organization 1 is supported")
 	}
-	if len(g.NotificationSettings) > 0 && string(g.NotificationSettings) != "null" {
-		return r, errors.New("notification_settings requires a notification integration, which is not configured")
-	}
 	var err error
+	if r.NotificationReceiver, err = grafanaNotificationReceiver(g.NotificationSettings); err != nil {
+		return r, err
+	}
 	if r.ForSeconds, err = durationSeconds(g.For); err != nil {
 		return r, err
 	}
@@ -385,10 +385,10 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	if g.OrgID != 0 && g.OrgID != 1 {
 		return r, errors.New("only organization 1 is supported")
 	}
-	if len(g.NotificationSettings) > 0 && string(g.NotificationSettings) != "null" {
-		return r, errors.New("notification_settings requires a notification integration, which is not configured")
-	}
 	var err error
+	if r.NotificationReceiver, err = grafanaNotificationReceiver(g.NotificationSettings); err != nil {
+		return r, err
+	}
 	if r.ForSeconds, err = durationSeconds(g.For); err != nil {
 		return r, err
 	}
@@ -456,6 +456,9 @@ func ExportGrafana(r model.AlertRule) GrafanaRule {
 			}
 		}
 	} else {
+		if r.NotificationReceiver != "" {
+			g.NotificationSettings, _ = json.Marshal(map[string]string{"receiver": r.NotificationReceiver})
+		}
 		g.Condition = "A"
 		query := GrafanaQuery{RefID: "A", DatasourceUID: "metricspanel"}
 		expr := r.Expr
@@ -491,4 +494,8 @@ func ExportGrafana(r model.AlertRule) GrafanaRule {
 		g.Provenance = *r.Provenance
 	}
 	return g
+}
+
+func grafanaNotificationReceiver(raw json.RawMessage) (string, error) {
+	return alertgraph.NotificationReceiver(raw)
 }

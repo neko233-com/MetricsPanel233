@@ -136,6 +136,7 @@ export default function App() {
     [metrics, setMetrics] = useState<Metric[]>([]),
     [stats, setStats] = useState<Stats | null>(null);
   const [hasExtensions, setHasExtensions] = useState(false);
+  const [dashboardRouteMissing, setDashboardRouteMissing] = useState(false);
   const [tick, setTick] = useState(0),
     [range, setRange] = useState<TimeSelection>(initialRange.value),
     [auth, setAuth] = useState(false),
@@ -324,6 +325,7 @@ export default function App() {
     const dashboard = uid
       ? dashboards.find((d) => dashboardUID(d) === decodeURIComponent(uid))
       : undefined;
+    setDashboardRouteMissing(Boolean(uid && !dashboard));
     if (dashboard) {
       setDashboardID(dashboard.id);
       setView("dashboard");
@@ -351,6 +353,7 @@ export default function App() {
             (item) => dashboardUID(item) === decodeURIComponent(uid),
           )
         : undefined;
+      setDashboardRouteMissing(Boolean(uid && !dashboard));
       try {
         const fallback = rangeFromDashboard(dashboard?.grafana) || "30m";
         const next =
@@ -364,6 +367,9 @@ export default function App() {
       }
       if (dashboard) {
         setDashboardID(dashboard.id);
+        setView("dashboard");
+      } else if (uid) {
+        setDashboardID("");
         setView("dashboard");
       } else if (/^\/a\//.test(location.pathname)) setView("app");
       else if (navigation.some((item) => item.id === location.hash.slice(1)))
@@ -569,13 +575,18 @@ export default function App() {
                 />
               )
             ) : (
-              <div className="loading-state">
+              <div
+                className="loading-state"
+                role={dashboardRouteMissing ? "alert" : "status"}
+              >
                 <Activity size={28} />
                 <p>
                   {tr(
-                    connectionError
-                      ? "Start metricspanel serve to connect this workspace."
-                      : "Connecting to your workspace…",
+                    dashboardRouteMissing
+                      ? "Dashboard not found. Open the dashboard list to choose another dashboard."
+                      : connectionError
+                        ? "Start metricspanel serve to connect this workspace."
+                        : "Connecting to your workspace…",
                   )}
                 </p>
               </div>

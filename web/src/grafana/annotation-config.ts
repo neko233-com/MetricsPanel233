@@ -17,6 +17,17 @@ const builtin = () => ({
   iconColor: "#5ac8de",
 });
 
+export function rawAnnotationQueries(dashboard: Dashboard): AnnotationConfig[] {
+  const raw = dashboard.grafana as Record<string, any> | undefined;
+  const model = raw?.dashboard || raw?.spec || raw;
+  const saved = model?.annotations ?? dashboard.annotations;
+  return Array.isArray(saved)
+    ? saved
+    : Array.isArray(saved?.list)
+      ? saved.list
+      : [];
+}
+
 export function validateAnnotationConfig(config: AnnotationConfig) {
   const object = (value: any) =>
     value && typeof value === "object" && !Array.isArray(value);

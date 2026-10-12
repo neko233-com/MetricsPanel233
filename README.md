@@ -119,7 +119,26 @@ metricspanel dashboards export --id IMPORTED_ID --format grafana > original-graf
 
 ## Grafana 生态兼容范围
 
-自建仪表盘支持多个时间序列、数值和表格面板，可新增、编辑、复制和删除。自建仪表盘统一排列面板，不插入采集状态和命令行宣传条。
+当前按 Grafana 13.2.3 开源版逐项实现和验收。完整替代尚未完成；[核心数据源与图表清单](docs/grafana-compatibility.md) 和 [产品功能验收清单](docs/grafana-product-parity.md) 记录已验证能力及缺口。
+
+自建仪表盘支持多个时间序列、数值和表格面板，可新增、编辑、复制和删除。“编辑布局”使用 24 列网格，支持拖动、右下角缩放、位置输入和键盘操作；方向键移动，Shift + 方向键调整大小。取消编辑不写入配置；保存要求当前修订号，冲突时保留草稿并提示重新加载。
+
+原生仪表盘和导入模板均可使用“面板查询”编辑 Prometheus、SQL、表达式及已安装 SDK 数据源。原生面板保留完整查询配置，编辑标题或复制面板不会覆盖数据源查询。表格使用固定版本 Grafana SDK 组件，提供排序、分页、字段显示和汇总，不再截断为 500 行。
+
+“变量”支持查询、自定义、常量、文本输入、数据源和时间间隔类型，可设置默认值、显示名称、正则、排序、多选和全部选项。依赖查询按变量关系加载，选择同步至 URL；面板查询、注释和快照使用当前选择。变量、面板查询、注释查询和布局均通过修订号检查原子保存并记录历史；服务端合并变更字段，保留原始模型中未修改的大整数与插件字段。重命名变量后仍需修改引用旧名称的查询。
+
+```sh
+metricspanel dashboards queries --id DASHBOARD_ID --revision UPDATED_AT --file query-edits.json
+metricspanel dashboards panels --id DASHBOARD_ID --revision UPDATED_AT --file panel-edit.json
+metricspanel dashboards variables --id DASHBOARD_ID --revision UPDATED_AT --file variable-edits.json
+metricspanel dashboards annotation-queries --id DASHBOARD_ID --revision UPDATED_AT --file annotation-edits.json
+```
+
+各编辑文件的结构见 `metricspanel schema`。新查询或变量不带 `baseline`；编辑已有项需携带读取时的原模型，省略的项将删除。版本冲突不会保存部分配置。
+
+MySQL/MariaDB 和 PostgreSQL 同时提供内置 SQL 数据源；采集器用于定时记录指标，数据源用于仪表盘和 Explore 执行 SQL。数据库连接配置密码加密保存；支持只读事务、连接池、查询取消、表格/时序帧、时间宏、空值及 `__text`/`__value` 变量选项。PostgreSQL 使用官方 `grafana-postgresql-datasource` ID，并接受 `postgres` 别名。默认每次查询限时 20 秒、最多 10,000 行。SQL 可视化构建器和完整核心数据源编辑器仍待补齐。
+
+Classic / V1 / V2 导入仪表盘同样支持布局编辑。服务端只修改位置，保留查询、插件选项、共享面板引用和原始 JSON 中的大整数。V2 AutoGrid 保存为显式 Grid；Rows / Tabs 保留所属分组，跨越前一个分组底部的移动会明确拒绝。重复面板编辑基础布局，保存操作计入版本历史。
 
 “创建快照”保存所选时间窗口及全部面板的数据、类型、位置和显示选项；导入模板的重复面板会按当前变量展开。保存后成为独立仪表盘，原数据更新或原仪表盘删除不影响快照。快照只使用内置 `snapshot` 查询，不访问原数据源；刷新默认关闭，保留窗口固定。数据不会写入监控指标库；快照随控制数据库持久化。可用网页或 `dashboards export --id ID --format grafana` 导出，`dashboards save --file FILE` 重新导入。CLI 可列出、导出、导入和删除快照；当前窗口的数据捕获由浏览器执行，CLI 尚无单步捕获命令。每个面板最多 512 KiB，完整快照最多 4 MiB，超限请缩短时间范围。暂未提供匿名公开快照链接、过期删除或 Grafana `/api/snapshots` 接口。
 
@@ -208,9 +227,9 @@ field override 的单位、阈值、value mapping 等支持；自定义绘图选
 
 | 工作流 | 已有能力 | 仍缺少的能力 |
 | --- | --- | --- |
-| 仪表盘编辑 | 多面板、模板导入、查询编辑、变量选择、快照、版本历史 | 拖动与缩放布局、变量配置、完整字段选项与转换编辑 |
-| 告警通知 | 定时评估、查询图、规则组、状态历史、告警注释 | Contact points、通知策略、外部投递与重试、Alertmanager 静默 |
-| 数据源与 Explore | Prometheus、Grafana 查询、已安装 SDK 数据源插件 | 内置任意 MySQL / PostgreSQL SQL 查询、完整日志与追踪工作流；直连采集器只采固定指标 |
+| 仪表盘编辑 | 多面板、模板导入、查询编辑、拖动与缩放布局、六类变量配置与选择、快照、版本历史 | 完整字段选项与转换编辑、ad hoc 和 group-by 变量 |
+| 告警通知 | 定时评估、查询图、规则组、状态历史、告警注释、Webhook 联系点、递归标签路由、分组与重复通知、静默、定时静音、通知模板预览、持久化投递与重试 | 邮件 / Slack 等内置接收器、完整 Grafana 模板函数与默认格式、inhibition、其余 Alertmanager 接口 |
+| 数据源与 Explore | Prometheus、Grafana、MySQL / MariaDB、PostgreSQL SQL 查询、已安装 SDK 数据源插件 | 官方 SQL visual Builder、其余核心数据源、完整日志与追踪工作流；直连采集器只采固定指标 |
 | 用户与权限 | 工作空间令牌、同源校验、加密连接凭据 | 用户、组织、团队、角色、文件夹权限和独立服务账号 |
 | Agent 与分享 | JSON CLI、API 发现、资源配置和版本操作 | CLI 单步快照捕获、匿名分享与到期管理 |
 
@@ -414,11 +433,11 @@ Agent 可运行 `metricspanel datasources query --id __expr__ --file examples/qu
 
 SQL 面板支持固定偏移与前一时段比较。两次后端请求分别使用当前／历史窗口，在请求内保留原始 RefID 和 SQL，返回后添加 `-compare` 与 `timeCompare` 元数据，因此 CTE、别名、引号内文本不需改写。原生曲线对齐显示时间，SDK 帧保留历史时间。SQL 使用真实面板变量与时间宏，允许变量和输入 RefID 同名；统一的 `__display_name__` 恢复数值列显示名，混合名称继续保留逐行数据，不修改缓存帧。原始时间输入支持显式 `DATETIME(6)` 精度转换；MySQL 默认 `TIMESTAMP` 输出精度为秒。示例为 `examples/grafana-sql-comparison.json`。
 
-导入模板的「面板查询」入口支持可视化编辑 Math、Reduce（严格／丢弃／替换非数值）、Resample、Threshold（反转与自定义恢复阈值）、有序 Classic conditions 和 SQL（table／alerting 格式）。已安装数据源使用公开 SDK `QueryEditor`，接收插件上下文、时间窗口、查询列表和按 RefID 的响应数据；修改、运行、添加查询回调均连接实际查询图。可调整顺序、隐藏显示、参与比较，并用高级 JSON 保留插件扩展字段。预览支持实时流，停止、修改查询和关闭编辑器会取消订阅。
+原生仪表盘和导入模板的「面板查询」入口支持可视化编辑 Math、Reduce（严格／丢弃／替换非数值）、Resample、Threshold（反转与自定义恢复阈值）、有序 Classic conditions 和 SQL（table／alerting 格式）。已安装数据源使用公开 SDK `QueryEditor`，接收插件上下文、时间窗口、查询列表和按 RefID 的响应数据；修改、运行、添加查询回调均连接实际查询图。可调整顺序、隐藏显示、参与比较，并用高级 JSON 保留插件扩展字段。预览支持实时流，停止、修改查询和关闭编辑器会取消订阅。
 
-保存同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板和未知字段。原生 PUT 可携带 `If-Match: updated_at`；SQLite 控制库原子检查版本，过期或已删除对象返回 409，不会覆盖新修改。Agent 使用 `dashboards export --id ID --format native` 获取版本，再执行 `dashboards save --id ID --file FILE --revision UPDATED_AT`。省略版本的旧调用仍可用；版本单调递增。其余 Grafana 核心数据源编辑器仍待补齐。Testify、真实 SDK 浏览器用例、中文／英文手机布局和两轮 Docker 测试验证执行、保存与重启行为。
+查询编辑通过原子 PATCH 同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板、未知字段和未修改的大数值。`If-Match: updated_at` 是必填项；过期或已删除对象返回 409。Agent 使用 `dashboards export --id ID --format native` 读取版本，再执行 `dashboards queries --id ID --file FILE --revision UPDATED_AT`，文件包含查询及打开编辑器时的 baseline。整份仪表盘的旧 PUT 接口仍可用。其余核心数据源编辑器仍待补齐，验证以 Windows PC 浏览器为准。
 
-The imported-template **Panel queries** workspace edits all six supported expression operations, including recovery thresholds and ordered classic conditions. Installed datasource SDK editors receive real context, range, query list and per-reference results; change/run/add callbacks execute the actual query graph. Live previews are cancelled on stop, edits and close. Saves update both runtime queries and the original Classic/V1/V2 resource while retaining opaque envelopes and other panels. Native saves support atomic `If-Match: updated_at`; agents can use `dashboards save --revision UPDATED_AT` with a native export. Stale or deleted dashboards return 409. Full alert-graph visual editing and remaining core datasource editors are still pending.
+The **Panel queries** workspace supports native and imported dashboards, all six expression operations and installed SDK editors. Saves use an atomic PATCH with mandatory `If-Match: updated_at`, retaining unchanged raw numbers, envelopes and other panels. Use `dashboards queries --id ID --revision UPDATED_AT --file FILE|-` with the baseline merge contract in `metricspanel schema`. Remaining core datasource editors are still pending.
 契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
 
 ## Dashboard 时间范围
@@ -465,7 +484,7 @@ scoped bus 和旧版 `emit/on/off`，自定义事件可在应用和扩展间通�
 
 `AppEvents.alertSuccess/alertWarning/alertError/alertInfo` 显示四种原生通知，支持标题、描述及 Error.message，
 文字按纯文本展示，最多 8192 字符。错误和警告使用 `role=alert`；关闭按钮随中文 / 英文界面切换。
-这是浏览器通知；服务端告警通知投递仍待实现。主题目前固定为深色；CopyPanelEvent 的原生复制动作、
+这是浏览器通知；服务端告警 Webhook 在“告警 → 通知”中配置。主题目前固定为深色；CopyPanelEvent 的原生复制动作、
 原生图表的全局 hover/select，以及其他应用核心服务仍需继续接入。
 独立 App 和两个 SDK 面板测试覆盖真实查询更新、重复事件隔离、卸载 / 重挂载、限流、通知及手机布局。
 参考 [Grafana 事件订阅契约](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events)。
@@ -586,7 +605,7 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
 
-未知数据源、非法节点和循环依赖在保存前拒绝；外部通知 / Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+未知数据源、非法节点和循环依赖在保存前拒绝；Webhook 通知已支持，完整 Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

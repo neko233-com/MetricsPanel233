@@ -278,6 +278,12 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			fail(w, 400, err)
 			return
 		}
+		if isSQLSource(input.Type) {
+			if _, err := sqlSourceConfiguration(input.DataSource); err != nil {
+				fail(w, 400, err)
+				return
+			}
+		}
 		ds, err := s.Store.SaveDataSource(r.Context(), input)
 		if err != nil {
 			if errors.Is(err, store.ErrDataSourceConflict) {
@@ -287,6 +293,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			}
 			return
 		}
+		s.invalidateSQLSource(ds.UID)
 		s.Live.Invalidate("ds", ds.UID, true)
 		writeJSON(w, 200, map[string]any{"id": ds.ID, "uid": ds.UID, "name": ds.Name, "message": "Datasource saved", "datasource": ds})
 	}
@@ -301,6 +308,7 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			resourceError(w, err)
 			return
 		}
+		s.invalidateSQLSource(r.PathValue("uid"))
 		s.Live.Invalidate("ds", r.PathValue("uid"), false)
 		writeJSON(w, 200, map[string]string{"message": "Datasource deleted"})
 	})
@@ -320,6 +328,14 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
+		if isSQLSource(ds.Type) {
+			if err := s.checkSQLSource(ctx, ds); err != nil {
+				fail(w, 502, err)
+				return
+			}
+			writeJSON(w, 200, map[string]string{"status": "OK", "message": "Data source is working"})
+			return
+		}
 		if ds.Type == "prometheus" {
 			now := time.Now()
 			_, err := s.queryPrometheusSource(ctx, ds, backend.DataQuery{RefID: "health", JSON: json.RawMessage(`{"expr":"vector(1)","instant":true}`), TimeRange: backend.TimeRange{From: now, To: now}, MaxDataPoints: 1})
@@ -593,11 +609,13 @@ func (s *Server) writeQueryGroups(w http.ResponseWriter, r *http.Request, groups
 			resourceError(w, err)
 			return
 		}
-		if ds.Type == "prometheus" || ds.Type == "grafana" {
+		if ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
 			for _, q := range queries {
 				var frames data.Frames
 				var err error
-				if ds.Type == "grafana" {
+				if isSQLSource(ds.Type) {
+					frames, err = s.querySQLSource(ctx, ds, q)
+				} else if ds.Type == "grafana" {
 					frames, err = s.queryGrafanaSource(ctx, q)
 				} else {
 					frames, err = s.queryPrometheusSource(ctx, ds, q)

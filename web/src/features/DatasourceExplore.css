@@ -1,0 +1,74 @@
+.explore-source-selector {
+  max-width: 540px;
+  margin-bottom: 24px;
+}
+.explore-query-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.explore-query-toolbar label {
+  margin: 0;
+  min-width: 150px;
+}
+.explore-query-toolbar button {
+  margin-top: 24px;
+}
+.explore-query-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+.configured-explore .query-editor-fields {
+  min-width: 0;
+}
+.configured-explore .sql-query-editor label {
+  max-width: none;
+}
+.sql-query-help {
+  margin: 12px 0 18px;
+}
+.sql-query-help p {
+  margin: 14px 0;
+  font-size: 13px;
+}
+.sql-query-help pre {
+  padding: 16px;
+  background: #121720;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+.sql-query-help a {
+  color: var(--orange);
+  font-size: 13px;
+}
+.explore-frame-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-top: 1px solid var(--border);
+}
+.explore-result-frame td {
+  max-width: 700px;
+  overflow-wrap: anywhere;
+}
+.explore-frame-pages {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: flex-end;
+  padding: 12px 22px;
+}
+.explore-source-results .row-actions button[aria-pressed="true"] {
+  color: var(--orange);
+  border-color: #ff945760;
+  background: #ff945715;
+}
+.explore-source-empty {
+  padding: 22px;
+  border-top: 1px solid var(--border);
+}

@@ -16,6 +16,7 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/lib/pq v1.12.3
+	github.com/prometheus/alertmanager v0.34.1
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.72.0
@@ -148,6 +149,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/apimachinery v0.37.0 // indirect
 	k8s.io/client-go v0.37.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect

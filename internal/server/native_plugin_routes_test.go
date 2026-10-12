@@ -199,8 +199,8 @@ func TestNativeInstalledListFiltersSignatureAndActualErrors(t *testing.T) {
 		query string
 		count int
 	}{
-		{"", 4}, {"?type=panel", 2}, {"?type=datasource", 1}, {"?enabled=1", 3},
-		{"?core=1", 0}, {"?core=0", 4}, {"?embedded=0", 2}, {"?embedded=include-datasource", 3}, {"?type=panel&enabled=1", 1},
+		{"", 6}, {"?type=panel", 2}, {"?type=datasource", 3}, {"?enabled=1", 5},
+		{"?core=1", 2}, {"?core=0", 4}, {"?embedded=0", 4}, {"?embedded=include-datasource", 5}, {"?type=panel&enabled=1", 1},
 	} {
 		w := nativePluginCall(handler, "GET", "/api/plugins"+test.query, "", app.Token)
 		require.Equal(t, 200, w.Code, w.Body.String())

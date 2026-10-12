@@ -32,13 +32,20 @@ export type Variable = {
   multi: boolean;
   include_all: boolean;
   config?: {
+    [key: string]: unknown;
     datasource?: string | { uid?: string; type?: string };
     query?: unknown;
+    current?: { value?: unknown; text?: unknown; [key: string]: unknown };
     label?: string;
     hide?: number | string;
     regex?: string;
     sort?: number | string;
     allValue?: string;
+    auto?: boolean;
+    auto_count?: number;
+    auto_min?: string;
+    skipUrlSync?: boolean;
+    allowCustomValue?: boolean;
     options?: { text: string; value: string }[];
   };
 };
