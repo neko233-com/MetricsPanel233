@@ -112,7 +112,7 @@ func TestTeamCRUDSearchIsolationAndRestart(t *testing.T) {
 	require.Equal(t, updated, restored)
 	var version int
 	require.NoError(t, store.db.QueryRow(`SELECT version FROM identity_schema WHERE id=1`).Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 6, version)
 }
 
 func TestTeamTypedMembersOrgBindingsAndForeignKeys(t *testing.T) {

@@ -32,7 +32,7 @@ type communityImportRequest struct {
 	FolderID  int64             `json:"folderId"`
 }
 
-func (s *Server) dashboardCatalogRoutes(api *http.ServeMux) {
+func (s *Server) dashboardCatalogRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/v1/dashboards/community/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _, err := grafana.ParseCommunityReference(r.PathValue("id"))
 		if err != nil {

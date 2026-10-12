@@ -18,7 +18,7 @@ type dashboardVariableDraft struct {
 	Variable     json.RawMessage `json:"variable"`
 }
 
-func (s *Server) dashboardVariableRoutes(api *http.ServeMux) {
+func (s *Server) dashboardVariableRoutes(api routeRegistrar) {
 	api.HandleFunc("PATCH /api/v1/dashboards/{id}/variables", func(w http.ResponseWriter, r *http.Request) {
 		match := strings.TrimSpace(r.Header.Get("If-Match"))
 		if match == "" {

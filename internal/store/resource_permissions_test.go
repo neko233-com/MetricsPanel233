@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -509,4 +510,297 @@ func TestResourcePermissionsRealCatalogMembershipRejoinGeneration(t *testing.T) 
 	effective, err = s.EffectiveResourcePermission(ctx, ref, permissionActor(1, user.ID, identity.TypeUser, identity.RoleNone), resolver)
 	require.NoError(t, err)
 	assert.Equal(t, model.PermissionView, effective.Permission, "a valid direct grant survives role-version changes")
+}
+
+func TestResourcePermissionsDeleteAndRecreateDashboard(t *testing.T) {
+	for _, orgID := range []int64{1, 2} {
+		for _, native := range []bool{true, false} {
+			t.Run(fmt.Sprintf("org%d/native%t", orgID, native), func(t *testing.T) {
+				ctx := context.Background()
+				s := permissionStore(t, orgID)
+				_, err := s.SaveDashboard(ctx, model.Dashboard{ID: "recreated", Name: "Original"})
+				require.NoError(t, err)
+				creator := permissionSubject(model.PermissionUser, 7)
+				ref := permissionRef(s, model.PermissionDashboard, "recreated")
+				seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator})
+				if native {
+					err = s.DeleteDashboard(ctx, ref.UID)
+				} else {
+					_, err = s.DB.ExecContext(ctx, `DELETE FROM dashboards WHERE id=?`, ref.UID)
+				}
+				require.NoError(t, err)
+				requirePermissionRowsAbsent(t, s, ref)
+				_, err = s.SaveDashboard(ctx, model.Dashboard{ID: ref.UID, Name: "New content"})
+				require.NoError(t, err)
+				_, err = s.ResourcePermissions(ctx, ref)
+				require.ErrorIs(t, err, store.ErrPermissionUninitialized, "reusing a UID must not reuse old permission rows")
+				doc := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults})
+				require.Len(t, doc.Items, 2, "only newly chosen defaults are seeded")
+				effective, err := s.EffectiveResourcePermission(ctx, ref, permissionActor(orgID, creator.ID, identity.TypeUser, identity.RoleNone), permissionFixtureResolver())
+				require.NoError(t, err)
+				assert.Equal(t, model.PermissionNone, effective.Permission, "the old creator has no permission on new content")
+			})
+		}
+	}
+}
+
+func requirePermissionRowsAbsent(t *testing.T, s *store.Store, ref model.PermissionResource) {
+	t.Helper()
+	for _, table := range []string{"resource_acl_resources", "resource_acl_grants"} {
+		var count int
+		require.NoError(t, s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE org_id=? AND resource_kind=? AND resource_uid=?`, ref.OrgID, ref.Kind, ref.UID).Scan(&count))
+		require.Zero(t, count, table)
+	}
+}
+
+func TestResourcePermissionsDeleteFolderSubtreeAndDirectSQL(t *testing.T) {
+	ctx := context.Background()
+	s := permissionStore(t, 2)
+	creator := permissionSubject(model.PermissionUser, 7)
+	seed := model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator}
+	refs := []model.PermissionResource{}
+	for _, folder := range []model.Folder{
+		{UID: "root", Title: "Root"}, {UID: "nested", Title: "Nested", ParentUID: "root"},
+		{UID: "sql", Title: "Direct SQL"}, {UID: "keep", Title: "Keep"},
+	} {
+		_, err := s.CreateFolder(ctx, folder)
+		require.NoError(t, err)
+		ref := permissionRef(s, model.PermissionFolder, folder.UID)
+		seedPermission(t, s, ref, seed)
+		if folder.UID != "keep" {
+			refs = append(refs, ref)
+		}
+	}
+	for _, d := range []model.Dashboard{
+		{ID: "in-root", Name: "Root dashboard", FolderUID: "root"},
+		{ID: "in-nested", Name: "Nested dashboard", FolderUID: "nested"},
+		{ID: "keep-dashboard", Name: "Keep dashboard", FolderUID: "keep"},
+	} {
+		_, err := s.SaveDashboard(ctx, d)
+		require.NoError(t, err)
+		ref := permissionRef(s, model.PermissionDashboard, d.ID)
+		seedPermission(t, s, ref, seed)
+		if d.ID != "keep-dashboard" {
+			refs = append(refs, ref)
+		}
+	}
+	keepRef := permissionRef(s, model.PermissionFolder, "keep")
+	keepDoc, err := s.ResourcePermissions(ctx, keepRef)
+	require.NoError(t, err)
+	keepDashboard := permissionRef(s, model.PermissionDashboard, "keep-dashboard")
+	keepDashboardDoc, err := s.ResourcePermissions(ctx, keepDashboard)
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteFolder(ctx, "root", false))
+	_, err = s.DB.ExecContext(ctx, `DELETE FROM folders WHERE uid='sql'`)
+	require.NoError(t, err)
+	for _, ref := range refs {
+		requirePermissionRowsAbsent(t, s, ref)
+	}
+	actual, err := s.ResourcePermissions(ctx, keepRef)
+	require.NoError(t, err)
+	assert.Equal(t, keepDoc, actual)
+	actual, err = s.ResourcePermissions(ctx, keepDashboard)
+	require.NoError(t, err)
+	assert.Equal(t, keepDashboardDoc, actual)
+	for _, folder := range []model.Folder{{UID: "root", Title: "New root"}, {UID: "nested", Title: "New nested", ParentUID: "root"}, {UID: "sql", Title: "New SQL"}} {
+		_, err = s.CreateFolder(ctx, folder)
+		require.NoError(t, err)
+		_, err = s.ResourcePermissions(ctx, permissionRef(s, model.PermissionFolder, folder.UID))
+		require.ErrorIs(t, err, store.ErrPermissionUninitialized)
+	}
+}
+
+func TestResourcePermissionsContentDeleteCleanupRollsBack(t *testing.T) {
+	ctx := context.Background()
+	s := permissionStore(t, 2)
+	_, err := s.CreateFolder(ctx, model.Folder{UID: "rollback", Title: "Rollback"})
+	require.NoError(t, err)
+	_, err = s.SaveDashboard(ctx, model.Dashboard{ID: "rollback", Name: "Rollback", FolderUID: "rollback", Grafana: []byte(`{"uid":"rollback","opaque":900719925474099312345}`)})
+	require.NoError(t, err)
+	creator := permissionSubject(model.PermissionUser, 7)
+	refs := []model.PermissionResource{permissionRef(s, model.PermissionDashboard, "rollback"), permissionRef(s, model.PermissionFolder, "rollback")}
+	originals := []model.ResourcePermissionDocument{}
+	for _, ref := range refs {
+		originals = append(originals, seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionLegacyDefaults, Creator: &creator}))
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `UPDATE resource_acl_resources SET version=version+1 WHERE resource_kind='dashboard' AND resource_uid='rollback'`)
+	require.NoError(t, err)
+	var uncommittedVersion int64
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT last_version FROM resource_acl_revision_ledger WHERE org_id=2 AND resource_kind='dashboard' AND resource_uid='rollback'`).Scan(&uncommittedVersion))
+	require.Equal(t, originals[0].Version+1, uncommittedVersion)
+	_, err = tx.ExecContext(ctx, `DELETE FROM dashboards WHERE id='rollback'`)
+	require.NoError(t, err)
+	var folderACLs int
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM resource_acl_resources WHERE org_id=2 AND resource_kind='folder' AND resource_uid='rollback'`).Scan(&folderACLs))
+	require.Equal(t, 1, folderACLs, "dashboard deletion cannot remove a folder ACL with the same UID")
+	_, err = tx.ExecContext(ctx, `DELETE FROM folders WHERE uid='rollback'`)
+	require.NoError(t, err)
+	for _, table := range []string{"resource_acl_resources", "resource_acl_grants"} {
+		var count int
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM `+table+` WHERE resource_uid='rollback'`).Scan(&count))
+		require.Zero(t, count, "cleanup already happened inside the uncommitted content transaction")
+	}
+	require.NoError(t, tx.Rollback())
+	for i, ref := range refs {
+		doc, err := s.ResourcePermissions(ctx, ref)
+		require.NoError(t, err)
+		assert.Equal(t, originals[i], doc, "rollback restores ACL versions and all grants")
+		assert.Equal(t, originals[i].Version, permissionLedgerVersion(t, s, ref), "rollback cannot consume a future revision")
+	}
+	dashboard, err := s.Dashboard(ctx, "rollback")
+	require.NoError(t, err)
+	assert.Contains(t, string(dashboard.Grafana), "900719925474099312345")
+	_, err = s.DashboardVersion(ctx, "rollback", dashboard.GrafanaVersion)
+	require.NoError(t, err, "cascaded content history also rolls back")
+	// Reapplying the schema on an existing store must retain both cleanup hooks.
+	require.NoError(t, s.InitializeResourcePermissionSchema(ctx))
+	require.NoError(t, s.DeleteFolder(ctx, "rollback", false))
+	for _, ref := range refs {
+		requirePermissionRowsAbsent(t, s, ref)
+	}
+}
+
+func TestResourcePermissionsRecreatedRevisionRejectsStaleDraft(t *testing.T) {
+	ctx := context.Background()
+	s := permissionStore(t, 2)
+	_, err := s.SaveDashboard(ctx, model.Dashboard{ID: "same-uid", Name: "Old content"})
+	require.NoError(t, err)
+	ref := permissionRef(s, model.PermissionDashboard, "same-uid")
+	oldCreator := permissionSubject(model.PermissionUser, 7)
+	old := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionLegacyDefaults, Creator: &oldCreator})
+	require.NoError(t, s.DeleteDashboard(ctx, ref.UID))
+	_, err = s.SaveDashboard(ctx, model.Dashboard{ID: ref.UID, Name: "New content"})
+	require.NoError(t, err)
+	newCreator := permissionSubject(model.PermissionUser, 9)
+	fresh := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionLegacyDefaults, Creator: &newCreator})
+	t.Logf("deleted ACL version=%d, recreated ACL version=%d", old.Version, fresh.Version)
+	_, err = s.ReplaceResourcePermissions(ctx, ref, old.Version, old.Items, permissionFixtureResolver())
+	assert.ErrorIs(t, err, store.ErrPermissionVersion, "a stale draft from deleted content cannot write the new ACL")
+	actual, err := s.ResourcePermissions(ctx, ref)
+	require.NoError(t, err)
+	assert.Equal(t, fresh, actual, "rejected stale writes preserve the new creator/defaults")
+	assert.Greater(t, fresh.Version, old.Version, "UID reuse cannot reuse an ACL revision")
+}
+
+func permissionLedgerVersion(t *testing.T, s *store.Store, ref model.PermissionResource) int64 {
+	t.Helper()
+	var version int64
+	require.NoError(t, s.DB.QueryRow(`SELECT last_version FROM resource_acl_revision_ledger WHERE org_id=? AND resource_kind=? AND resource_uid=?`, ref.OrgID, ref.Kind, ref.UID).Scan(&version))
+	return version
+}
+
+func TestResourcePermissionsRevisionLedgerMigrationCleanupAndRestart(t *testing.T) {
+	ctx := context.Background()
+	s := permissionStore(t, 2)
+	creator := permissionSubject(model.PermissionUser, 7)
+	_, err := s.CreateFolder(ctx, model.Folder{UID: "ledger", Title: "Same UID folder"})
+	require.NoError(t, err)
+	folder := permissionRef(s, model.PermissionFolder, "ledger")
+	folderDoc := seedPermission(t, s, folder, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator})
+	_, err = s.SaveDashboard(ctx, model.Dashboard{ID: "ledger", Name: "Old content"})
+	require.NoError(t, err)
+	ref := permissionRef(s, model.PermissionDashboard, "ledger")
+	doc := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator})
+	doc, err = s.ReplaceResourcePermissions(ctx, ref, doc.Version, []model.ResourcePermissionGrant{{Subject: creator, Permission: model.PermissionEdit}}, permissionFixtureResolver())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), doc.Version)
+	require.Equal(t, doc.Version, permissionLedgerVersion(t, s, ref))
+	job := model.ResourcePermissionCleanup{JobID: "ledger-cleanup", OrgID: 2, Subject: creator, IdentityVersion: 2, IdentityGeneration: 1}
+	require.NoError(t, s.CleanupResourcePermissionSubject(ctx, job))
+	doc, err = s.ResourcePermissions(ctx, ref)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), doc.Version)
+	require.Empty(t, doc.Items)
+	require.Equal(t, doc.Version, permissionLedgerVersion(t, s, ref))
+	folderBeforeCleanup := folderDoc.Version
+	folderDoc, err = s.ResourcePermissions(ctx, folder)
+	require.NoError(t, err)
+	require.Equal(t, folderBeforeCleanup+1, folderDoc.Version, "cleanup advances every affected resource's own counter")
+	require.NoError(t, s.CleanupResourcePermissionSubject(ctx, job))
+	job.JobID = "another-no-matching-grants"
+	require.NoError(t, s.CleanupResourcePermissionSubject(ctx, job))
+	require.Equal(t, doc.Version, permissionLedgerVersion(t, s, ref), "receipt replays and no-op cleanup cannot bump revisions")
+
+	// Reproduce the previous deployed schema: ACL rows exist, ledger does not.
+	for _, name := range []string{"insert", "update", "remember_insert", "remember_update", "remember_delete"} {
+		_, err = s.DB.Exec(`DROP TRIGGER resource_acl_version_` + name)
+		require.NoError(t, err)
+	}
+	_, err = s.DB.Exec(`DROP TABLE resource_acl_revision_ledger`)
+	require.NoError(t, err)
+	require.NoError(t, s.InitializeResourcePermissionSchema(ctx))
+	require.Equal(t, doc.Version, permissionLedgerVersion(t, s, ref), "migration backfills the current committed revision")
+	require.Equal(t, folderDoc.Version, permissionLedgerVersion(t, s, folder))
+	unchanged, err := s.ResourcePermissions(ctx, ref)
+	require.NoError(t, err)
+	assert.Equal(t, doc, unchanged, "schema migration does not change grants or versions")
+	_, err = s.DB.Exec(`UPDATE resource_acl_revision_ledger SET last_version=1 WHERE org_id=2 AND resource_kind='dashboard' AND resource_uid='ledger'`)
+	require.Error(t, err, "the durable high-water mark cannot decrease")
+	_, err = s.DB.Exec(`INSERT INTO resource_acl_revision_ledger VALUES(1,'dashboard','foreign',1)`)
+	require.Error(t, err, "the ledger is tied to this physical store's owner")
+	path := s.Path
+	require.NoError(t, s.DB.Close())
+	s, err = store.OpenForOrganization(path, 2)
+	require.NoError(t, err)
+	defer func() { _ = s.DB.Close() }()
+	require.NoError(t, s.DeleteDashboard(ctx, ref.UID))
+	requirePermissionRowsAbsent(t, s, ref)
+	require.Equal(t, doc.Version, permissionLedgerVersion(t, s, ref), "content deletion retains its last committed revision")
+	require.NoError(t, s.DB.Close())
+	s, err = store.OpenForOrganization(path, 2)
+	require.NoError(t, err)
+	_, err = s.SaveDashboard(ctx, model.Dashboard{ID: ref.UID, Name: "Recreated after restart"})
+	require.NoError(t, err)
+	fresh := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults})
+	require.Equal(t, doc.Version+1, fresh.Version)
+	_, err = s.ReplaceResourcePermissions(ctx, ref, doc.Version, nil, permissionFixtureResolver())
+	require.ErrorIs(t, err, store.ErrPermissionVersion)
+	actual, err := s.ResourcePermissions(ctx, folder)
+	require.NoError(t, err)
+	assert.Equal(t, folderDoc, actual, "folder and dashboard counters with equal UIDs remain independent")
+}
+
+func TestResourcePermissionsRevisionLedgerFailedSeedAndExhaustion(t *testing.T) {
+	ctx := context.Background()
+	s := permissionStore(t, 1)
+	_, err := s.SaveDashboard(ctx, model.Dashboard{ID: "revision-limit", Name: "Revision limit"})
+	require.NoError(t, err)
+	ref := permissionRef(s, model.PermissionDashboard, "revision-limit")
+	creator := permissionSubject(model.PermissionUser, 7)
+	_, err = s.DB.Exec(`CREATE TRIGGER fail_permission_seed BEFORE INSERT ON resource_acl_grants WHEN NEW.subject_kind='user' BEGIN SELECT RAISE(ABORT,'fixture rejected creator grant'); END`)
+	require.NoError(t, err)
+	_, err = s.InitializeResourcePermissions(ctx, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator}, permissionFixtureResolver())
+	require.ErrorContains(t, err, "fixture rejected creator grant")
+	var rows int
+	require.NoError(t, s.DB.QueryRow(`SELECT count(*) FROM resource_acl_revision_ledger WHERE resource_uid='revision-limit'`).Scan(&rows))
+	require.Zero(t, rows, "a failed seed cannot commit its allocated revision")
+	requirePermissionRowsAbsent(t, s, ref)
+	_, err = s.DB.Exec(`DROP TRIGGER fail_permission_seed`)
+	require.NoError(t, err)
+	doc := seedPermission(t, s, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults, Creator: &creator})
+	require.Equal(t, int64(1), doc.Version)
+	_, err = s.DB.Exec(`UPDATE resource_acl_resources SET version=? WHERE org_id=1 AND resource_kind='dashboard' AND resource_uid='revision-limit'`, math.MaxInt64)
+	require.NoError(t, err)
+	doc, err = s.ResourcePermissions(ctx, ref)
+	require.NoError(t, err)
+	require.Equal(t, int64(math.MaxInt64), permissionLedgerVersion(t, s, ref))
+	_, err = s.ReplaceResourcePermissions(ctx, ref, doc.Version, nil, permissionFixtureResolver())
+	require.ErrorIs(t, err, store.ErrPermissionVersionLimit)
+	job := model.ResourcePermissionCleanup{JobID: "exhausted-cleanup", OrgID: 1, Subject: creator, IdentityVersion: 2, IdentityGeneration: 1}
+	require.ErrorIs(t, s.CleanupResourcePermissionSubject(ctx, job), store.ErrPermissionVersionLimit)
+	_, err = s.DB.Exec(`UPDATE resource_acl_resources SET version=version+1 WHERE resource_uid='revision-limit'`)
+	require.Error(t, err, "SQLite must not convert an overflowing revision to a REAL")
+	unchanged, err := s.ResourcePermissions(ctx, ref)
+	require.NoError(t, err)
+	assert.Equal(t, doc, unchanged)
+	require.NoError(t, s.DeleteDashboard(ctx, ref.UID))
+	_, err = s.SaveDashboard(ctx, model.Dashboard{ID: ref.UID, Name: "Cannot reset an exhausted UID"})
+	require.NoError(t, err)
+	_, err = s.InitializeResourcePermissions(ctx, ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults}, permissionFixtureResolver())
+	require.ErrorIs(t, err, store.ErrPermissionVersionLimit)
+	requirePermissionRowsAbsent(t, s, ref)
+	require.Equal(t, int64(math.MaxInt64), permissionLedgerVersion(t, s, ref))
 }

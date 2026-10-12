@@ -20,6 +20,7 @@ var (
 
 type User struct {
 	ID            int64  `json:"id"`
+	UID           string `json:"uid"`
 	Login         string `json:"login"`
 	Name          string `json:"name"`
 	Email         string `json:"email"`
@@ -64,11 +65,11 @@ CREATE TABLE IF NOT EXISTS service_account_tokens(id INTEGER PRIMARY KEY AUTOINC
 	return initializeTeams(tx)
 }
 
-const userColumns = `id,login,name,email,current_org_id,is_server_admin,disabled,version,created_at,updated_at`
+const userColumns = `id,uid,login,name,email,current_org_id,is_server_admin,disabled,version,created_at,updated_at`
 
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var user User
-	err := row.Scan(&user.ID, &user.Login, &user.Name, &user.Email, &user.CurrentOrgID, &user.IsServerAdmin, &user.Disabled, &user.Version, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.UID, &user.Login, &user.Name, &user.Email, &user.CurrentOrgID, &user.IsServerAdmin, &user.Disabled, &user.Version, &user.CreatedAt, &user.UpdatedAt)
 	return user, err
 }
 
@@ -222,8 +223,12 @@ func (s *Store) createUser(ctx context.Context, input UserInput, bootstrap bool)
 	if err := activeOrganization(ctx, tx, input.OrgID); err != nil {
 		return User{}, err
 	}
+	uid, err := newUserUID()
+	if err != nil {
+		return User{}, err
+	}
 	now := time.Now().UnixMilli()
-	user, err := scanUser(tx.QueryRowContext(ctx, `INSERT INTO users(login,name,email,current_org_id,is_server_admin,disabled,version,created_at,updated_at) VALUES(?,?,?,?,?,0,1,?,?) RETURNING `+userColumns, input.Login, input.Name, input.Email, input.OrgID, input.IsServerAdmin, now, now))
+	user, err := scanUser(tx.QueryRowContext(ctx, `INSERT INTO users(uid,login,name,email,current_org_id,is_server_admin,disabled,version,created_at,updated_at) VALUES(?,?,?,?,?,?,0,1,?,?) RETURNING `+userColumns, uid, input.Login, input.Name, input.Email, input.OrgID, input.IsServerAdmin, now, now))
 	if err != nil {
 		return User{}, err
 	}

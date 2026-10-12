@@ -108,7 +108,7 @@ func OpenForOrganization(path string, organizationID int64) (*Store, error) {
 		}
 	}
 	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
-		for _, table := range []string{"datasources", "app_settings", "target_connections", "alert_contact_points"} {
+		for _, table := range []string{"datasources", "app_settings", "target_connections", "alert_contact_points", "alert_smtp_profile_revisions", "alert_receiver_integration_revisions", "alert_receiver_dispatches", "alert_receiver_deliveries", "alert_receiver_legacy_outbox"} {
 			var exists int
 			if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
 				db.Close()

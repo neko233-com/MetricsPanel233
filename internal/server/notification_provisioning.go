@@ -184,7 +184,7 @@ func resolveProvisionedReceiver(points []model.ContactPoint, receiver string) (s
 	return matches[0], nil
 }
 
-func (s *Server) notificationProvisioningRoutes(api *http.ServeMux) {
+func (s *Server) notificationProvisioningRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/v1/provisioning/contact-points", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("decrypt") == "true" {
 			fail(w, 400, errors.New("contact point credentials are write-only"))

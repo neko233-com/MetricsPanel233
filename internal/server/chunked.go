@@ -38,7 +38,7 @@ func requestsChunks(accept string) bool {
 	return false
 }
 
-func (s *Server) chunkedRoutes(api *http.ServeMux) {
+func (s *Server) chunkedRoutes(api routeRegistrar) {
 	api.HandleFunc("POST /apis/{group}/v0alpha1/namespaces/{namespace}/connections/{uid}/query", func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("namespace") != identity.Namespace(s.OrganizationID()) {
 			fail(w, 404, errors.New("namespace not found"))

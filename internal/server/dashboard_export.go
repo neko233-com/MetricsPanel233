@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-func (s *Server) dashboardExportRoutes(api *http.ServeMux) {
+func (s *Server) dashboardExportRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/v1/dashboard-exports/{id}", func(w http.ResponseWriter, r *http.Request) {
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil || len(query["format"]) > 1 {

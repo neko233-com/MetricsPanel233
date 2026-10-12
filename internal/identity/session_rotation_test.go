@@ -195,7 +195,7 @@ UPDATE identity_schema SET version=3 WHERE id=1`)
 	defer catalog.Close()
 	var version int
 	require.NoError(t, catalog.db.QueryRow(`SELECT version FROM identity_schema WHERE id=1`).Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 6, version)
 	var digest, previous []byte
 	var migrated Session
 	require.NoError(t, catalog.db.QueryRow(`SELECT token_hash,previous_token_hash FROM browser_sessions WHERE id=?`, original.ID).Scan(&digest, &previous))

@@ -9,16 +9,19 @@ import (
 )
 
 type Session struct {
-	ID            int64 `json:"id"`
-	UserID        int64 `json:"userId"`
-	CurrentOrgID  int64 `json:"orgId"`
-	CreatedAt     int64 `json:"created_at"`
-	LastSeen      int64 `json:"last_seen"`
-	ExpiresAt     int64 `json:"expires_at"`
-	IdleTimeoutMS int64 `json:"idle_timeout_ms"`
-	RevokedAt     int64 `json:"revoked_at"`
-	RotatedAt     int64 `json:"rotated_at"`
-	TokenSeen     bool  `json:"token_seen"`
+	ID            int64  `json:"id"`
+	UserID        int64  `json:"userId"`
+	CurrentOrgID  int64  `json:"orgId"`
+	CreatedAt     int64  `json:"created_at"`
+	LastSeen      int64  `json:"last_seen"`
+	ExpiresAt     int64  `json:"expires_at"`
+	IdleTimeoutMS int64  `json:"idle_timeout_ms"`
+	RevokedAt     int64  `json:"revoked_at"`
+	RotatedAt     int64  `json:"rotated_at"`
+	TokenSeen     bool   `json:"token_seen"`
+	ClientIP      string `json:"client_ip"`
+	UserAgent     string `json:"user_agent"`
+	AuthModule    string `json:"auth_module"`
 }
 
 type passwordCandidate struct {
@@ -82,17 +85,21 @@ func (s *Store) AuthenticatePassword(ctx context.Context, login, password string
 	return p, nil
 }
 
-const sessionColumns = `id,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,revoked_at,rotated_at,token_seen`
+const sessionColumns = `id,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,revoked_at,rotated_at,token_seen,client_ip,user_agent,auth_module`
 
 func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	var session Session
-	err := row.Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt, &session.RotatedAt, &session.TokenSeen)
+	err := row.Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt, &session.RotatedAt, &session.TokenSeen, &session.ClientIP, &session.UserAgent, &session.AuthModule)
 	return session, err
 }
 
 // Login returns an opaque credential exactly once; the session table contains
 // only its SHA-256 digest. Session issuance and credential recheck are atomic.
 func (s *Store) Login(ctx context.Context, login, password string, orgID int64, lifetime, idleTimeout time.Duration) (Principal, Session, string, error) {
+	return s.LoginWithMetadata(ctx, login, password, orgID, lifetime, idleTimeout, SessionMetadataInput{})
+}
+
+func (s *Store) LoginWithMetadata(ctx context.Context, login, password string, orgID int64, lifetime, idleTimeout time.Duration, input SessionMetadataInput) (Principal, Session, string, error) {
 	if lifetime < time.Second || lifetime > 365*24*time.Hour || idleTimeout < time.Second || idleTimeout > lifetime {
 		return Principal{}, Session{}, "", errors.New("session lifetime and idle timeout must be between one second and 365 days, with idle timeout no longer than lifetime")
 	}
@@ -121,7 +128,8 @@ func (s *Store) Login(ctx context.Context, login, password string, orgID int64, 
 	if count >= 256 {
 		return Principal{}, Session{}, "", errors.New("active browser session limit reached")
 	}
-	session, err := scanSession(tx.QueryRowContext(ctx, `INSERT INTO browser_sessions(token_hash,previous_token_hash,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,rotated_at,token_seen) VALUES(?,?,?,?,?,?,?,?,?,0) RETURNING `+sessionColumns, digest, digest, p.ID, p.OrgID, now, now, now+lifetime.Milliseconds(), idleTimeout.Milliseconds(), now))
+	metadata := normalizeSessionMetadata(input)
+	session, err := scanSession(tx.QueryRowContext(ctx, `INSERT INTO browser_sessions(token_hash,previous_token_hash,user_id,current_org_id,created_at,last_seen,expires_at,idle_timeout_ms,rotated_at,token_seen,client_ip,user_agent,auth_module) VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?) RETURNING `+sessionColumns, digest, digest, p.ID, p.OrgID, now, now, now+lifetime.Milliseconds(), idleTimeout.Milliseconds(), now, metadata.clientIP, metadata.userAgent, metadata.authModule))
 	if err != nil {
 		return Principal{}, Session{}, "", err
 	}

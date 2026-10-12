@@ -101,7 +101,7 @@ func TestUserProfilePartialFieldsDurableAndAuthenticationRechecks(t *testing.T) 
 	require.Equal(t, updated.Login, principal.Login)
 	serialized, err := json.Marshal(restored)
 	require.NoError(t, err)
-	for _, private := range []string{"profile-password-233", key, `"password"`, `"hash"`, `"salt"`, `"uid"`} {
+	for _, private := range []string{"profile-password-233", key, `"password"`, `"hash"`, `"salt"`} {
 		require.NotContains(t, string(serialized), private)
 	}
 }
@@ -322,7 +322,7 @@ func TestUserGlobalSearchFiltersPaginationAndSafeDTOs(t *testing.T) {
 	require.Equal(t, 1000, page.PerPage)
 	serialized, err := json.Marshal(page)
 	require.NoError(t, err)
-	for _, private := range []string{`"password"`, `"token"`, `"hash"`, `"salt"`, `"uid"`, "profile-password-233"} {
+	for _, private := range []string{`"password"`, `"token"`, `"hash"`, `"salt"`, "profile-password-233"} {
 		require.NotContains(t, string(serialized), private)
 	}
 	page, err = store.SearchUsers(ctx, UserSearch{Page: 10, PerPage: 2})

@@ -21,7 +21,7 @@ type patternCapture struct {
 	Normalization string            `json:"normalization"`
 }
 
-func (s *Server) patternRoutes(api *http.ServeMux) {
+func (s *Server) patternRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/v1/patterns", func(w http.ResponseWriter, r *http.Request) {
 		limit := 100
 		if raw := r.URL.Query().Get("limit"); raw != "" {

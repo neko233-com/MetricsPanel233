@@ -35,16 +35,19 @@ import (
 )
 
 type Server struct {
-	Store             *store.Store
-	Collector         *collector.Collector
-	Alerts            *alerting.Engine
-	Prometheus        *promcompat.API
-	Plugins           *plugins.Manager
-	Live              *live.Hub
-	Community         *grafana.CommunityClient
-	Token             string
-	RetentionDays     int
-	Started           time.Time
+	Store         *store.Store
+	Collector     *collector.Collector
+	Alerts        *alerting.Engine
+	Prometheus    *promcompat.API
+	Plugins       *plugins.Manager
+	Live          *live.Hub
+	Community     *grafana.CommunityClient
+	Token         string
+	RetentionDays int
+	Started       time.Time
+	// Authorizer is immutable after Handler construction. Nil preserves the
+	// existing single-workspace deployment; it does not enable multi-user access.
+	Authorizer        RequestAuthorizer
 	requests          atomic.Uint64
 	dashboardImportMu sync.Mutex
 	sqlSources        sqlSourcePool
@@ -105,7 +108,11 @@ func (s *Server) protect(next http.Handler) http.Handler {
 			fail(w, status, err)
 			return
 		}
-		if !principal.Role.AtLeast(identity.RoleViewer) {
+		if s.Authorizer != nil && (!identity.HasPrincipal(r.Context()) || principal.Type != identity.TypeUser && principal.Type != identity.TypeServiceAccount) {
+			fail(w, http.StatusUnauthorized, identity.ErrUnauthenticated)
+			return
+		}
+		if s.Authorizer == nil && !principal.Role.AtLeast(identity.RoleViewer) {
 			fail(w, http.StatusForbidden, identity.ErrForbidden)
 			return
 		}
@@ -121,10 +128,17 @@ func (s *Server) protect(next http.Handler) http.Handler {
 }
 
 func (s *Server) Handler() http.Handler {
+	handler, _ := s.handlerWithRouteManifest()
+	return handler
+}
+
+func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
+	manifest := []ProtectedRoute{}
 	mux := http.NewServeMux()
-	api := http.NewServeMux()
+	api := s.authorizationMux(http.NewServeMux(), RouteAPI, &manifest)
+	endpoints := s.authorizationMux(mux, RouteEndpoint, &manifest)
 	prom := s.Prometheus
-	promRoutes := http.NewServeMux()
+	promRoutes := s.authorizationMux(http.NewServeMux(), RoutePrometheus, &manifest)
 	s.promAlertRoutes(promRoutes)
 	promRoutes.Handle("/", prom.Handler())
 	s.grafanaRoutes(api, promRoutes)
@@ -141,10 +155,10 @@ func (s *Server) Handler() http.Handler {
 	s.annotationRoutes(api)
 	s.alertRoutes(api)
 	s.notificationRoutes(api)
-	s.pluginRoutes(api, mux)
+	s.pluginRoutes(api, endpoints)
 	s.appRoutes(api)
 	s.chunkedRoutes(api)
-	s.liveRoutes(api, mux)
+	s.liveRoutes(api, endpoints)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {
@@ -273,7 +287,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.Handle("/api/", s.protect(api))
 	mux.Handle("/apis/", s.protect(api))
-	mux.Handle("GET /metrics", s.protect(http.HandlerFunc(s.prometheus)))
+	endpoints.Handle("GET /metrics", s.protect(http.HandlerFunc(s.prometheus)))
 	assets := webassets.Files
 	files := http.FileServer(http.FS(assets))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +311,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.requests.Add(1); mux.ServeHTTP(w, r) })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.requests.Add(1); mux.ServeHTTP(w, r) }), manifest
 }
 
 func resourceError(w http.ResponseWriter, err error) {

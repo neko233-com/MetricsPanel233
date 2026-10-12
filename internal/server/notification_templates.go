@@ -26,7 +26,7 @@ func exportNotificationTemplate(value model.NotificationTemplate) provisionedNot
 	return provisionedNotificationTemplate{Name: value.Name, Template: value.Template, Version: strconv.Itoa(value.Version), Provenance: "api"}
 }
 
-func (s *Server) notificationTemplateRoutes(api *http.ServeMux) {
+func (s *Server) notificationTemplateRoutes(api routeRegistrar) {
 	grafana := func(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/v1/provisioning/") }
 	list := func(w http.ResponseWriter, r *http.Request) {
 		values, err := s.Store.NotificationTemplates(r.Context())

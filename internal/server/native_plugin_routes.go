@@ -19,7 +19,7 @@ type nativeCatalogInstall func(context.Context, string, string) (model.Plugin, e
 
 // install is injectable for deterministic signed-package tests. Production uses
 // the same official downloader and signature installer as the native CLI.
-func (s *Server) nativePluginRoutes(api *http.ServeMux, catalog *plugins.CatalogClient, install nativeCatalogInstall) {
+func (s *Server) nativePluginRoutes(api routeRegistrar, catalog *plugins.CatalogClient, install nativeCatalogInstall) {
 	if install == nil {
 		install = s.Plugins.CatalogInstall
 	}

@@ -23,7 +23,7 @@ func exportMuteTiming(v model.MuteTiming) provisionedMuteTiming {
 	return provisionedMuteTiming{Name: v.Name, TimeIntervals: v.TimeIntervals, Version: strconv.Itoa(v.Version), Provenance: "api"}
 }
 
-func (s *Server) muteTimingRoutes(api *http.ServeMux) {
+func (s *Server) muteTimingRoutes(api routeRegistrar) {
 	api.HandleFunc("POST /api/v1/alerting/mute-timings/preview", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Timing model.MuteTiming `json:"timing"`

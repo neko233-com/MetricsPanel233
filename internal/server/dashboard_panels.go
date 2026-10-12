@@ -28,7 +28,7 @@ type nativePanelEdit struct {
 	Position *panelPosition `json:"position,omitempty"`
 }
 
-func (s *Server) dashboardPanelRoutes(api *http.ServeMux) {
+func (s *Server) dashboardPanelRoutes(api routeRegistrar) {
 	api.HandleFunc("PATCH /api/v1/dashboards/{id}/panels", func(w http.ResponseWriter, r *http.Request) {
 		match := strings.TrimSpace(r.Header.Get("If-Match"))
 		if match == "" {

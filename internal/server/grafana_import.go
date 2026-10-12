@@ -100,7 +100,7 @@ func grafanaDashboardURL(uid, title string) string {
 	return "/d/" + url.PathEscape(uid) + "/" + slug(title)
 }
 
-func (s *Server) grafanaImportRoutes(api *http.ServeMux) {
+func (s *Server) grafanaImportRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/gnet/dashboards/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _, err := grafana.ParseCommunityReference(r.PathValue("id"))
 		if err != nil {

@@ -40,7 +40,7 @@ func (s *Server) resolveDashboardFolder(ctx context.Context, uid string, id int6
 	}
 	return s.Store.FolderByID(ctx, id)
 }
-func (s *Server) dashboardResourceRoutes(api *http.ServeMux) {
+func (s *Server) dashboardResourceRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/v1/folders", func(w http.ResponseWriter, r *http.Request) {
 		folders, err := s.Store.Folders(r.Context())
 		if err != nil {

@@ -23,7 +23,7 @@ func (p panelPosition) grid() rawObject {
 	return rawObject{"x": rawValue(p.X), "y": rawValue(p.Y), "w": rawValue(p.W), "h": rawValue(p.H)}
 }
 
-func (s *Server) dashboardLayoutRoutes(api *http.ServeMux) {
+func (s *Server) dashboardLayoutRoutes(api routeRegistrar) {
 	api.HandleFunc("PATCH /api/v1/dashboards/{id}/layout", s.saveDashboardLayout)
 }
 

@@ -20,7 +20,7 @@ func notificationError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Server) notificationRoutes(api *http.ServeMux) {
+func (s *Server) notificationRoutes(api routeRegistrar) {
 	s.notificationProvisioningRoutes(api)
 	s.silenceRoutes(api)
 	s.muteTimingRoutes(api)

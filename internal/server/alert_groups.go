@@ -10,7 +10,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 )
 
-func (s *Server) alertGroupRoutes(api *http.ServeMux) {
+func (s *Server) alertGroupRoutes(api routeRegistrar) {
 	const path = "/api/v1/provisioning/folder/{folder}/rule-groups/{group}"
 	api.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
 		folder, group := r.PathValue("folder"), r.PathValue("group")

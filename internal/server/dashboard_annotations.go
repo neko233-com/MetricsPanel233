@@ -17,7 +17,7 @@ type annotationQueryEdit struct {
 	Query         json.RawMessage `json:"query"`
 }
 
-func (s *Server) dashboardAnnotationRoutes(api *http.ServeMux) {
+func (s *Server) dashboardAnnotationRoutes(api routeRegistrar) {
 	api.HandleFunc("PATCH /api/v1/dashboards/{id}/annotations", func(w http.ResponseWriter, r *http.Request) {
 		match := strings.TrimSpace(r.Header.Get("If-Match"))
 		if match == "" {

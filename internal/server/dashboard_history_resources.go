@@ -25,7 +25,7 @@ func dashboardHistoryAPIVersion(version string) bool {
 // This implements Grafana's history selector, not general resource CRUD.
 // UnifiedDashboardAPI reads both schema streams and filters conversion failures
 // before merging generations. Keeping the original spec avoids lossy conversion.
-func (s *Server) dashboardHistoryResourceRoutes(api *http.ServeMux) {
+func (s *Server) dashboardHistoryResourceRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /apis/dashboard.grafana.app/{version}/namespaces/{namespace}/dashboards", func(w http.ResponseWriter, r *http.Request) {
 		version := r.PathValue("version")
 		if !dashboardHistoryAPIVersion(version) || r.PathValue("namespace") != identity.Namespace(s.OrganizationID()) {

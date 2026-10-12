@@ -59,7 +59,7 @@ func (s *Server) invalidatePlugin(ctx context.Context, id string, retry bool) {
 		}
 	}
 }
-func (s *Server) appRoutes(api *http.ServeMux) {
+func (s *Server) appRoutes(api routeRegistrar) {
 	api.HandleFunc("GET /api/plugins/{id}/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()

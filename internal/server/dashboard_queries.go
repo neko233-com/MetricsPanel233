@@ -24,7 +24,7 @@ type panelQueriesDraft struct {
 	Queries []panelQueryDraft `json:"queries"`
 }
 
-func (s *Server) dashboardQueryRoutes(api *http.ServeMux) {
+func (s *Server) dashboardQueryRoutes(api routeRegistrar) {
 	api.HandleFunc("PATCH /api/v1/dashboards/{id}/queries", func(w http.ResponseWriter, r *http.Request) {
 		match := strings.TrimSpace(r.Header.Get("If-Match"))
 		if len(match) >= 2 && match[0] == '"' && match[len(match)-1] == '"' {

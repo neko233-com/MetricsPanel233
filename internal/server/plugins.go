@@ -70,7 +70,7 @@ func (s *Server) validAssetSession(r *http.Request) bool {
 	}
 	return hmac.Equal([]byte(cookie.Value), []byte(s.assetSession(expires)))
 }
-func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
+func (s *Server) pluginRoutes(api, mux routeRegistrar) {
 	catalog := plugins.NewCatalogClient(nil)
 	s.pluginCatalogRoutes(api, catalog)
 	s.nativePluginRoutes(api, catalog, nil)
@@ -230,7 +230,7 @@ func (s *Server) dataSource(ctx context.Context, uid string) (model.DataSource, 
 	}
 	return s.Store.DataSource(ctx, uid)
 }
-func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
+func (s *Server) datasourceRoutes(api routeRegistrar, prometheus http.Handler) {
 	api.HandleFunc("GET /api/datasources", func(w http.ResponseWriter, r *http.Request) {
 		items, err := s.Store.DataSources(r.Context())
 		if err != nil {

@@ -33,7 +33,7 @@ func (s *Server) validLiveSession(r *http.Request) bool {
 	}
 	return hmac.Equal([]byte(cookie.Value), []byte(s.liveSession(expires)))
 }
-func (s *Server) liveRoutes(api, mux *http.ServeMux) {
+func (s *Server) liveRoutes(api, mux routeRegistrar) {
 	api.HandleFunc("POST /api/live/session", func(w http.ResponseWriter, r *http.Request) {
 		expires := time.Now().Add(15 * time.Minute)
 		http.SetCookie(w, &http.Cookie{Name: "metricspanel-live", Value: s.liveSession(expires.Unix()), Path: "/api/live/ws", Expires: expires, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode})

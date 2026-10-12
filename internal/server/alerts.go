@@ -23,7 +23,7 @@ func ruleError(w http.ResponseWriter, err error) {
 		resourceError(w, err)
 	}
 }
-func (s *Server) alertRoutes(api *http.ServeMux) {
+func (s *Server) alertRoutes(api routeRegistrar) {
 	api.HandleFunc("POST /api/v1/alerts/preview", s.previewAlertGraph)
 	api.HandleFunc("GET /api/v1/alerts/rules", func(w http.ResponseWriter, r *http.Request) {
 		rules, err := s.Store.AlertRules(r.Context())
@@ -209,7 +209,7 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 	})
 	s.alertGroupRoutes(api)
 }
-func (s *Server) promAlertRoutes(mux *http.ServeMux) {
+func (s *Server) promAlertRoutes(mux routeRegistrar) {
 	alerts := func(rule model.AlertRuleView) []any {
 		out := []any{}
 		for _, v := range rule.Runtime.Instances {

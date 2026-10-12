@@ -31,7 +31,7 @@ func silenceFilterMatches(silence model.Silence, filters []*labels.Matcher) bool
 	return true
 }
 
-func (s *Server) silenceRoutes(api *http.ServeMux) {
+func (s *Server) silenceRoutes(api routeRegistrar) {
 	list := func(w http.ResponseWriter, r *http.Request) {
 		states := map[string]bool{"active": true, "pending": true, "expired": true}
 		for state := range states {

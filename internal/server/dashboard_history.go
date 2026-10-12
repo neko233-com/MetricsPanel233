@@ -94,7 +94,7 @@ func (s *Server) historyDashboard(r *http.Request, native bool) (model.Dashboard
 	return dashboard, nil
 }
 
-func (s *Server) dashboardHistoryRoutes(api *http.ServeMux) {
+func (s *Server) dashboardHistoryRoutes(api routeRegistrar) {
 	for _, native := range []bool{false, true} {
 		listPath, detailPath, restorePath := "/api/dashboards/uid/{uid}/versions", "/api/dashboards/uid/{uid}/versions/{version}", "/api/dashboards/uid/{uid}/restore"
 		if native {

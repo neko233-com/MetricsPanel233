@@ -63,7 +63,7 @@ func annotationError(w http.ResponseWriter, err error) {
 	resourceError(w, err)
 }
 
-func (s *Server) annotationRoutes(api *http.ServeMux) {
+func (s *Server) annotationRoutes(api routeRegistrar) {
 	for _, prefix := range []string{"/api/annotations", "/api/v1/annotations"} {
 		api.HandleFunc("GET "+prefix, func(w http.ResponseWriter, r *http.Request) {
 			params := r.URL.Query()

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 var (
 	ErrPermissionUninitialized = errors.New("resource permissions have not been initialized")
 	ErrPermissionVersion       = errors.New("resource permission version changed")
+	ErrPermissionVersionLimit  = errors.New("resource permission version limit reached")
 	ErrPermissionIdentity      = errors.New("resource permission identity is unavailable")
 	ErrPermissionAncestry      = errors.New("invalid or excessive permission folder ancestry")
 	ErrPermissionCleanup       = errors.New("permission cleanup job does not match its receipt")
@@ -28,8 +30,9 @@ type PermissionIdentityResolver struct {
 	TeamsForPrincipal func(context.Context, int64, model.ResourcePermissionSubject) ([]identity.TeamGrant, error)
 }
 
-// InitializeResourcePermissionSchema only adds the detached store representation.
-// It does not seed resources or activate authorization on existing API routes.
+// InitializeResourcePermissionSchema adds the permission representation and
+// same-transaction cleanup on content deletion. It does not seed resources or
+// activate authorization on existing API routes.
 func (s *Store) InitializeResourcePermissionSchema(ctx context.Context) error {
 	if s == nil || s.DB == nil {
 		return errors.New("organization store is unavailable")
@@ -56,12 +59,36 @@ FOREIGN KEY(org_id,resource_kind,resource_uid) REFERENCES resource_acl_resources
 CREATE INDEX IF NOT EXISTS resource_acl_subject ON resource_acl_grants(org_id,subject_kind,subject_key);
 CREATE TABLE IF NOT EXISTS resource_acl_cleanup_receipts(
 job_key TEXT PRIMARY KEY,org_id INTEGER NOT NULL,subject_kind TEXT NOT NULL,subject_key TEXT NOT NULL,identity_version INTEGER NOT NULL,identity_generation INTEGER NOT NULL CHECK(identity_generation>0),completed_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS resource_acl_revision_ledger(
+org_id INTEGER NOT NULL CHECK(org_id>0),resource_kind TEXT NOT NULL CHECK(resource_kind IN ('folder','dashboard')),resource_uid TEXT NOT NULL,
+last_version INTEGER NOT NULL CHECK(typeof(last_version)='integer' AND last_version>0),
+PRIMARY KEY(org_id,resource_kind,resource_uid));
+CREATE TRIGGER IF NOT EXISTS resource_acl_revision_owner BEFORE INSERT ON resource_acl_revision_ledger WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_revision_owner_update BEFORE UPDATE OF org_id ON resource_acl_revision_ledger WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_revision_monotonic BEFORE UPDATE OF last_version ON resource_acl_revision_ledger WHEN NEW.last_version<OLD.last_version BEGIN SELECT RAISE(ABORT,'permission revision cannot decrease'); END;
+INSERT INTO resource_acl_revision_ledger(org_id,resource_kind,resource_uid,last_version)
+SELECT org_id,resource_kind,resource_uid,version FROM resource_acl_resources WHERE true
+ON CONFLICT(org_id,resource_kind,resource_uid) DO UPDATE SET last_version=max(resource_acl_revision_ledger.last_version,excluded.last_version);
+CREATE TRIGGER IF NOT EXISTS resource_acl_resource_identity BEFORE UPDATE OF org_id,resource_kind,resource_uid ON resource_acl_resources WHEN NEW.org_id!=OLD.org_id OR NEW.resource_kind!=OLD.resource_kind OR NEW.resource_uid!=OLD.resource_uid BEGIN SELECT RAISE(ABORT,'permission resource identity cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_version_insert BEFORE INSERT ON resource_acl_resources WHEN typeof(NEW.version)!='integer' OR NEW.version<=coalesce((SELECT last_version FROM resource_acl_revision_ledger WHERE org_id=NEW.org_id AND resource_kind=NEW.resource_kind AND resource_uid=NEW.resource_uid),0) BEGIN SELECT RAISE(ABORT,'permission revision must increase'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_version_update BEFORE UPDATE OF version ON resource_acl_resources WHEN typeof(NEW.version)!='integer' OR NEW.version<=OLD.version OR NEW.version<=coalesce((SELECT last_version FROM resource_acl_revision_ledger WHERE org_id=NEW.org_id AND resource_kind=NEW.resource_kind AND resource_uid=NEW.resource_uid),0) BEGIN SELECT RAISE(ABORT,'permission revision must increase'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_version_remember_insert AFTER INSERT ON resource_acl_resources BEGIN
+INSERT INTO resource_acl_revision_ledger(org_id,resource_kind,resource_uid,last_version) VALUES(NEW.org_id,NEW.resource_kind,NEW.resource_uid,NEW.version)
+ON CONFLICT(org_id,resource_kind,resource_uid) DO UPDATE SET last_version=max(resource_acl_revision_ledger.last_version,excluded.last_version); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_version_remember_update AFTER UPDATE OF version ON resource_acl_resources BEGIN
+INSERT INTO resource_acl_revision_ledger(org_id,resource_kind,resource_uid,last_version) VALUES(NEW.org_id,NEW.resource_kind,NEW.resource_uid,NEW.version)
+ON CONFLICT(org_id,resource_kind,resource_uid) DO UPDATE SET last_version=max(resource_acl_revision_ledger.last_version,excluded.last_version); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_version_remember_delete BEFORE DELETE ON resource_acl_resources BEGIN
+INSERT INTO resource_acl_revision_ledger(org_id,resource_kind,resource_uid,last_version) VALUES(OLD.org_id,OLD.resource_kind,OLD.resource_uid,OLD.version)
+ON CONFLICT(org_id,resource_kind,resource_uid) DO UPDATE SET last_version=max(resource_acl_revision_ledger.last_version,excluded.last_version); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_resources_owner BEFORE INSERT ON resource_acl_resources WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_grants_owner BEFORE INSERT ON resource_acl_grants WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_cleanup_owner BEFORE INSERT ON resource_acl_cleanup_receipts WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_resources_owner_update BEFORE UPDATE OF org_id ON resource_acl_resources WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_grants_owner_update BEFORE UPDATE OF org_id ON resource_acl_grants WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
-CREATE TRIGGER IF NOT EXISTS resource_acl_cleanup_owner_update BEFORE UPDATE OF org_id ON resource_acl_cleanup_receipts WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;`)
+CREATE TRIGGER IF NOT EXISTS resource_acl_cleanup_owner_update BEFORE UPDATE OF org_id ON resource_acl_cleanup_receipts WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_dashboard_delete AFTER DELETE ON dashboards BEGIN DELETE FROM resource_acl_resources WHERE org_id=(SELECT organization_id FROM store_identity WHERE id=1) AND resource_kind='dashboard' AND resource_uid=OLD.id; END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_folder_delete AFTER DELETE ON folders BEGIN DELETE FROM resource_acl_resources WHERE org_id=(SELECT organization_id FROM store_identity WHERE id=1) AND resource_kind='folder' AND resource_uid=OLD.uid; END;`)
 	if err != nil {
 		return err
 	}
@@ -212,6 +239,24 @@ func insertPermissionGrants(ctx context.Context, tx *sql.Tx, ref model.Permissio
 	return nil
 }
 
+// The durable high-water mark survives content/ACL deletion. Allocation and the
+// remembering trigger share the content store transaction; rollback consumes no
+// revision, while a committed UID reuse can never match a deleted draft's CAS.
+func nextPermissionVersion(ctx context.Context, tx *sql.Tx, ref model.PermissionResource) (int64, error) {
+	var previous int64
+	err := tx.QueryRowContext(ctx, `SELECT last_version FROM resource_acl_revision_ledger WHERE org_id=? AND resource_kind=? AND resource_uid=?`, ref.OrgID, ref.Kind, ref.UID).Scan(&previous)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if previous <= 0 || previous == math.MaxInt64 {
+		return 0, ErrPermissionVersionLimit
+	}
+	return previous + 1, nil
+}
+
 // InitializeResourcePermissions is idempotent. Existing edited grants are never
 // reset. Resource creation + seeding must later use a shared transaction helper.
 func (s *Store) InitializeResourcePermissions(ctx context.Context, ref model.PermissionResource, seed model.ResourcePermissionSeed, resolver PermissionIdentityResolver) (model.ResourcePermissionDocument, error) {
@@ -257,7 +302,11 @@ func (s *Store) InitializeResourcePermissions(ctx context.Context, ref model.Per
 		grants = append(grants, model.ResourcePermissionGrant{Subject: *seed.Creator, Permission: model.PermissionAdmin, IdentityGeneration: creatorGeneration})
 	}
 	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO resource_acl_resources(org_id,resource_kind,resource_uid,version,defaults_initialized,created_at,updated_at) VALUES(?,?,?,1,1,?,?)`, ref.OrgID, ref.Kind, ref.UID, now, now); err != nil {
+	version, err := nextPermissionVersion(ctx, tx, ref)
+	if err != nil {
+		return model.ResourcePermissionDocument{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO resource_acl_resources(org_id,resource_kind,resource_uid,version,defaults_initialized,created_at,updated_at) VALUES(?,?,?,?,1,?,?)`, ref.OrgID, ref.Kind, ref.UID, version, now, now); err != nil {
 		return model.ResourcePermissionDocument{}, err
 	}
 	if err := insertPermissionGrants(ctx, tx, ref, grants, now); err != nil {
@@ -294,6 +343,9 @@ func (s *Store) ReplaceResourcePermissions(ctx context.Context, ref model.Permis
 	}
 	if doc.Version != expectedVersion {
 		return doc, ErrPermissionVersion
+	}
+	if doc.Version == math.MaxInt64 {
+		return doc, ErrPermissionVersionLimit
 	}
 	now := time.Now().UnixMilli()
 	result, err := tx.ExecContext(ctx, `UPDATE resource_acl_resources SET version=version+1,updated_at=max(?,updated_at+1) WHERE org_id=? AND resource_kind=? AND resource_uid=? AND version=?`, now, ref.OrgID, ref.Kind, ref.UID, expectedVersion)
@@ -337,20 +389,23 @@ func (s *Store) EffectiveResourcePermission(ctx context.Context, ref model.Permi
 	if err := principal.RequireOrganization(ref.OrgID); err != nil {
 		return out, err
 	}
+	if resolver.CurrentPrincipal == nil {
+		return out, ErrPermissionIdentity
+	}
+	currentPrincipal, err := resolver.CurrentPrincipal(ctx, principal)
+	if err != nil {
+		return out, err
+	}
+	if currentPrincipal.OrgID != principal.OrgID || currentPrincipal.Type != principal.Type || currentPrincipal.ID != principal.ID || currentPrincipal.Validate() != nil {
+		return out, ErrPermissionIdentity
+	}
+	principal = currentPrincipal
 	teams := map[int64]int64{}
 	var principalGeneration int64
 	if subject, ok := permissionPrincipalSubject(principal); ok {
-		if resolver.CurrentPrincipal == nil || resolver.TeamsForPrincipal == nil {
+		if resolver.TeamsForPrincipal == nil {
 			return out, ErrPermissionIdentity
 		}
-		current, err := resolver.CurrentPrincipal(ctx, principal)
-		if err != nil {
-			return out, err
-		}
-		if current.OrgID != principal.OrgID || current.Type != principal.Type || current.ID != principal.ID || current.Validate() != nil {
-			return out, ErrPermissionIdentity
-		}
-		principal = current
 		principalGeneration, err = permissionSubjectGeneration(ctx, ref.OrgID, subject, resolver)
 		if err != nil {
 			return out, err
@@ -449,6 +504,13 @@ func (s *Store) CleanupResourcePermissionSubject(ctx context.Context, job model.
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	var exhausted bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM resource_acl_resources r WHERE r.org_id=? AND r.version=? AND EXISTS(SELECT 1 FROM resource_acl_grants g WHERE g.org_id=r.org_id AND g.resource_kind=r.resource_kind AND g.resource_uid=r.resource_uid AND g.subject_kind=? AND g.subject_key=? AND g.identity_generation<=?))`, job.OrgID, math.MaxInt64, job.Subject.Kind, job.Subject.Key(), job.IdentityGeneration).Scan(&exhausted); err != nil {
+		return err
+	}
+	if exhausted {
+		return ErrPermissionVersionLimit
 	}
 	now := time.Now().UnixMilli()
 	if _, err := tx.ExecContext(ctx, `UPDATE resource_acl_resources SET version=version+1,updated_at=max(?,updated_at+1) WHERE org_id=? AND EXISTS(SELECT 1 FROM resource_acl_grants g WHERE g.org_id=resource_acl_resources.org_id AND g.resource_kind=resource_acl_resources.resource_kind AND g.resource_uid=resource_acl_resources.resource_uid AND g.subject_kind=? AND g.subject_key=? AND g.identity_generation<=?)`, now, job.OrgID, job.Subject.Kind, job.Subject.Key(), job.IdentityGeneration); err != nil {

@@ -72,7 +72,7 @@ func lookupSessionCredential(ctx context.Context, tx *sql.Tx, digest []byte, now
 	var current bool
 	err := tx.QueryRowContext(ctx, `SELECT `+sessionColumns+`,token_hash=? FROM browser_sessions
 WHERE (token_hash=? OR previous_token_hash=?) AND revoked_at=0 AND expires_at>? AND last_seen+idle_timeout_ms>?`, digest, digest, digest, now, now).
-		Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt, &session.RotatedAt, &session.TokenSeen, &current)
+		Scan(&session.ID, &session.UserID, &session.CurrentOrgID, &session.CreatedAt, &session.LastSeen, &session.ExpiresAt, &session.IdleTimeoutMS, &session.RevokedAt, &session.RotatedAt, &session.TokenSeen, &session.ClientIP, &session.UserAgent, &session.AuthModule, &current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrUnauthenticated
 	}

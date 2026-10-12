@@ -93,7 +93,7 @@ func grafanaInhibition(v model.InhibitionRule, namespace string) grafanaInhibiti
 	}
 	return out
 }
-func (s *Server) inhibitionRoutes(api *http.ServeMux) {
+func (s *Server) inhibitionRoutes(api routeRegistrar) {
 	base := "/api/v1/alerting/inhibition-rules"
 	api.HandleFunc("GET "+base, func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.InhibitionRules(r.Context())

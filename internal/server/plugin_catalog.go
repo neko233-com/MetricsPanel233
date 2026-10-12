@@ -9,7 +9,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 )
 
-func (s *Server) pluginCatalogRoutes(api *http.ServeMux, catalog *plugins.CatalogClient) {
+func (s *Server) pluginCatalogRoutes(api routeRegistrar, catalog *plugins.CatalogClient) {
 	api.HandleFunc("GET /api/v1/plugins/catalog", func(w http.ResponseWriter, r *http.Request) {
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil || len(query["q"]) > 1 || len(query["type"]) > 1 {

@@ -15,7 +15,7 @@ import (
 
 // Grafana-compatible dashboard endpoints allow existing dashboard-as-code tools
 // to manage templates. All routes share the native API's authentication policy.
-func (s *Server) grafanaRoutes(api *http.ServeMux, prometheus http.Handler) {
+func (s *Server) grafanaRoutes(api routeRegistrar, prometheus http.Handler) {
 	api.HandleFunc("POST /api/dashboards/db", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Dashboard json.RawMessage `json:"dashboard"`
