@@ -175,7 +175,7 @@ func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
 		if tags == nil {
 			tags = []string{}
 		}
-		return map[string]any{"id": id, "uid": uid, "orgId": 1, "title": title, "type": typ, "url": location, "uri": "db/" + slug(title), "slug": slug(title), "tags": tags, "isStarred": false, "isDeleted": false, "sortMeta": 0, "folderId": parent.ID, "folderUid": parent.UID, "folderTitle": parent.Title, "folderUrl": parent.URL}
+		return map[string]any{"id": id, "uid": uid, "orgId": s.OrganizationID(), "title": title, "type": typ, "url": location, "uri": "db/" + slug(title), "slug": slug(title), "tags": tags, "isStarred": false, "isDeleted": false, "sortMeta": 0, "folderId": parent.ID, "folderUid": parent.UID, "folderTitle": parent.Title, "folderUrl": parent.URL}
 	}
 	if (kind == "" || kind == "dash-folder") && len(params["tag"]) == 0 {
 		for _, folder := range folders {

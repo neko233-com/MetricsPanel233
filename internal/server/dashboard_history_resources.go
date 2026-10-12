@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -27,7 +28,7 @@ func dashboardHistoryAPIVersion(version string) bool {
 func (s *Server) dashboardHistoryResourceRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /apis/dashboard.grafana.app/{version}/namespaces/{namespace}/dashboards", func(w http.ResponseWriter, r *http.Request) {
 		version := r.PathValue("version")
-		if !dashboardHistoryAPIVersion(version) || r.PathValue("namespace") != "default" {
+		if !dashboardHistoryAPIVersion(version) || r.PathValue("namespace") != identity.Namespace(s.OrganizationID()) {
 			http.NotFound(w, r)
 			return
 		}
@@ -75,7 +76,7 @@ func (s *Server) dashboardHistoryResourceRoutes(api *http.ServeMux) {
 				dashboardResourceError(w, err)
 				return
 			}
-			item, err := dashboardHistoryResource(entry, version, dashboard.UID())
+			item, err := dashboardHistoryResource(entry, version, dashboard.UID(), s.OrganizationID())
 			if err != nil {
 				dashboardResourceError(w, err)
 				return
@@ -112,7 +113,7 @@ func dashboardHistoryObject(raw json.RawMessage) (rawObject, error) {
 	return object, nil
 }
 
-func dashboardHistoryResource(entry model.DashboardVersion, requestedVersion, uid string) (rawObject, error) {
+func dashboardHistoryResource(entry model.DashboardVersion, requestedVersion, uid string, orgIDs ...int64) (rawObject, error) {
 	document, err := dashboardHistoryObject(entry.Snapshot.Grafana)
 	if err != nil {
 		return nil, err
@@ -167,7 +168,11 @@ func dashboardHistoryResource(entry model.DashboardVersion, requestedVersion, ui
 		annotations["grafana.app/createdBy"] = rawValue(entry.CreatedBy)
 	}
 	metadata["name"] = rawValue(uid)
-	metadata["namespace"] = rawValue("default")
+	orgID := int64(1)
+	if len(orgIDs) > 0 {
+		orgID = orgIDs[0]
+	}
+	metadata["namespace"] = rawValue(identity.Namespace(orgID))
 	metadata["generation"] = rawValue(entry.Version)
 	metadata["resourceVersion"] = rawValue(strconv.FormatInt(entry.ID, 10))
 	if _, ok := metadata["creationTimestamp"]; !ok {

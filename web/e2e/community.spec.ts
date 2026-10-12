@@ -511,7 +511,7 @@ test("Imported datasource UID prometheus queries its external source rather than
     );
   }
 });
-test("Community import resolves URL and revisions, sends pinned bindings and cancels Chinese mobile preview", async ({
+test("Community import resolves URL and revisions, sends pinned bindings and cancels Chinese desktop preview", async ({
   page,
 }) => {
   const issues: string[] = [];
@@ -609,7 +609,7 @@ test("Community import resolves URL and revisions, sends pinned bindings and can
   await page
     .getByRole("button", { name: "Switch language", exact: true })
     .click();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByRole("button", { name: "导入仪表盘", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "导入仪表盘", exact: true });
   await dialog
@@ -628,7 +628,7 @@ test("Community import resolves URL and revisions, sends pinned bindings and can
     await page.screenshot({
       path: path.join(
         process.env.METRICSPANEL_CATALOG_QA_DIR,
-        "dashboard-community-zh-mobile.png",
+        "dashboard-community-zh-desktop.png",
       ),
       animations: "disabled",
     });

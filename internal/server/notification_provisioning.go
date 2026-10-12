@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Server) exportNotificationRule(ctx context.Context, rule model.AlertRule) (alerting.GrafanaRule, error) {
-	g := alerting.ExportGrafana(rule)
+	g := alerting.ExportGrafana(rule, s.OrganizationID())
 	if rule.NotificationReceiver == "" {
 		g.NotificationSettings = nil
 		return g, nil

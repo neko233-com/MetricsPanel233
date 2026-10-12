@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -23,6 +24,13 @@ func WithDashboardHistoryMetadata(ctx context.Context, metadata model.DashboardH
 
 func dashboardHistoryMetadata(ctx context.Context) (model.DashboardHistoryMetadata, error) {
 	metadata, _ := ctx.Value(dashboardHistoryMetadataKey{}).(model.DashboardHistoryMetadata)
+	if identity.HasPrincipal(ctx) {
+		actor, valid := identity.FromContext(ctx)
+		if !valid {
+			return metadata, identity.ErrUnauthenticated
+		}
+		metadata.CreatedBy = actor.Login
+	}
 	if utf8.RuneCountInString(metadata.Message) > 500 || len(metadata.CreatedBy) > 256 || metadata.RestoredFrom < 0 {
 		return metadata, errors.New("invalid dashboard history metadata")
 	}

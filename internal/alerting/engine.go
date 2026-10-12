@@ -386,7 +386,7 @@ func (e *Engine) Evaluate(ctx context.Context, uid string, at time.Time) (model.
 		if err != nil {
 			queryErr = err
 		} else {
-			graphCtx := querycontext.WithHeaders(queryCtx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": "1", "http_X-Rule-Uid": view.UID})
+			graphCtx := querycontext.WithHeaders(queryCtx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": strconv.FormatInt(e.Store.OrganizationID(), 10), "http_X-Rule-Uid": view.UID})
 			loaded := []string{}
 			for _, instance := range view.Runtime.Instances {
 				if instance.ResultFingerprint != "" && instance.Reason == "" && (instance.State == "Pending" || instance.State == "Firing") {

@@ -24,6 +24,7 @@ import {
 } from "./NotificationRoutingEditor";
 import { MuteTimingsPanel } from "./MuteTimingsPanel";
 import { NotificationGroupsPanel } from "./NotificationGroupsPanel";
+import { InhibitionRulesPanel } from "./InhibitionRulesPanel";
 import {
   NotificationsTemplatesPanel,
   NotificationTemplateFields,
@@ -72,7 +73,7 @@ const deliveryState = (value: Delivery["state"]) =>
     sent: text("Sent", "已发送"),
     failed: text("Failed", "发送失败"),
     canceled: text("Canceled", "已取消"),
-    suppressed: text("Silenced", "已静默"),
+    suppressed: text("Suppressed", "已抑制"),
   })[value];
 const deliveryStatus = (value: Delivery["status"]) =>
   ({
@@ -422,6 +423,7 @@ export function NotificationSettings({
           )}
 
           <SilencesPanel tick={tick} notify={notify} />
+          <InhibitionRulesPanel tick={tick} notify={notify} />
           <MuteTimingsPanel
             tick={tick}
             notify={notify}

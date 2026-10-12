@@ -448,7 +448,7 @@ test("Builtin Grafana query forms execute all six modes and preserve Classic V1 
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page.getByRole("button", { name: "面板查询", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "面板查询", exact: true });
     await expect(
@@ -471,7 +471,7 @@ test("Builtin Grafana query forms execute all six modes and preserve Classic V1 
       await page.screenshot({
         path: path.join(
           process.env.METRICSPANEL_QA_SCREENSHOT_DIR,
-          "builtin-query-editor-zh-mobile.png",
+          "builtin-query-editor-zh-desktop.png",
         ),
         animations: "disabled",
       });
@@ -1022,11 +1022,11 @@ test("Alert visual query graph runs SDK callbacks and read-only previews, saves 
     const updated = (await rules()).find((rule: any) => rule.uid === uid);
     expect(updated.grafana).toEqual(graph);
     expect(updated.paused).toBe(true);
-    stage = "Chinese mobile editor";
+    stage = "Chinese desktop editor";
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page
       .getByRole("button", { name: "编辑 Visual alert SDK", exact: true })
       .click();
@@ -1053,7 +1053,7 @@ test("Alert visual query graph runs SDK callbacks and read-only previews, saves 
       ),
     ).toBe(true);
     await page.screenshot({
-      path: testInfo.outputPath("alert-editor-zh-mobile.png"),
+      path: testInfo.outputPath("alert-editor-zh-desktop.png"),
       animations: "disabled",
     });
     await dialog
@@ -3631,26 +3631,29 @@ test("Recurring time regions render SDK frames and native bands, preserve all da
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
     await page.getByRole("button", { name: "注释查询", exact: true }).click();
-    const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
-    await mobile
+    const chineseDialog = page.getByRole("dialog", {
+      name: "注释查询",
+      exact: true,
+    });
+    await chineseDialog
       .getByRole("button", { name: "编辑注释查询 Daily coverage", exact: true })
       .click();
-    await expect(mobile.getByLabel("注释范围", { exact: true })).toHaveValue(
+    await expect(chineseDialog.getByLabel("注释范围", { exact: true })).toHaveValue(
       "timeRegions",
     );
     await expect(
-      mobile.getByLabel("区域开始时间", { exact: true }),
+      chineseDialog.getByLabel("区域开始时间", { exact: true }),
     ).toHaveValue("00:00");
     expect(
-      await mobile.evaluate(
+      await chineseDialog.evaluate(
         (element) => element.scrollWidth <= element.clientWidth,
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("time-regions-editor-mobile.png"),
+      path: testInfo.outputPath("time-regions-editor-zh-desktop.png"),
       animations: "disabled",
     });
-    await mobile
+    await chineseDialog
       .getByRole("button", { name: "关闭对话框", exact: true })
       .click();
     expect(errors).toEqual([]);
@@ -4243,22 +4246,25 @@ test("Annotation query editors use public SDK components, preserve template reso
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
     await page.getByRole("button", { name: "注释查询", exact: true }).click();
-    const mobile = page.getByRole("dialog", { name: "注释查询", exact: true });
-    await mobile
+    const chineseDialog = page.getByRole("dialog", {
+      name: "注释查询",
+      exact: true,
+    });
+    await chineseDialog
       .getByRole("button", { name: "编辑注释查询 Deploy tags", exact: true })
       .click();
     await expect(
-      mobile.getByLabel("标签（逗号分隔）", { exact: true }),
+      chineseDialog.getByLabel("标签（逗号分隔）", { exact: true }),
     ).toHaveValue("deploy, prod");
     expect(
-      await mobile.evaluate(
+      await chineseDialog.evaluate(
         (element) => element.scrollWidth <= element.clientWidth,
       ),
     ).toBeTruthy();
     await page.screenshot({
       path: testInfo.outputPath("annotation-query-editor-chinese-desktop.png"),
     });
-    await mobile.getByRole("button", { name: "取消", exact: true }).click();
+    await chineseDialog.getByRole("button", { name: "取消", exact: true }).click();
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
@@ -5079,7 +5085,7 @@ test("Durable annotations query template filters, reach SDK frames and support b
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page
       .getByRole("group", { name: "Annotated curve", exact: true })
       .scrollIntoViewIfNeeded();
@@ -5095,7 +5101,7 @@ test("Durable annotations query template filters, reach SDK frames and support b
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("annotations-mobile.png"),
+      path: testInfo.outputPath("annotations-zh-desktop.png"),
       animations: "disabled",
     });
     await dialog.getByRole("button", { name: "关闭", exact: true }).click();
@@ -5473,7 +5479,7 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page
       .getByRole("button", { name: "选择时间范围", exact: true })
       .click();
@@ -5484,7 +5490,7 @@ test("Dashboard defaults, URL windows, date math and SDK zoom query the selected
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("time-range-mobile.png"),
+      path: testInfo.outputPath("time-range-zh-desktop.png"),
       animations: "disabled",
     });
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
@@ -6362,7 +6368,7 @@ test("V2 refresh defaults, URL overrides and bilingual controls schedule and sto
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await expect(
       page.getByRole("combobox", { name: "自动刷新", exact: true }),
     ).toHaveValue("");
@@ -6377,7 +6383,7 @@ test("V2 refresh defaults, URL overrides and bilingual controls schedule and sto
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("refresh-mobile.png"),
+      path: testInfo.outputPath("refresh-zh-desktop.png"),
       animations: "disabled",
     });
     await page
@@ -6663,7 +6669,7 @@ test("SDK application events refresh real queries, notify ranges and preserve si
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await expect
       .poll(async () => (await global.boundingBox())?.x ?? -1)
       .toBeGreaterThanOrEqual(0);
@@ -6677,7 +6683,7 @@ test("SDK application events refresh real queries, notify ranges and preserve si
       .click();
     await page.clock.runFor(250);
     await page.screenshot({
-      path: testInfo.outputPath("sdk-app-events-mobile.png"),
+      path: testInfo.outputPath("sdk-app-events-zh-desktop.png"),
       animations: "disabled",
     });
     expect(errors).toEqual([]);
@@ -6809,7 +6815,7 @@ test("AppPlugin root, configuration pages, encrypted backend context and pinned 
     await expect(
       page.getByText("Grafana 应用插件", { exact: true }),
     ).toBeVisible();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -7072,14 +7078,14 @@ test("SDK UI extensions autoload providers, isolate context, observe updates and
       exact: true,
     });
     await expect(sidebar).toContainText("Provider sidebar");
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: testInfo.outputPath("sdk-extension-sidebar-mobile.png"),
+      path: testInfo.outputPath("sdk-extension-sidebar-desktop.png"),
     });
     await page
       .getByRole("button", { name: "Close sidebar", exact: true })
@@ -7539,7 +7545,7 @@ test("Plugin management and official signed Clock render from its unchanged AMD 
   await expect(
     page.getByRole("heading", { name: "插件与数据源", exact: true }),
   ).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -7554,7 +7560,7 @@ test("Plugin management and official signed Clock render from its unchanged AMD 
     .not.toBe(before);
   await page.reload();
   await expect(content).toContainText(/\d{2}:\d{2}:\d{2}/);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await expect(content).toBeVisible();
   expect(
     await page.evaluate(
@@ -7677,7 +7683,7 @@ test("Alert templates render per-instance summaries and warnings safely in both 
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await row.getByText("模板提示", { exact: true }).click();
     await expect(row.locator(".alert-template-warnings")).toContainText(
       "unknownFunction",
@@ -7688,7 +7694,7 @@ test("Alert templates render per-instance summaries and warnings safely in both 
       ),
     ).toBe(true);
     await page.screenshot({
-      path: testInfo.outputPath("templates-mobile.png"),
+      path: testInfo.outputPath("templates-zh-desktop.png"),
       animations: "disabled",
     });
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
@@ -7808,7 +7814,7 @@ test("Grafana alert graphs execute compound conditions and retain graphs through
     await page
       .getByRole("button", { name: "Switch language", exact: true })
       .click();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await row
       .getByRole("button", { name: "编辑 Graph renamed", exact: true })
       .click();
@@ -7821,7 +7827,7 @@ test("Grafana alert graphs execute compound conditions and retain graphs through
       ),
     ).toBe(true);
     await page.screenshot({
-      path: testInfo.outputPath("alertgraph-mobile.png"),
+      path: testInfo.outputPath("alertgraph-zh-desktop.png"),
       animations: "disabled",
     });
     await page.getByLabel("查询模式", { exact: true }).selectOption("promql");
@@ -7843,7 +7849,7 @@ test("Grafana alert graphs execute compound conditions and retain graphs through
   }
 });
 
-test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI", async ({
+test("Persistent alert rules, evaluation, pause, edits and bilingual desktop UI", async ({
   page,
   endpoint,
 }) => {
@@ -7906,7 +7912,7 @@ test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI",
   await expect(
     page.getByRole("heading", { name: "告警", exact: true }),
   ).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -7923,7 +7929,7 @@ test("Persistent alert rules, evaluation, pause, edits and bilingual mobile UI",
   expect(errors).toEqual([]);
 });
 
-test("Persistent pattern capture, nearest windows, language switch and mobile layout", async ({
+test("Persistent pattern capture, nearest windows, language switch and desktop layout", async ({
   page,
   endpoint,
 }) => {
@@ -7988,7 +7994,7 @@ test("Persistent pattern capture, nearest windows, language switch and mobile la
   await expect(
     page.getByLabel("参考窗口", { exact: true }).locator("option"),
   ).toHaveCount(3);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -8276,7 +8282,7 @@ test("English and Chinese, panels, PromQL, dashboards and collector forms", asyn
   expect(errors).toEqual([]);
 });
 
-test("Grafana template import, variables and mobile layout", async ({
+test("Grafana template import, variables and desktop navigation", async ({
   page,
   endpoint,
 }) => {
@@ -8320,18 +8326,19 @@ test("Grafana template import, variables and mobile layout", async ({
     page.getByRole("heading", { name: "Go query", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".form-error")).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(
-    page.getByRole("button", { name: "Open navigation", exact: true }),
-  ).toBeVisible();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const navigation = page.getByRole("navigation", {
+    name: "Main navigation",
+    exact: true,
+  });
+  await expect(navigation).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
   expect(overflow).toBe(false);
-  await page
-    .getByRole("button", { name: "Open navigation", exact: true })
+  await navigation
+    .getByRole("button", { name: "Overview", exact: true })
     .click();
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "System overview", exact: true }),
   ).toBeVisible();

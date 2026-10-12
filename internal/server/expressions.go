@@ -15,8 +15,12 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
-func builtinExpressionSource() model.DataSource {
-	return model.DataSource{ID: -100, UID: "__expr__", OrgID: 1, Name: "Expression", Type: "__expr__", Access: "proxy", ReadOnly: true, JSONData: json.RawMessage("{}"), SecureJSONFields: map[string]bool{}, Version: 1}
+func builtinExpressionSource(orgIDs ...int64) model.DataSource {
+	orgID := int64(1)
+	if len(orgIDs) > 0 {
+		orgID = orgIDs[0]
+	}
+	return model.DataSource{ID: -100, UID: "__expr__", OrgID: orgID, Name: "Expression", Type: "__expr__", Access: "proxy", ReadOnly: true, JSONData: json.RawMessage("{}"), SecureJSONFields: map[string]bool{}, Version: 1}
 }
 func (s *Server) expressionSourceQuery(ctx context.Context, uid string, queries []backend.DataQuery) (backend.Responses, string, error) {
 	ds, err := s.dataSource(ctx, uid)

@@ -83,7 +83,11 @@ func enqueueNotificationGroupTx(ctx context.Context, tx *sql.Tx, opts model.Noti
 	return err
 }
 
-func resolveNotificationGroupsTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, event model.AlertEvent, startedAt int64, silences []model.Silence) error {
+func resolveNotificationGroupsTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, event model.AlertEvent, startedAt int64, suppressor *notificationSuppressor) error {
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT g.`+strings.ReplaceAll(groupColumns, ",", ",g.")+` FROM alert_notification_groups g JOIN alert_notification_group_members m ON m.group_key=g.group_key WHERE m.rule_uid=? AND m.instance_key=? AND m.started_at=?`, rule.UID, event.Key, startedAt)
 	if err != nil {
 		return err
@@ -115,7 +119,11 @@ func resolveNotificationGroupsTx(ctx context.Context, tx *sql.Tx, rule model.Ale
 		if err != nil {
 			return err
 		}
-		muted = muted || silenceUntil(silences, event.Labels) > 0
+		until, _, err := suppressor.check(event.Labels)
+		if err != nil {
+			return err
+		}
+		muted = muted || until > 0
 		if muted {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM alert_notification_group_members WHERE group_key=? AND rule_uid=? AND instance_key=? AND started_at=?`, g.Key, rule.UID, event.Key, startedAt); err != nil {
 				return err
@@ -133,7 +141,7 @@ func resolveNotificationGroupsTx(ctx context.Context, tx *sql.Tx, rule model.Ale
 					return err
 				}
 			} else {
-				raw, _ := json.Marshal(webhookPayload(point, rule, event, "resolved", startedAt))
+				raw, _ := json.Marshal(webhookPayload(point, rule, event, "resolved", startedAt, orgID))
 				if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_group_members SET status='resolved',payload=? WHERE group_key=? AND rule_uid=? AND instance_key=?`, string(raw), g.Key, rule.UID, event.Key); err != nil {
 					return err
 				}
@@ -196,7 +204,7 @@ func nextPendingSilenceTx(ctx context.Context, tx *sql.Tx, at int64) (int64, err
 	return next, err
 }
 
-func payloadForGroup(g notificationGroup, members []groupMember) (map[string]any, string, error) {
+func payloadForGroup(g notificationGroup, members []groupMember, orgID int64) (map[string]any, string, error) {
 	alerts := []any{}
 	commonLabels := map[string]string{}
 	commonAnnotations := map[string]string{}
@@ -253,10 +261,14 @@ func payloadForGroup(g notificationGroup, members []groupMember) (map[string]any
 	if status == "firing" {
 		state = "alerting"
 	}
-	return map[string]any{"receiver": g.Receiver, "status": status, "version": "1", "orgId": 1, "groupKey": g.Key, "groupLabels": groupLabels, "commonLabels": commonLabels, "commonAnnotations": commonAnnotations, "externalURL": "", "truncatedAlerts": 0, "alerts": alerts, "title": fmt.Sprintf("[%s:%d] %s", strings.ToUpper(status), len(alerts), commonLabels["alertname"]), "message": commonAnnotations["summary"], "state": state}, hash, nil
+	return map[string]any{"receiver": g.Receiver, "status": status, "version": "1", "orgId": orgID, "groupKey": g.Key, "groupLabels": groupLabels, "commonLabels": commonLabels, "commonAnnotations": commonAnnotations, "externalURL": "", "truncatedAlerts": 0, "alerts": alerts, "title": fmt.Sprintf("[%s:%d] %s", strings.ToUpper(status), len(alerts), commonLabels["alertname"]), "message": commonAnnotations["summary"], "state": state}, hash, nil
 }
 
-func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, silences []model.Silence) error {
+func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, suppressor *notificationSuppressor) error {
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	// Repair a lease's bookkeeping if a final attempt was interrupted.
 	if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_groups SET inflight_id=0,next_at=CASE WHEN dirty=1 THEN ? ELSE 0 END WHERE inflight_id IN (SELECT id FROM alert_notification_outbox WHERE state IN ('failed','canceled'))`, at); err != nil {
 		return err
@@ -291,6 +303,13 @@ func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, si
 		var opts model.NotificationRouteOptions
 		if err := json.Unmarshal([]byte(g.Options), &opts); err != nil {
 			return err
+		}
+		wait, _ := model.NotificationDuration(opts.GroupWait)
+		if g.LastSentAt == 0 && at < g.CreatedAt+wait.Milliseconds() {
+			if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_groups SET next_at=? WHERE group_key=?`, g.CreatedAt+wait.Milliseconds(), g.Key); err != nil {
+				return err
+			}
+			continue
 		}
 		point, err := scanContactPoint(tx.QueryRowContext(ctx, `SELECT config FROM alert_contact_points WHERE uid=?`, g.Receiver))
 		if errors.Is(err, sql.ErrNoRows) || err == nil && point.Disabled {
@@ -352,7 +371,10 @@ func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, si
 			if err != nil {
 				return err
 			}
-			until := silenceUntil(silences, labels)
+			until, _, err := suppressor.check(labels)
+			if err != nil {
+				return err
+			}
 			if timingMuted {
 				until = time.UnixMilli(at).Truncate(time.Minute).Add(time.Minute).UnixMilli()
 			}
@@ -379,7 +401,7 @@ func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, si
 			}
 			continue
 		}
-		payload, hash, err := payloadForGroup(g, visible)
+		payload, hash, err := payloadForGroup(g, visible, orgID)
 		if err != nil {
 			return err
 		}
@@ -506,7 +528,7 @@ func finishGroupNotificationTx(ctx context.Context, tx *sql.Tx, id int64, state 
 	return err
 }
 
-func validGroupNotificationTx(ctx context.Context, tx *sql.Tx, id, at int64, silences []model.Silence) (bool, bool, error) {
+func validGroupNotificationTx(ctx context.Context, tx *sql.Tx, id, at int64, suppressor *notificationSuppressor) (bool, bool, error) {
 	var key, raw string
 	err := tx.QueryRowContext(ctx, `SELECT group_key,members FROM alert_notification_group_deliveries WHERE notification_id=?`, id).Scan(&key, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -546,14 +568,16 @@ func validGroupNotificationTx(ctx context.Context, tx *sql.Tx, id, at int64, sil
 		if member.Status == "firing" && active == 0 {
 			invalid = true
 		}
+		currentPayload := ""
 		if member.Status == "firing" {
-			current, _, err := currentGroupMemberTx(ctx, tx, g, member, at)
+			current, currentRaw, err := currentGroupMemberTx(ctx, tx, g, member, at)
 			if err != nil {
 				return true, false, err
 			}
 			if !current {
 				invalid = true
 			}
+			currentPayload = currentRaw
 		}
 		var payload string
 		if err := tx.QueryRowContext(ctx, `SELECT payload FROM alert_notification_group_members WHERE group_key=? AND rule_uid=? AND instance_key=? AND started_at=? AND status=?`, key, member.Rule, member.Key, member.StartedAt, member.Status).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
@@ -561,11 +585,18 @@ func validGroupNotificationTx(ctx context.Context, tx *sql.Tx, id, at int64, sil
 		} else if err != nil {
 			return true, false, err
 		} else {
+			if currentPayload != "" {
+				payload = currentPayload
+			}
 			labels, err := notificationLabels(payload)
 			if err != nil {
 				return true, false, err
 			}
-			if silenceUntil(silences, labels) > 0 {
+			until, _, err := suppressor.check(labels)
+			if err != nil {
+				return true, false, err
+			}
+			if until > 0 {
 				invalid = true
 			}
 		}
@@ -590,6 +621,10 @@ func validGroupNotificationTx(ctx context.Context, tx *sql.Tx, id, at int64, sil
 // Policy changes populate new grouped routes from current state without making
 // synthetic alert history transitions. Existing members retain delivery state.
 func syncNotificationGroupsTx(ctx context.Context, tx *sql.Tx, p model.NotificationPolicy, at int64) error {
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT config,runtime FROM alert_rules`)
 	if err != nil {
 		return err
@@ -642,7 +677,7 @@ func syncNotificationGroupsTx(ctx context.Context, tx *sql.Tx, p model.Notificat
 				}
 				wanted[key+"/"+view.UID+"/"+instance.Key] = true
 				event := model.AlertEvent{UID: view.UID, Key: instance.Key, Labels: instance.Labels, Annotations: instance.Annotations, Value: instance.Value, Timestamp: at, To: instance.State}
-				if err := enqueueNotificationGroupTx(ctx, tx, opts, view.AlertRule, event, started, webhookPayload(point, view.AlertRule, event, "firing", started)); err != nil {
+				if err := enqueueNotificationGroupTx(ctx, tx, opts, view.AlertRule, event, started, webhookPayload(point, view.AlertRule, event, "firing", started, orgID)); err != nil {
 					return err
 				}
 			}
@@ -686,6 +721,10 @@ func wakeNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64) error {
 }
 
 func currentGroupMemberTx(ctx context.Context, tx *sql.Tx, g notificationGroup, m groupMember, at int64) (bool, string, error) {
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return false, "", err
+	}
 	view, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, m.Rule))
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, "", nil
@@ -719,7 +758,7 @@ func currentGroupMemberTx(ctx context.Context, tx *sql.Tx, g notificationGroup, 
 			return false, "", err
 		}
 		event := model.AlertEvent{UID: view.UID, Key: instance.Key, Labels: instance.Labels, Annotations: instance.Annotations, Value: instance.Value, Timestamp: at, To: instance.State}
-		raw, err := json.Marshal(webhookPayload(point, view.AlertRule, event, "firing", m.StartedAt))
+		raw, err := json.Marshal(webhookPayload(point, view.AlertRule, event, "firing", m.StartedAt, orgID))
 		return true, string(raw), err
 	}
 	return false, "", nil

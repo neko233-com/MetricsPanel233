@@ -327,7 +327,7 @@ test("Plugin library filters the official catalog and submits an exact version a
   expect(issues).toEqual([]);
 });
 
-test("Plugin library reports empty and error states, rejects unsupported versions, and fits Chinese mobile", async ({
+test("Plugin library reports empty and error states, rejects unsupported versions, and fits Chinese desktop", async ({
   page,
   endpoint,
 }) => {
@@ -338,7 +338,7 @@ test("Plugin library reports empty and error states, rejects unsupported version
     localStorage.setItem("metricspanel-locale", "zh"),
   );
   watchConsole(page, issues, 502);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await page.route(
     /\/api\/v1\/(?:plugins|plugin-catalog)(?:[/?]|$)/,
     async (route) => {
@@ -427,7 +427,7 @@ test("Plugin library reports empty and error states, rejects unsupported version
       dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
     )
     .toBe(true);
-  await screenshot(page, "plugin-library-zh-mobile.png");
+  await screenshot(page, "plugin-library-zh-desktop.png");
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await library
     .getByRole("button", { name: "Image renderer", exact: true })

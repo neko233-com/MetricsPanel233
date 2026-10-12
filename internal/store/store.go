@@ -14,10 +14,21 @@ import (
 )
 
 type Store struct {
-	DB        *sql.DB
-	Path      string
-	Backend   MetricBackend
-	secretKey []byte
+	DB             *sql.DB
+	Path           string
+	Backend        MetricBackend
+	secretKey      []byte
+	organizationID int64
+	pluginRegistry *Store
+}
+
+// OrganizationID is the immutable owner of this physical control-plane store.
+// The zero value preserves compatibility with legacy organization 1 fixtures.
+func (s *Store) OrganizationID() int64 {
+	if s == nil || s.organizationID == 0 {
+		return 1
+	}
+	return s.organizationID
 }
 
 // MetricBackend separates durable metrics from the small SQLite control plane.
@@ -54,6 +65,16 @@ func (s *Store) Health(ctx context.Context) error {
 }
 
 func Open(path string) (*Store, error) {
+	return OpenForOrganization(path, 1)
+}
+
+// OpenForOrganization binds a physical database to a registered organization.
+// Organization registration and path selection belong to the instance registry;
+// this function never derives an organization from an HTTP request.
+func OpenForOrganization(path string, organizationID int64) (*Store, error) {
+	if organizationID <= 0 || path == "" {
+		return nil, fmt.Errorf("a positive organization ID and database path are required")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -62,7 +83,30 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db, Path: path}
+	s := &Store{DB: db, Path: path, organizationID: organizationID}
+	var identityCatalog int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='identity_schema'`).Scan(&identityCatalog); err != nil || identityCatalog != 0 {
+		db.Close()
+		return nil, fmt.Errorf("an identity catalog cannot be opened as an organization store")
+	}
+	var identityTable int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='store_identity'`).Scan(&identityTable); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if identityTable != 0 {
+		var owner int64
+		if err := db.QueryRow(`SELECT organization_id FROM store_identity WHERE id=1`).Scan(&owner); err != nil || owner != organizationID {
+			db.Close()
+			return nil, fmt.Errorf("database organization owner does not match the requested organization")
+		}
+	} else if organizationID != 1 {
+		var tables int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&tables); err != nil || tables > 0 {
+			db.Close()
+			return nil, fmt.Errorf("an existing legacy database can only be adopted as organization 1")
+		}
+	}
 	if _, keyErr := os.Stat(filepath.Join(filepath.Dir(path), "secrets.key")); os.IsNotExist(keyErr) {
 		for _, table := range []string{"datasources", "app_settings", "target_connections", "alert_contact_points"} {
 			var exists int
@@ -89,6 +133,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS store_identity(id INTEGER PRIMARY KEY CHECK(id=1),organization_id INTEGER NOT NULL CHECK(organization_id>0));
 CREATE TABLE IF NOT EXISTS series(id INTEGER PRIMARY KEY, name TEXT NOT NULL, labels TEXT NOT NULL, UNIQUE(name,labels));
 CREATE TABLE IF NOT EXISTS samples(series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE, timestamp INTEGER NOT NULL, value REAL NOT NULL, PRIMARY KEY(series_id,timestamp)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
@@ -120,8 +165,12 @@ CREATE TABLE IF NOT EXISTS annotation_alerts(annotation_id INTEGER PRIMARY KEY R
 CREATE INDEX IF NOT EXISTS annotation_alerts_uid ON annotation_alerts(rule_uid,annotation_id);
 CREATE INDEX IF NOT EXISTS annotation_alerts_rule_id ON annotation_alerts(rule_id,annotation_id);
 CREATE TABLE IF NOT EXISTS datasources(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,type TEXT NOT NULL,payload TEXT NOT NULL,secrets BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(id) ON DELETE CASCADE,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
+CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY,payload TEXT NOT NULL,secrets BLOB NOT NULL);`)
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO store_identity(id,organization_id) VALUES(1,?)`, organizationID); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -177,6 +226,10 @@ CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY REFERENCES plugins(i
 		return nil, err
 	}
 	if err := s.InitNotifications(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.migrateOrganizationSecrets(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}

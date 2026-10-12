@@ -48,8 +48,8 @@ func Parse(raw json.RawMessage) (*Plan, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if p.OrgID != 0 && p.OrgID != 1 {
-		return nil, errors.New("only organization 1 is supported")
+	if p.OrgID < 0 {
+		return nil, errors.New("alert organization ID cannot be negative")
 	}
 	if _, err := NotificationReceiver(p.NotificationSettings); err != nil {
 		return nil, err

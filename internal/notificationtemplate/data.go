@@ -53,6 +53,7 @@ func (a Alerts) Resolved() Alerts {
 func (a Alerts) Len() int { return len(a) }
 
 type Data struct {
+	OrgID             int64             `json:"orgId,omitempty"`
 	Receiver          string            `json:"receiver"`
 	Status            string            `json:"status"`
 	Alerts            Alerts            `json:"alerts"`
@@ -120,8 +121,11 @@ func (d *Data) Normalize(at time.Time) error {
 		}
 		dashboard, panel := a.Annotations["__dashboardUid__"], a.Annotations["__panelId__"]
 		if a.OrgID == nil {
-			value := int64(1)
-			if raw := a.Annotations["__orgId__"]; raw != "" {
+			value := d.OrgID
+			if value <= 0 {
+				value = 1
+			}
+			if raw := a.Annotations["__orgId__"]; d.OrgID <= 0 && raw != "" {
 				if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
 					value = parsed
 				}
@@ -141,6 +145,9 @@ func (d *Data) Normalize(at time.Time) error {
 					target := *base.JoinPath("d", dashboard)
 					target.Fragment = ""
 					q := url.Values{}
+					if a.OrgID != nil && *a.OrgID > 1 {
+						q.Set("orgId", strconv.FormatInt(*a.OrgID, 10))
+					}
 					if !a.StartsAt.IsZero() {
 						q.Set("from", strconv.FormatInt(a.StartsAt.Add(-time.Hour).UnixMilli(), 10))
 						to := at
@@ -161,6 +168,11 @@ func (d *Data) Normalize(at time.Time) error {
 				}
 				if a.SilenceURL == "" {
 					target := *base
+					if a.OrgID != nil && *a.OrgID > 1 {
+						q := target.Query()
+						q.Set("orgId", strconv.FormatInt(*a.OrgID, 10))
+						target.RawQuery = q.Encode()
+					}
 					target.Fragment = "alerts"
 					a.SilenceURL = target.String()
 				}

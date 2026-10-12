@@ -19,6 +19,7 @@ import (
 	queriesAPI "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana-plugin-sdk-go/genproto/pluginv2"
 	"github.com/neko233-com/MetricsPanel233/internal/expressions"
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -39,7 +40,7 @@ func requestsChunks(accept string) bool {
 
 func (s *Server) chunkedRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /apis/{group}/v0alpha1/namespaces/{namespace}/connections/{uid}/query", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("namespace") != "default" {
+		if r.PathValue("namespace") != identity.Namespace(s.OrganizationID()) {
 			fail(w, 404, errors.New("namespace not found"))
 			return
 		}

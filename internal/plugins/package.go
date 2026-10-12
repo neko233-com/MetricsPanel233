@@ -376,6 +376,9 @@ func (m *Manager) Install(ctx context.Context, raw []byte, expected string) (mod
 	return m.install(ctx, raw, expected, "", "")
 }
 func (m *Manager) install(ctx context.Context, raw []byte, expected, requestedID, requestedVersion string) (model.Plugin, error) {
+	if m.Store.OrganizationID() != 1 {
+		return model.Plugin{}, errors.New("plugin package installation is an instance operation")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ring, err := trustedKeyring()
@@ -410,7 +413,7 @@ func (m *Manager) install(ctx context.Context, raw []byte, expected, requestedID
 		if err = m.verifyFiles(old); err != nil {
 			return old, err
 		}
-		return old, nil
+		return m.Store.PluginEffective(ctx, rootID)
 	}
 	if err := m.ensureRoot(); err != nil {
 		return parent, err
@@ -450,5 +453,5 @@ func (m *Manager) install(ctx context.Context, raw []byte, expected, requestedID
 			return parent, fmt.Errorf("installed plugin, old package cleanup failed: %w", err)
 		}
 	}
-	return parent, nil
+	return m.Store.PluginEffective(ctx, rootID)
 }

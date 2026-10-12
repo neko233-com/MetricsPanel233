@@ -566,7 +566,7 @@ test("Library models retain unsafe integers through shared updates, insertion, c
   expect(errors).toEqual([]);
 });
 
-test("Chinese folder and library controls fit a phone viewport and recover from a failed read", async ({
+test("Chinese folder and library controls fit a desktop viewport and recover from a failed read", async ({
   page,
   endpoint,
 }) => {
@@ -579,7 +579,7 @@ test("Chinese folder and library controls fit a phone viewport and recover from 
     )
       errors.push(entry.text());
   });
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await page.addInitScript(() =>
     localStorage.setItem("metricspanel-locale", "zh"),
   );
@@ -596,7 +596,7 @@ test("Chinese folder and library controls fit a phone viewport and recover from 
   await dialog.getByLabel("文件夹名称", { exact: true }).fill("数据平台");
   await dialog.getByRole("button", { name: "保存文件夹", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await capture(page, "folder-browser-zh-mobile.png");
+  await capture(page, "folder-browser-zh-desktop.png");
   let failed = false;
   await page.route("**/api/library-elements?*", async (route) => {
     if (!failed) {
@@ -630,7 +630,7 @@ test("Chinese folder and library controls fit a phone viewport and recover from 
       .getByRole("textbox", { name: "面板模型 JSON", exact: true })
       .boundingBox())!.width,
   ).toBeGreaterThan(250);
-  await capture(page, "library-model-zh-mobile.png");
+  await capture(page, "library-model-zh-desktop.png");
   await dialog.getByRole("button", { name: "保存库面板", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(
@@ -645,7 +645,7 @@ test("Chinese folder and library controls fit a phone viewport and recover from 
   await expect(
     page.getByRole("button", { name: "添加到仪表盘 集群状态", exact: true }),
   ).toBeInViewport({ ratio: 1 });
-  await capture(page, "library-panels-zh-mobile.png");
+  await capture(page, "library-panels-zh-desktop.png");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,

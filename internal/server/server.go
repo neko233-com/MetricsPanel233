@@ -25,6 +25,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/alerting"
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/live"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
@@ -56,6 +57,8 @@ func New(s *store.Store, token string, retention int) *Server {
 	server.Alerts.GraphSource = server.expressionSourceQuery
 	return server
 }
+
+func (s *Server) OrganizationID() int64 { return s.Store.OrganizationID() }
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -93,7 +96,20 @@ func (s *Server) protect(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if s.Token != "" {
+		principal, err := identity.ForOrganization(r.Context(), s.OrganizationID())
+		if err != nil {
+			status := http.StatusForbidden
+			if errors.Is(err, identity.ErrUnauthenticated) {
+				status = http.StatusUnauthorized
+			}
+			fail(w, status, err)
+			return
+		}
+		if !principal.Role.AtLeast(identity.RoleViewer) {
+			fail(w, http.StatusForbidden, identity.ErrForbidden)
+			return
+		}
+		if s.Token != "" && !identity.HasPrincipal(r.Context()) {
 			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(s.Token)) != 1 {
 				fail(w, 401, errors.New("valid Bearer token required"))

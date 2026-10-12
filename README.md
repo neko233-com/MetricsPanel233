@@ -228,10 +228,25 @@ field override 的单位、阈值、value mapping 等支持；自定义绘图选
 | 工作流 | 已有能力 | 仍缺少的能力 |
 | --- | --- | --- |
 | 仪表盘编辑 | 多面板、模板导入、查询编辑、拖动与缩放布局、六类变量配置与选择、快照、版本历史 | 完整字段选项与转换编辑、ad hoc 和 group-by 变量 |
-| 告警通知 | 定时评估、查询图、规则组、状态历史、告警注释、Webhook 联系点、递归标签路由、分组与重复通知、静默、定时静音、通知模板预览、持久化投递与重试 | 邮件 / Slack 等内置接收器、完整 Grafana 模板函数与默认格式、inhibition、其余 Alertmanager 接口 |
+| 告警通知 | 定时评估、查询图、规则组、状态历史、告警注释、Webhook 联系点、递归标签路由、分组与重复通知、静默、定时静音、通知模板预览、来源/目标告警抑制、持久化投递与重试 | 邮件 / Slack 等内置接收器、完整 Grafana 模板函数与默认格式、外部 Alertmanager 配置和其余接口 |
 | 数据源与 Explore | Prometheus、Grafana、MySQL / MariaDB、PostgreSQL SQL 查询、已安装 SDK 数据源插件 | 官方 SQL visual Builder、其余核心数据源、完整日志与追踪工作流；直连采集器只采固定指标 |
 | 用户与权限 | 工作空间令牌、同源校验、加密连接凭据 | 用户、组织、团队、角色、文件夹权限和独立服务账号 |
 | Agent 与分享 | JSON CLI、API 发现、资源配置和版本操作 | CLI 单步快照捕获、匿名分享与到期管理 |
+
+### 告警抑制
+
+在“告警 → 通知”添加来源和目标匹配条件，例如同一 `service` 的 critical 告警抑制 warning 通知。预览读取实际活动告警；不会创建告警。抑制只暂停通知，评估和历史记录继续。来源恢复或抑制规则停用后，仅仍活动的目标恢复发送；规则与抑制状态在重启后保留。
+
+```sh
+metricspanel inhibition-rules save --file examples/alerts/inhibition-rule.json
+metricspanel inhibition-rules preview --file examples/alerts/inhibition-preview.json
+metricspanel inhibition-rules active --limit 200
+metricspanel inhibition-rules get --id service-severity
+metricspanel inhibition-rules save --id service-severity --version 1 --file examples/alerts/inhibition-rule.json
+metricspanel inhibition-rules delete --id service-severity --version 2
+```
+
+更新和删除必须使用当前版本，过期写入返回 HTTP 409。此接口适用于本服务管理的告警；外部 Alertmanager 配置导入仍待完成。
 
 ## 向量波形分析
 
@@ -331,7 +346,7 @@ metricspanel datasources health --id remote-prometheus
 
 每五秒同步配置及安装状态；提供方最多四个并行加载、每次限二十秒；每插件每类注册最多 1024 条、
 页面最多请求 1024 个扩展点。`plugins get --id ID` 可让 Agent 发现声明，实际客户端回调需要浏览器运行时。
-自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和手机布局。
+自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和桌面布局。
 契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
 
 ## 持久化注释
@@ -381,7 +396,7 @@ Prometheus 注释查询遵循数据源 `jsonData.timeInterval` 的最低步长�
 原生色带和 SDK 注解帧接收相同事件；生成事件只读，不写入数据库，也不会出现在 CLI `annotations list` 中。CLI 仪表盘保存／导出保留其配置。
 星期、Cron、时区和持续时长可在中英文注释编辑器修改与预览，原生／经典／V1／V2 格式和未知字段均保留；存储重启、时区／夏令时、边界与浏览器 SDK 帧由自动测试覆盖。
 旧 Angular 注释编辑器和完整组织权限仍需补齐。周期配置参考 [Grafana 注解文档](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/) 和 [13.2.3 时间区域契约](https://github.com/grafana/grafana/blob/v13.2.3/public/app/core/utils/timeRegions.ts)。
-Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和手机布局。
+Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和桌面布局。
 契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
 插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。
 宿主初始化官方日志注册表，并同步 SDK 的数据源设置缓存和插件加载器；数据源服务重新加载时，设置增删改会同步新版与旧版服务。
@@ -464,7 +479,7 @@ Grafana 标准 `timeCompare` 会追加独立的历史查询，经典/V1 面板�
 比较的 `1d` / `1M` 按 SDK 固定时长（24 小时 / 30 天）偏移，与 `timeShift` 的日历日期运算不同；相对 raw 范围随刷新重新解析。
 面板上的“缩放范围 → 当前面板”提供原生局部视图，SDK 缩放和拖选仅查询当前面板，保留 URL 和其他面板范围；刷新保持局部窗口，重置或父范围/变量变化恢复仪表盘窗口。
 局部缩放是浏览器视图状态，原始模板导出不变。比较错误会显示并保留主查询结果。
-十二个时间模型测试、Testify 导入测试与浏览器回归覆盖历史请求、比较 opt-out、帧元数据、曲线对齐、刷新、局部缩放及中英文手机布局。
+十二个时间模型测试、Testify 导入测试与浏览器回归覆盖历史请求、比较 opt-out、帧元数据、曲线对齐、刷新、局部缩放及中英文桌面布局。
 浏览器实际导入经典/V1/V2 标准字段并检查查询与 Agent CLI 原始导出；也验证空字符串关闭和旧别名。
 Grafana 13.2 的 `zoomBehavior` 属于 Scenes 运行状态，当前经典/V2 序列化未保存它；原生局部缩放保留为浏览器视图操作。
 完整 Scenes 生命周期及其他未实现的时间交互仍需补齐。
@@ -486,7 +501,7 @@ scoped bus 和旧版 `emit/on/off`，自定义事件可在应用和扩展间通�
 文字按纯文本展示，最多 8192 字符。错误和警告使用 `role=alert`；关闭按钮随中文 / 英文界面切换。
 这是浏览器通知；服务端告警 Webhook 在“告警 → 通知”中配置。主题目前固定为深色；CopyPanelEvent 的原生复制动作、
 原生图表的全局 hover/select，以及其他应用核心服务仍需继续接入。
-独立 App 和两个 SDK 面板测试覆盖真实查询更新、重复事件隔离、卸载 / 重挂载、限流、通知及手机布局。
+独立 App 和两个 SDK 面板测试覆盖真实查询更新、重复事件隔离、卸载 / 重挂载、限流、通知及桌面布局。
 参考 [Grafana 事件订阅契约](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events)。
 
 ## Grafana Live 与 Agent 实时订阅
@@ -605,7 +620,7 @@ metricspanel alerts group-delete --folder-uid general --group infrastructure
 
 Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
 
-未知数据源、非法节点和循环依赖在保存前拒绝；Webhook 通知已支持，完整 Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、手机编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
+未知数据源、非法节点和循环依赖在保存前拒绝；Webhook 通知已支持，完整 Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、桌面编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
 
 ## 验证
 

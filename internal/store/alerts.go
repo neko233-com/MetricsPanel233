@@ -145,6 +145,9 @@ func saveAlertRuleTx(ctx context.Context, tx *sql.Tx, rule model.AlertRule, pres
 	if _, err = tx.ExecContext(ctx, `INSERT INTO alert_schedule(uid,interval_seconds,paused) VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET interval_seconds=excluded.interval_seconds,paused=excluded.paused`, rule.UID, rule.IntervalSeconds, rule.Paused); err != nil {
 		return model.AlertRuleView{}, err
 	}
+	if err := syncInhibitionRuntimeTx(ctx, tx, rule, runtime, rule.UpdatedAt, true); err != nil {
+		return model.AlertRuleView{}, err
+	}
 	return model.AlertRuleView{AlertRule: rule, Runtime: runtime}, nil
 }
 func insertAlertEvent(ctx context.Context, tx *sql.Tx, rule model.AlertRule, event model.AlertEvent) error {
@@ -200,6 +203,9 @@ func (s *Store) CommitAlertEvaluation(ctx context.Context, uid string, version i
 	if count == 0 {
 		return ErrStaleEvaluation
 	}
+	if err := syncInhibitionRuntimeTx(ctx, tx, view.AlertRule, runtime, runtime.LastEvaluation, true); err != nil {
+		return err
+	}
 	for _, event := range events {
 		if err = insertAlertEvent(ctx, tx, view.AlertRule, event); err != nil {
 			return err
@@ -231,6 +237,9 @@ func (s *Store) DeleteAlertRule(ctx context.Context, uid string) error {
 func deleteAlertRuleTx(ctx context.Context, tx *sql.Tx, uid string) error {
 	previous, err := scanRule(tx.QueryRowContext(ctx, `SELECT config,runtime FROM alert_rules WHERE uid=?`, uid))
 	if err != nil {
+		return err
+	}
+	if err := syncInhibitionRuntimeTx(ctx, tx, previous.AlertRule, model.AlertRuntime{}, time.Now().UnixMilli(), true); err != nil {
 		return err
 	}
 	for _, instance := range previous.Runtime.Instances {

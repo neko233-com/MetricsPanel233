@@ -168,7 +168,7 @@ func (s *Server) alertRoutes(api *http.ServeMux) {
 		} else if g.UID == "" {
 			g.UID = uuid.NewString()
 		}
-		rule, err := alerting.CompileGrafana(g, interval)
+		rule, err := alerting.CompileGrafana(g, interval, s.OrganizationID())
 		if err != nil {
 			fail(w, 400, err)
 			return

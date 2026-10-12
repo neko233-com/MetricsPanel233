@@ -159,6 +159,8 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			AnnotationDelayMS int     `json:"annotationDelayMS"`
 			RequireAlert      bool    `json:"requireAlert"`
 			SQLTable          bool    `json:"sqlTable"`
+			RequireOrgID      int64   `json:"requireOrgId"`
+			RequireLogin      string  `json:"requireLogin"`
 		}
 		if err := json.Unmarshal(q.JSON, &input); err != nil {
 			return nil, err
@@ -168,7 +170,10 @@ func (fixture) QueryData(ctx context.Context, r *backend.QueryDataRequest) (*bac
 			continue
 		}
 		settings := r.PluginContext.DataSourceInstanceSettings
-		if input.RequireAlert && (r.Headers["FromAlert"] != "true" || r.Headers["X-Cache-Skip"] != "true" || r.Headers["X-Grafana-Org-Id"] != "1") {
+		if input.RequireOrgID != 0 && (r.PluginContext.OrgID != input.RequireOrgID || r.PluginContext.Namespace != fmt.Sprintf("org-%d", input.RequireOrgID) || r.PluginContext.User == nil || r.PluginContext.User.Login != input.RequireLogin) {
+			return nil, fmt.Errorf("authenticated organization identity missing from SDK request")
+		}
+		if input.RequireAlert && (r.Headers["FromAlert"] != "true" || r.Headers["X-Cache-Skip"] != "true" || r.Headers["X-Grafana-Org-Id"] != fmt.Sprint(r.PluginContext.OrgID)) {
 			return nil, fmt.Errorf("Grafana alert request headers missing")
 		}
 		if settings == nil || settings.DecryptedSecureJSONData["apiKey"] != "test-secret-233" {
@@ -233,6 +238,9 @@ func (fixture) CallResource(ctx context.Context, r *backend.CallResourceRequest,
 	}
 	if r.Path == "stream-stats" {
 		body, _ = json.Marshal(map[string]int64{"started": liveStarted.Load(), "active": liveActive.Load(), "cancelled": liveCancelled.Load(), "static_queries": staticQueries.Load()})
+	}
+	if r.Path == "organization-context" {
+		body, _ = json.Marshal(map[string]any{"org": r.PluginContext.OrgID, "namespace": r.PluginContext.Namespace, "user": r.PluginContext.User, "uid": uid})
 	}
 	if r.Path == "chunked-stats" {
 		counters := map[string]int64{"started": chunkedStarted.Load(), "active": chunkedActive.Load(), "cancelled": chunkedCancelled.Load(), "static_queries": staticQueries.Load()}

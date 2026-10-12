@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -12,10 +13,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
+
+var secretEnvelope = []byte("MetricsPanel233\x00GCM\x02\x00")
+
+func (s *Store) secretAAD(reference string) []byte {
+	kind, id := "datasource", reference
+	for _, prefix := range []string{"app:", "target:", "contact-point:"} {
+		if strings.HasPrefix(reference, prefix) {
+			kind, id = strings.TrimSuffix(prefix, ":"), strings.TrimPrefix(reference, prefix)
+			break
+		}
+	}
+	// JSON array framing separates the identity components without ambiguity.
+	value, _ := json.Marshal([]any{"metricspanel-secrets", 2, s.OrganizationID(), kind, id})
+	return value
+}
 
 func loadSecretKey(path string) ([]byte, error) {
 	keyPath := filepath.Join(filepath.Dir(path), "secrets.key")
@@ -72,7 +89,9 @@ func (s *Store) seal(uid string, secrets map[string]string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gcm.Seal(nonce, nonce, data, []byte(uid)), nil
+	out := append([]byte{}, secretEnvelope...)
+	out = append(out, nonce...)
+	return gcm.Seal(out, nonce, data, s.secretAAD(uid)), nil
 }
 func (s *Store) openSecrets(uid string, sealed []byte) (map[string]string, error) {
 	block, err := aes.NewCipher(s.secretKey)
@@ -83,10 +102,17 @@ func (s *Store) openSecrets(uid string, sealed []byte) (map[string]string, error
 	if err != nil {
 		return nil, err
 	}
+	aad := []byte(uid)
+	if bytes.HasPrefix(sealed, secretEnvelope) {
+		sealed = sealed[len(secretEnvelope):]
+		aad = s.secretAAD(uid)
+	} else if s.OrganizationID() != 1 {
+		return nil, errors.New("legacy encrypted secrets are only valid in organization 1")
+	}
 	if len(sealed) < gcm.NonceSize() {
 		return nil, errors.New("invalid encrypted datasource secrets")
 	}
-	data, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], []byte(uid))
+	data, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], aad)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +121,9 @@ func (s *Store) openSecrets(uid string, sealed []byte) (map[string]string, error
 	return secrets, err
 }
 func (s *Store) Plugins(ctx context.Context) ([]model.Plugin, error) {
+	if s.pluginRegistry != nil {
+		return s.pluginRegistry.Plugins(ctx)
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT payload FROM plugins ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -115,6 +144,9 @@ func (s *Store) Plugins(ctx context.Context) ([]model.Plugin, error) {
 	return out, rows.Err()
 }
 func (s *Store) Plugin(ctx context.Context, id string) (model.Plugin, error) {
+	if s.pluginRegistry != nil {
+		return s.pluginRegistry.Plugin(ctx, id)
+	}
 	var p model.Plugin
 	var payload string
 	if err := s.DB.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, id).Scan(&payload); err != nil {
@@ -124,6 +156,9 @@ func (s *Store) Plugin(ctx context.Context, id string) (model.Plugin, error) {
 	return p, err
 }
 func (s *Store) SavePlugin(ctx context.Context, p model.Plugin) error {
+	if s.pluginRegistry != nil {
+		return errors.New("plugin installation settings are instance operations")
+	}
 	if !model.PluginID.MatchString(p.ID) {
 		return errors.New("invalid plugin ID")
 	}
@@ -135,6 +170,9 @@ func (s *Store) SavePlugin(ctx context.Context, p model.Plugin) error {
 	return err
 }
 func (s *Store) SavePluginPackage(ctx context.Context, plugins []model.Plugin) error {
+	if s.pluginRegistry != nil {
+		return errors.New("plugin package installation is an instance operation")
+	}
 	if len(plugins) == 0 {
 		return errors.New("empty plugin package")
 	}
@@ -184,6 +222,9 @@ func (s *Store) SavePluginPackage(ctx context.Context, plugins []model.Plugin) e
 		if count > 0 {
 			return errors.New("package update would remove a plugin used by a datasource")
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_settings WHERE id=?`, p.ID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM plugins WHERE id=?`, p.ID); err != nil {
 			return err
 		}
@@ -203,6 +244,9 @@ func (s *Store) SavePluginPackage(ctx context.Context, plugins []model.Plugin) e
 	return tx.Commit()
 }
 func (s *Store) DeletePluginPackage(ctx context.Context, id string) error {
+	if s.pluginRegistry != nil {
+		return errors.New("plugin package removal is an instance operation")
+	}
 	p, err := s.Plugin(ctx, id)
 	if err != nil {
 		return err
@@ -250,6 +294,9 @@ func (s *Store) DeletePluginPackage(ctx context.Context, id string) error {
 		}
 	}
 	for _, uid := range ids {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_settings WHERE id=?`, uid); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM plugins WHERE id=?`, uid); err != nil {
 			return err
 		}
@@ -257,14 +304,22 @@ func (s *Store) DeletePluginPackage(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 func (s *Store) DeletePlugin(ctx context.Context, id string) error {
+	if s.pluginRegistry != nil {
+		return errors.New("plugin removal is an instance operation")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var count int
-	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM datasources WHERE type=?`, id).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM datasources WHERE type=?`, id).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
 		return errors.New("delete this plugin's data sources before uninstalling")
 	}
-	result, err := s.DB.ExecContext(ctx, `DELETE FROM plugins WHERE id=?`, id)
+	result, err := tx.ExecContext(ctx, `DELETE FROM plugins WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -275,7 +330,10 @@ func (s *Store) DeletePlugin(ctx context.Context, id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM app_settings WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanDataSource(row interface{ Scan(...any) error }) (model.DataSource, error) {
@@ -303,12 +361,19 @@ func (s *Store) DataSources(ctx context.Context) ([]model.DataSource, error) {
 		if err != nil {
 			return nil, err
 		}
+		if d.OrgID != s.OrganizationID() {
+			return nil, errors.New("stored datasource organization differs from its physical store")
+		}
 		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 func (s *Store) DataSource(ctx context.Context, uid string) (model.DataSource, error) {
-	return scanDataSource(s.DB.QueryRowContext(ctx, `SELECT id,payload FROM datasources WHERE uid=?`, uid))
+	d, err := scanDataSource(s.DB.QueryRowContext(ctx, `SELECT id,payload FROM datasources WHERE uid=?`, uid))
+	if err == nil && d.OrgID != s.OrganizationID() {
+		err = errors.New("stored datasource organization differs from its physical store")
+	}
+	return d, err
 }
 func (s *Store) DataSourceSecrets(ctx context.Context, uid string) (map[string]string, error) {
 	var sealed []byte
@@ -321,6 +386,10 @@ func (s *Store) DataSourceSecrets(ctx context.Context, uid string) (map[string]s
 var ErrDataSourceConflict = errors.New("datasource version changed; read the current version before updating")
 
 func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput) (model.DataSource, error) {
+	if input.OrgID != 0 && input.OrgID != s.OrganizationID() {
+		return model.DataSource{}, errors.New("datasource organization differs from its physical store")
+	}
+	input.OrgID = s.OrganizationID()
 	input.Defaults()
 	if input.Type == "postgres" {
 		input.Type = "grafana-postgresql-datasource"
@@ -328,37 +397,26 @@ func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput)
 	if err := input.Validate(); err != nil {
 		return model.DataSource{}, err
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return model.DataSource{}, err
-	}
-	defer tx.Rollback()
 	if input.Type != "prometheus" && input.Type != "mysql" && input.Type != "grafana-postgresql-datasource" {
-		var payload string
-		if err := tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, input.Type).Scan(&payload); err != nil {
+		p, err := s.Plugin(ctx, input.Type)
+		if err != nil {
 			return model.DataSource{}, errors.New("datasource plugin is not installed")
-		}
-		var p model.Plugin
-		if err := json.Unmarshal([]byte(payload), &p); err != nil {
-			return model.DataSource{}, err
 		}
 		if p.Type != "datasource" || !p.Enabled {
 			return model.DataSource{}, errors.New("datasource plugin is not enabled")
 		}
 		if p.PackageID != p.ID {
-			var parentPayload string
-			if err := tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, p.PackageID).Scan(&parentPayload); err != nil {
-				return model.DataSource{}, err
-			}
-			var parent model.Plugin
-			if err := json.Unmarshal([]byte(parentPayload), &parent); err != nil {
-				return model.DataSource{}, err
-			}
-			if !parent.Enabled {
+			parent, err := s.PluginEffective(ctx, p.PackageID)
+			if err != nil || !parent.Enabled {
 				return model.DataSource{}, errors.New("owning app package is disabled")
 			}
 		}
 	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return model.DataSource{}, err
+	}
+	defer tx.Rollback()
 	previous, err := scanDataSource(tx.QueryRowContext(ctx, `SELECT id,payload FROM datasources WHERE uid=?`, input.UID))
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

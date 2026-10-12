@@ -1147,6 +1147,7 @@ func TestDockerEndToEnd(t *testing.T) {
 	imageSize, err := e.docker("image", "inspect", "metricspanel233-test:local", "--format", "{{.Size}}")
 	require.NoError(t, err)
 	t.Logf("single test container runtime image: %s bytes; 2 CPUs, 2 GiB memory limit", imageSize)
+	organizationEvidence := e.verifyOrganizationIsolation(nil, "initial creation")
 	resourceConnections := map[string][]model.LibraryConnection{}
 	historyEvidence := map[string]dashboardHistoryEvidence{}
 	for _, backend := range []struct{ service, goService string }{{"sqlite", "go-sqlite"}, {"clickhouse-app", "go-clickhouse"}} {
@@ -1324,6 +1325,7 @@ func TestDockerEndToEnd(t *testing.T) {
 				require.Eventually(t, func() bool { v, ok := e.value(address, "restart_marker"); return ok && v == 234 }, 60*time.Second, 500*time.Millisecond, "ClickHouse restart lost acknowledged sample")
 				e.verifyPatternNeighbor(address, patternID)
 				e.verifyHNSWAfterRestart(benchmarkID)
+				e.verifyOrganizationIsolation(organizationEvidence, "ClickHouse service restart")
 			}
 		}) {
 			return
@@ -1340,5 +1342,6 @@ func TestDockerEndToEnd(t *testing.T) {
 		assert.Equal(t, resourceConnections[service], e.verifyDashboardResources(address, service, false), "single-container restart changed library connection identities")
 		assert.Equal(t, historyEvidence[service], e.verifyDashboardHistory(address, service, false), "single-container restart changed dashboard history or exports")
 	}
+	e.verifyOrganizationIsolation(organizationEvidence, "full single-container restart")
 	e.waitSQLBrowserQA()
 }

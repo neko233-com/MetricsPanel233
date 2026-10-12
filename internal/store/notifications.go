@@ -37,7 +37,10 @@ CREATE INDEX IF NOT EXISTS alert_notification_ordering ON alert_notification_out
 	if err := s.initNotificationTemplates(); err != nil {
 		return err
 	}
-	return s.initNotificationGroups()
+	if err := s.initNotificationGroups(); err != nil {
+		return err
+	}
+	return s.initInhibition()
 }
 
 func scanContactPoint(row interface{ Scan(...any) error }) (model.ContactPoint, error) {
@@ -331,6 +334,10 @@ func enqueueAlertNotifications(ctx context.Context, tx *sql.Tx, rule model.Alert
 	if was == active || rule.Record != "" {
 		return nil
 	}
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	status := "resolved"
 	startedAt := event.Timestamp
 	if active {
@@ -361,7 +368,14 @@ func enqueueAlertNotifications(ctx context.Context, tx *sql.Tx, rule model.Alert
 	if err != nil {
 		return err
 	}
-	mutedUntil := silenceUntil(silences, event.Labels)
+	suppressor, err := newNotificationSuppressor(ctx, tx, event.Timestamp, silences)
+	if err != nil {
+		return err
+	}
+	mutedUntil, suppressionMessage, err := suppressor.check(event.Labels)
+	if err != nil {
+		return err
+	}
 	previouslySuppressed := map[string]bool{}
 	if !active {
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT contact_point_uid FROM alert_notification_outbox WHERE rule_uid=? AND instance_key=? AND created_at>=? AND status='firing' AND state='suppressed'`, rule.UID, event.Key, startedAt)
@@ -394,7 +408,7 @@ func enqueueAlertNotifications(ctx context.Context, tx *sql.Tx, rule model.Alert
 		opts = []model.NotificationRouteOptions{{Receiver: rule.NotificationReceiver, RouteKey: "rule/" + rule.UID}}
 	}
 	if !active {
-		if err := resolveNotificationGroupsTx(ctx, tx, rule, event, startedAt, silences); err != nil {
+		if err := resolveNotificationGroupsTx(ctx, tx, rule, event, startedAt, suppressor); err != nil {
 			return err
 		}
 	}
@@ -419,7 +433,7 @@ func enqueueAlertNotifications(ctx context.Context, tx *sql.Tx, rule model.Alert
 		if point.Disabled || (status == "resolved" && point.DisableResolveMessage) {
 			continue
 		}
-		payload := webhookPayload(point, rule, event, status, startedAt)
+		payload := webhookPayload(point, rule, event, status, startedAt, orgID)
 		if groupKey != "" {
 			if active {
 				if err := enqueueNotificationGroupTx(ctx, tx, options, rule, event, startedAt, payload); err != nil {
@@ -433,7 +447,7 @@ func enqueueAlertNotifications(ctx context.Context, tx *sql.Tx, rule model.Alert
 			return err
 		}
 		if active && mutedUntil > 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='suppressed',last_error='Silenced',next_attempt_at=? WHERE id=?`, mutedUntil, id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='suppressed',last_error=?,next_attempt_at=? WHERE id=?`, suppressionMessage, mutedUntil, id); err != nil {
 				return err
 			}
 		} else if !active {
@@ -485,7 +499,13 @@ func notificationReceiverTx(ctx context.Context, tx *sql.Tx, receiver string) (s
 	return uid, nil
 }
 
-func webhookPayload(point model.ContactPoint, rule model.AlertRule, event model.AlertEvent, status string, startedAt int64) map[string]any {
+func notificationOrganizationTx(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var orgID int64
+	err := tx.QueryRowContext(ctx, `SELECT organization_id FROM store_identity WHERE id=1`).Scan(&orgID)
+	return orgID, err
+}
+
+func webhookPayload(point model.ContactPoint, rule model.AlertRule, event model.AlertEvent, status string, startedAt, orgID int64) map[string]any {
 	if event.Labels == nil {
 		event.Labels = map[string]string{}
 	}
@@ -499,7 +519,7 @@ func webhookPayload(point model.ContactPoint, rule model.AlertRule, event model.
 		state = "ok"
 	}
 	return map[string]any{
-		"receiver": point.Name, "status": status, "version": "1", "orgId": 1,
+		"receiver": point.Name, "status": status, "version": "1", "orgId": orgID,
 		"groupKey": rule.UID + ":" + event.Key, "groupLabels": map[string]string{"alertname": rule.Title},
 		"commonLabels": event.Labels, "commonAnnotations": event.Annotations,
 		"externalURL": "", "truncatedAlerts": 0, "title": "[" + strings.ToUpper(status) + "] " + rule.Title, "message": event.Annotations["summary"], "state": state,
@@ -549,8 +569,10 @@ func insertNotificationTx(ctx context.Context, tx *sql.Tx, eventID int64, uid, r
 	if err != nil {
 		return 0, err
 	}
-	// Bound completed delivery history while retaining every undelivered item.
-	_, err = tx.ExecContext(ctx, `DELETE FROM alert_notification_outbox WHERE id IN (SELECT id FROM alert_notification_outbox WHERE state IN ('sent','failed','canceled') ORDER BY id DESC LIMIT -1 OFFSET 10000)`)
+	// Retain the latest successful ungrouped firing for every active period.
+	// Late suppression needs that durable resume anchor even after ordinary
+	// history ages out. Earlier resumes and completed periods remain bounded.
+	_, err = tx.ExecContext(ctx, `DELETE FROM alert_notification_outbox AS n WHERE n.id IN (SELECT id FROM alert_notification_outbox WHERE state IN ('sent','failed','canceled') ORDER BY id DESC LIMIT -1 OFFSET 10000) AND NOT (n.status='firing' AND n.state='sent' AND EXISTS(SELECT 1 FROM alert_notification_active a WHERE a.rule_uid=n.rule_uid AND a.instance_key=n.instance_key AND a.started_at<=n.created_at) AND NOT EXISTS(SELECT 1 FROM alert_notification_group_deliveries gd WHERE gd.notification_id=n.id) AND NOT EXISTS(SELECT 1 FROM alert_notification_outbox newer WHERE newer.contact_point_uid=n.contact_point_uid AND newer.rule_uid=n.rule_uid AND newer.instance_key=n.instance_key AND newer.id>n.id AND newer.status='firing'))`)
 	if err != nil {
 		return 0, err
 	}
@@ -615,7 +637,7 @@ func (s *Store) EnqueueTestNotification(ctx context.Context, uid string) (model.
 	at := time.Now().UnixMilli()
 	key := uuid.NewString()
 	event := model.AlertEvent{Key: key, Timestamp: at, Labels: map[string]string{"alertname": "Test notification"}, Annotations: map[string]string{"summary": "MetricsPanel233 test notification"}}
-	payload := webhookPayload(point, model.AlertRule{Title: "Test notification"}, event, "firing", at)
+	payload := webhookPayload(point, model.AlertRule{Title: "Test notification"}, event, "firing", at, s.OrganizationID())
 	id, err := insertNotificationTx(ctx, tx, 0, uid, "", key, "test", payload, at)
 	if err != nil {
 		return model.NotificationDelivery{}, err
@@ -639,29 +661,33 @@ func (s *Store) ClaimNotification(ctx context.Context, at int64) (model.Notifica
 	if err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
-	if err := enqueueSilenceResumesTx(ctx, tx, at, silences); err != nil {
+	suppressor, err := newNotificationSuppressor(ctx, tx, at, silences)
+	if err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
-	if err := reconcileSuppressedNotificationsTx(ctx, tx, at, silences); err != nil {
+	if err := enqueueSilenceResumesTx(ctx, tx, at, suppressor); err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
-	if err := reconcileNotificationGroupsTx(ctx, tx, at, silences); err != nil {
+	if err := reconcileSuppressedNotificationsTx(ctx, tx, at, suppressor); err != nil {
+		return model.NotificationDelivery{}, nil, err
+	}
+	if err := reconcileNotificationGroupsTx(ctx, tx, at, suppressor); err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
 	var id int64
 	if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='failed',last_error='Delivery interrupted after final attempt',next_attempt_at=0 WHERE state='sending' AND next_attempt_at<=? AND attempts>=max_attempts`, at); err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
-	var candidateRaw, candidateStatus string
+	var candidateRaw, candidateStatus, candidateRule, candidateKey string
 	for range 32 {
-		err = tx.QueryRowContext(ctx, `SELECT n.id,n.payload,n.status FROM alert_notification_outbox n WHERE n.state IN ('pending','sending') AND n.next_attempt_at<=? AND NOT EXISTS(SELECT 1 FROM alert_notification_outbox earlier WHERE earlier.contact_point_uid=n.contact_point_uid AND earlier.rule_uid=n.rule_uid AND earlier.instance_key=n.instance_key AND earlier.id<n.id AND earlier.state IN ('pending','sending','suppressed')) ORDER BY n.next_attempt_at,n.id LIMIT 1`, at).Scan(&id, &candidateRaw, &candidateStatus)
+		err = tx.QueryRowContext(ctx, `SELECT n.id,n.payload,n.status,n.rule_uid,n.instance_key FROM alert_notification_outbox n WHERE n.state IN ('pending','sending') AND n.next_attempt_at<=? AND NOT EXISTS(SELECT 1 FROM alert_notification_outbox earlier WHERE earlier.contact_point_uid=n.contact_point_uid AND earlier.rule_uid=n.rule_uid AND earlier.instance_key=n.instance_key AND earlier.id<n.id AND earlier.state IN ('pending','sending','suppressed')) ORDER BY n.next_attempt_at,n.id LIMIT 1`, at).Scan(&id, &candidateRaw, &candidateStatus, &candidateRule, &candidateKey)
 		if err != nil {
 			break
 		}
 		if candidateStatus == "test" {
 			break
 		}
-		grouped, valid, err := validGroupNotificationTx(ctx, tx, id, at, silences)
+		grouped, valid, err := validGroupNotificationTx(ctx, tx, id, at, suppressor)
 		if err != nil {
 			return model.NotificationDelivery{}, nil, err
 		}
@@ -672,17 +698,20 @@ func (s *Store) ClaimNotification(ctx context.Context, at int64) (model.Notifica
 			id = 0
 			continue
 		}
-		labels, err := notificationLabels(candidateRaw)
+		labels, err := currentNotificationLabelsTx(ctx, tx, candidateRule, candidateKey, candidateRaw)
 		if err != nil {
 			return model.NotificationDelivery{}, nil, err
 		}
-		until := silenceUntil(silences, labels)
+		until, suppressionMessage, err := suppressor.check(labels)
+		if err != nil {
+			return model.NotificationDelivery{}, nil, err
+		}
 		if until == 0 {
 			break
 		}
-		state, message, next := "suppressed", "Silenced", until
+		state, message, next := "suppressed", suppressionMessage, until
 		if candidateStatus == "resolved" {
-			state, message, next = "canceled", "Resolved while silenced", 0
+			state, message, next = "canceled", "Resolved while suppressed", 0
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state=?,last_error=?,next_attempt_at=? WHERE id=?`, state, message, next, id); err != nil {
 			return model.NotificationDelivery{}, nil, err

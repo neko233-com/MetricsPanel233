@@ -211,6 +211,9 @@ func (s *Server) notificationTemplatePreview(w http.ResponseWriter, r *http.Requ
 	if input.Data != nil {
 		data = *input.Data
 	}
+	if data.OrgID == 0 {
+		data.OrgID = s.OrganizationID()
+	}
 	if err := data.Normalize(time.Now()); err != nil {
 		notificationError(w, err)
 		return

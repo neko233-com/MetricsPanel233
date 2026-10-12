@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 )
@@ -35,7 +36,8 @@ func dashboardSaveContext(r *http.Request) (context.Context, error) {
 			return r.Context(), errors.New("X-Dashboard-Message must be a JSON string of at most 500 characters")
 		}
 	}
-	return store.WithDashboardHistoryMetadata(r.Context(), model.DashboardHistoryMetadata{Message: message}), nil
+	actor, _ := identity.FromContext(r.Context())
+	return store.WithDashboardHistoryMetadata(r.Context(), model.DashboardHistoryMetadata{Message: message, CreatedBy: actor.Login}), nil
 }
 
 func positiveHistoryVersion(raw json.RawMessage) (int64, error) {

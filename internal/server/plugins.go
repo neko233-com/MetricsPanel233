@@ -211,18 +211,22 @@ func (s *Server) pluginRoutes(api, mux *http.ServeMux) {
 	api.HandleFunc("POST /api/ds/query", s.queryDataSources)
 }
 
-func builtinDataSource() model.DataSource {
-	return model.DataSource{ID: 1, UID: "metricspanel", OrgID: 1, Name: "MetricsPanel233", Type: "prometheus", Access: "proxy", URL: "/prometheus", IsDefault: true, ReadOnly: true, JSONData: json.RawMessage(`{"httpMethod":"POST","timeInterval":"5s"}`), SecureJSONFields: map[string]bool{}, Version: 1}
+func builtinDataSource(orgIDs ...int64) model.DataSource {
+	orgID := int64(1)
+	if len(orgIDs) > 0 {
+		orgID = orgIDs[0]
+	}
+	return model.DataSource{ID: 1, UID: "metricspanel", OrgID: orgID, Name: "MetricsPanel233", Type: "prometheus", Access: "proxy", URL: "/prometheus", IsDefault: true, ReadOnly: true, JSONData: json.RawMessage(`{"httpMethod":"POST","timeInterval":"5s"}`), SecureJSONFields: map[string]bool{}, Version: 1}
 }
 func (s *Server) dataSource(ctx context.Context, uid string) (model.DataSource, error) {
 	if expressions.IsSource(uid) {
-		return builtinExpressionSource(), nil
+		return builtinExpressionSource(s.Store.OrganizationID()), nil
 	}
 	if uid == "metricspanel" {
-		return builtinDataSource(), nil
+		return builtinDataSource(s.Store.OrganizationID()), nil
 	}
 	if uid == "grafana" || uid == "-- Grafana --" || uid == "-1" {
-		return builtinGrafanaDataSource(), nil
+		return builtinGrafanaDataSource(s.Store.OrganizationID()), nil
 	}
 	return s.Store.DataSource(ctx, uid)
 }
@@ -233,13 +237,13 @@ func (s *Server) datasourceRoutes(api *http.ServeMux, prometheus http.Handler) {
 			fail(w, 500, err)
 			return
 		}
-		builtin := builtinDataSource()
+		builtin := builtinDataSource(s.Store.OrganizationID())
 		for _, ds := range items {
 			if ds.IsDefault {
 				builtin.IsDefault = false
 			}
 		}
-		writeJSON(w, 200, append([]model.DataSource{builtin, builtinGrafanaDataSource()}, items...))
+		writeJSON(w, 200, append([]model.DataSource{builtin, builtinGrafanaDataSource(s.Store.OrganizationID())}, items...))
 	})
 	api.HandleFunc("GET /api/datasources/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		ds, err := s.dataSource(r.Context(), r.PathValue("uid"))

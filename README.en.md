@@ -144,10 +144,25 @@ Everyday workflows still required for a complete Grafana replacement:
 | Workflow | Available | Missing |
 | --- | --- | --- |
 | Dashboard editing | Multiple panels, imports, query editing, 24-column drag/resize layout editing, configuration/selection of six variable types, snapshots and history | Full field and transformation editors, ad hoc and group-by variables |
-| Alert notifications | Scheduled evaluation, query graphs, rule groups, history, annotations, webhook contacts, recursive routes, grouping/repeats, silences, mute timings, notification template previews and durable delivery/retries | Email/Slack integrations, complete Grafana template functions/default formatting, inhibition and remaining Alertmanager APIs |
+| Alert notifications | Scheduled evaluation, query graphs, rule groups, history, annotations, webhook contacts, recursive routes, grouping/repeats, silences, mute timings, notification template previews, source/target inhibition and durable delivery/retries | Email/Slack integrations, complete Grafana template functions/default formatting, external Alertmanager configuration and remaining APIs |
 | Datasources and Explore | Prometheus, Grafana, MySQL/MariaDB and PostgreSQL SQL queries, installed SDK datasource plugins | Official SQL visual Builder, remaining core datasources and complete logs/traces workflows; direct collectors gather fixed metrics only |
 | Users and permissions | Workspace token, same-origin checks and encrypted connection secrets | Users, organizations, teams, roles, folder permissions and independent service accounts |
 | Agents and sharing | JSON CLI, API discovery, resource configuration and version operations | One-step CLI snapshot capture, anonymous sharing and expiration management |
+
+### Alert inhibition
+
+Use Alerts → Notifications to define source and target matchers. For example, critical alerts suppress warning notifications for the same `service`. Preview uses actual active instances without creating alerts. Evaluation and history continue while delivery is inhibited. Clearing the source or disabling the inhibition rule resumes only targets that remain active, including after restart.
+
+```sh
+metricspanel inhibition-rules save --file examples/alerts/inhibition-rule.json
+metricspanel inhibition-rules preview --file examples/alerts/inhibition-preview.json
+metricspanel inhibition-rules active --limit 200
+metricspanel inhibition-rules get --id service-severity
+metricspanel inhibition-rules save --id service-severity --version 1 --file examples/alerts/inhibition-rule.json
+metricspanel inhibition-rules delete --id service-severity --version 2
+```
+
+Update and delete require the current version; stale writes return HTTP 409. These APIs cover alerts managed by this service. External Alertmanager configuration import remains pending.
 
 ## Grafana plugins and datasources
 
@@ -158,7 +173,7 @@ Native `/api/gnet/plugins` preserves official catalog JSON and supports detail/v
 The Plugins page installs original ZIP packages or exact versions from the official catalog, enables/disables plugins and manages datasources.
 Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.
 React panels share Grafana 13.2.3's public data/runtime/ui packages; AMD and SystemJS bundles are supported.
-The unchanged official signed Clock 3.2.4 package is tested for rendering, live clock updates, reloads and mobile layout.
+The unchanged official signed Clock 3.2.4 package is tested for rendering, live clock updates, reloads and desktop layout.
 
 Application plugins support official `AppPlugin` roots, React configuration pages and routes under `/a/PLUGIN_ID/`.
 Use Plugins → Configure to save ordinary JSON, encrypted secrets and a pinned navigation entry.
@@ -214,7 +229,7 @@ Link helpers implement `openModal`, `openSidebar`, `closeSidebar` and `toggleSid
 Plugins can also consume their custom extension points. Other core locations and built-in exposed components remain outstanding.
 State reconciles every five seconds. Limits are four concurrent provider loads, twenty seconds per load, 1024 registrations per kind/provider and 1024 requested points.
 Agents can inspect declarations with `plugins get --id ID`; client callbacks require the browser runtime.
-Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and mobile layout.
+Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and desktop layout.
 See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
 
 ## Durable annotations
@@ -264,7 +279,7 @@ Queries use the actual panel window and retain full overlapping intervals; chart
 Native bands and SDK annotation frames share the events. Generated regions are read-only, never stored and absent from CLI `annotations list`; CLI dashboard save/export retains their configuration.
 Chinese/English editors preview and save weekday/Cron/timezone/duration in native, classic, V1 and V2 formats while preserving unknown fields. Automated tests cover persistence after restart, DST, boundaries and real browser SDK frames.
 Legacy Angular annotation editors and full organization permissions remain pending. See the [Grafana annotation guide](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/) and [13.2.3 time-region contract](https://github.com/grafana/grafana/blob/v13.2.3/public/app/core/utils/timeRegions.ts).
-Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and mobile layout.
+Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and desktop layout.
 See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
 Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) and [standard annotation converter](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts).
 The host initializes official loggers, synchronizes the SDK datasource settings cache and registers its plugin importer; datasource service reloads synchronize edits across both SDK generations.
@@ -316,7 +331,7 @@ Run `metricspanel datasources query --id __expr__ --file examples/queries/sql-me
 
 SQL panels support fixed-offset and previous-period comparisons. Independent current/historical backend requests keep original RefIDs and SQL text, then mark returned frames with `-compare` and `timeCompare` metadata. CTEs, aliases and quoted text need no rewriting. Native plots align display timestamps while SDK frames retain historical timestamps. SQL uses actual scoped dashboard variables and time macros, including variables named after input RefIDs. Uniform `__display_name__` values restore numeric field aliases; mixed names remain per-row, without mutating cached frames. Native time inputs support explicit `DATETIME(6)` casts; default MySQL `TIMESTAMP` output precision is seconds. See `examples/grafana-sql-comparison.json`.
 
-Panel and alert graph editors support all six expression operations and installed backend SDK QueryEditor callbacks; unsupported operations return explicit errors. Testify, real SDK/browser coverage, bilingual mobile checks and two SQLite/ClickHouse restart rounds verify behavior.
+Panel and alert graph editors support all six expression operations and installed backend SDK QueryEditor callbacks; unsupported operations return explicit errors. Testify, real SDK/browser coverage, bilingual desktop checks and two SQLite/ClickHouse restart rounds verify behavior.
 See the [expression contract](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/), [classic conditions](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and [pinned parser](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go).
 
 ## Dashboard time ranges
@@ -343,7 +358,7 @@ Comparison frames carry idempotent `-compare` refIds and SDK `timeCompare.diffMs
 Comparison `1d` / `1M` offsets follow the SDK's fixed 24-hour / 30-day durations, whereas `timeShift` uses calendar date math. Relative raw ranges advance on refresh.
 Choosing “Zoom scope → This panel” creates a native local view: SDK zoom and drag selection query that panel while preserving the URL and other panels. Refresh retains the local window; reset or parent range/variable changes restore the dashboard window.
 Local zoom is browser view state and preserves original template exports. Comparison errors are visible while primary query data remains available.
-Twelve model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual mobile layout.
+Twelve model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual desktop layout.
 Browser tests import standard classic/V1/V2 resources and verify real queries and lossless agent CLI exports, explicit disable and legacy aliases.
 Grafana 13.2 keeps `zoomBehavior` in Scenes runtime state; its classic/V2 serializers do not persist it. Native local zoom remains a browser view operation.
 Full Scenes lifecycle and additional time interactions remain outstanding.
@@ -365,7 +380,7 @@ Panel teardown removes only its own subscriptions; sibling panels and applicatio
 Text is rendered without HTML and bounded to 8192 characters. Errors/warnings use `role=alert`; dismiss controls support Chinese and English.
 These are browser notifications; server webhook notifications are configured in Alerts → Notifications. The theme is currently dark-only.
 Native CopyPanelEvent handling, global hover/select from native charts and other app core services still need implementation.
-An independent app and two SDK panels test real query updates, duplicate prevention, unmount/remount, coalescing, notifications and mobile layout.
+An independent app and two SDK panels test real query updates, duplicate prevention, unmount/remount, coalescing, notifications and desktop layout.
 See the [Grafana event subscription contract](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events).
 
 ## Grafana Live and agent subscriptions
@@ -478,7 +493,7 @@ The upstream Prometheus text functions are extended with Grafana filterLabels/re
 
 Instance details show rendered summary/description and expandable warnings as plain text. Source templates, instance annotations and transition annotations persist, while Prometheus alerts returns rendered annotations. Use `metricspanel alerts save --file examples/alerts/template-memory.json` and alerts get/evaluate/history to inspect source and results. See the [template reference](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) and [pinned implementation](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go).
 
-Unavailable datasources, malformed nodes and cycles fail before save. Webhook delivery is implemented; full Alertmanager and remaining core datasource editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, mobile editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
+Unavailable datasources, malformed nodes and cycles fail before save. Webhook delivery is implemented; full Alertmanager and remaining core datasource editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, desktop editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
 
 ## Automated verification
 
@@ -502,7 +517,7 @@ Each run deletes its own containers, volumes, network and application image tags
 
 After building the frontend and the CLI binary, run `cd web && npx playwright install chromium && npm run test:e2e`.
 Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, resource templates,
-official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and mobile layout.
+official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and desktop layout.
 GitHub Actions runs these checks plus two Docker integration runs.
 CI pulls test images by pinned digest from [Google Cloud's public cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images) to reduce Docker Hub rate-limit failures.
 The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2 GiB memory and 512 PIDs. It runs real MySQL-compatible MariaDB, Redis, PostgreSQL, ClickHouse, the official MySQL exporter and Go services. JVM/big-data endpoints use protocol fixtures, not real clusters. Full-container restarts verify durable samples and encrypted connections. Cleanup removes this project's container, network, volume and test image. Runtime images omit Node/Go toolchains; the real ClickHouse executable alone is approximately 762 MiB, and tests print actual image size. `compose.test.yml` accepts `METRICSPANEL_TEST_CLICKHOUSE_IMAGE` and `METRICSPANEL_TEST_EXPORTER_IMAGE` build-source overrides; production Compose has its own configuration.

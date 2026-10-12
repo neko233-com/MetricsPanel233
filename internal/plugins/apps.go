@@ -22,6 +22,10 @@ func (m *Manager) appInstance(ctx context.Context, id string) (*backend.AppInsta
 	return &backend.AppInstanceSettings{JSONData: settings.JSONData, DecryptedSecureJSONData: secrets, Updated: time.UnixMilli(settings.UpdatedAt)}, nil
 }
 func (m *Manager) AppContext(ctx context.Context, id string) (backend.PluginContext, error) {
+	orgID, namespace, user, err := m.contextIdentity(ctx)
+	if err != nil {
+		return backend.PluginContext{}, err
+	}
 	p, err := m.Store.PluginEffective(ctx, id)
 	if err != nil {
 		return backend.PluginContext{}, err
@@ -33,7 +37,7 @@ func (m *Manager) AppContext(ctx context.Context, id string) (backend.PluginCont
 	if err != nil {
 		return backend.PluginContext{}, err
 	}
-	return backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: id, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), AppInstanceSettings: settings}, nil
+	return backend.PluginContext{OrgID: orgID, Namespace: namespace, PluginID: id, PluginVersion: p.Version, User: user, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), AppInstanceSettings: settings}, nil
 }
 func (m *Manager) ConfigureApp(ctx context.Context, id string, input model.AppSettingsInput) (model.AppSettings, error) {
 	m.mu.Lock()

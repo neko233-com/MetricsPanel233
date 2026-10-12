@@ -38,7 +38,7 @@ func (e *Engine) PreviewGraph(ctx context.Context, plan *alertgraph.Plan, at tim
 	case <-ctx.Done():
 		return GraphPreview{}, ctx.Err()
 	}
-	graphCtx := querycontext.WithHeaders(ctx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": "1"})
+	graphCtx := querycontext.WithHeaders(ctx, map[string]string{"FromAlert": "true", "X-Cache-Skip": "true", "X-Grafana-Org-Id": strconv.FormatInt(e.Store.OrganizationID(), 10)})
 	response, queryErr := alertgraph.QueryFrames(graphCtx, plan, at, e.GraphSource, nil)
 	if err := ctx.Err(); err != nil {
 		return GraphPreview{}, err

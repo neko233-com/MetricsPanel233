@@ -137,7 +137,7 @@ func threshold(expr, kind string, params []float64) (string, error) {
 
 // compileLegacyGrafana reproduces the original PromQL compiler for comparing
 // previously stored rules when native edits determine whether to keep export data.
-func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
+func compileLegacyGrafana(g GrafanaRule, interval int, orgIDs ...int64) (model.AlertRule, error) {
 	r := model.AlertRule{UID: g.UID, Title: g.Title, Condition: "nonzero", IntervalSeconds: interval, NoDataState: g.NoDataState, ErrorState: g.ExecErrState, Labels: g.Labels, Annotations: g.Annotations, Paused: g.IsPaused, FolderUID: g.FolderUID, Group: g.RuleGroup}
 	if r.NoDataState == "" {
 		r.NoDataState = "NoData"
@@ -147,8 +147,9 @@ func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) 
 			return r, errors.New("templated alert labels are not supported")
 		}
 	}
-	if g.OrgID != 0 && g.OrgID != 1 {
-		return r, errors.New("only organization 1 is supported")
+	orgID := ruleOrganization(orgIDs)
+	if orgID <= 0 || g.OrgID != 0 && g.OrgID != orgID {
+		return r, errors.New("alert rule organization differs from its physical store")
 	}
 	var err error
 	if r.NotificationReceiver, err = grafanaNotificationReceiver(g.NotificationSettings); err != nil {
@@ -369,7 +370,7 @@ func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) 
 	if err := r.Validate(); err != nil {
 		return r, err
 	}
-	g.OrgID = 1
+	g.OrgID = orgID
 	g.UID = r.UID
 	g.Provenance = "api"
 	r.Provenance = &g.Provenance
@@ -380,10 +381,11 @@ func compileLegacyGrafana(g GrafanaRule, interval int) (model.AlertRule, error) 
 
 // CompileGrafana persists the validated graph and uses the shared SDK-frame
 // expression runtime instead of rewriting Grafana operations into PromQL.
-func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
+func CompileGrafana(g GrafanaRule, interval int, orgIDs ...int64) (model.AlertRule, error) {
 	r := model.AlertRule{UID: g.UID, Title: g.Title, Execution: "grafana", Condition: "nonzero", IntervalSeconds: interval, NoDataState: g.NoDataState, ErrorState: g.ExecErrState, Labels: g.Labels, Annotations: g.Annotations, Paused: g.IsPaused, FolderUID: g.FolderUID, Group: g.RuleGroup}
-	if g.OrgID != 0 && g.OrgID != 1 {
-		return r, errors.New("only organization 1 is supported")
+	orgID := ruleOrganization(orgIDs)
+	if orgID <= 0 || g.OrgID != 0 && g.OrgID != orgID {
+		return r, errors.New("alert rule organization differs from its physical store")
 	}
 	var err error
 	if r.NotificationReceiver, err = grafanaNotificationReceiver(g.NotificationSettings); err != nil {
@@ -404,7 +406,7 @@ func CompileGrafana(g GrafanaRule, interval int) (model.AlertRule, error) {
 	if g.Record != nil && g.Record.Metric == "" {
 		return r, errors.New("recording rule needs a metric name")
 	}
-	g.OrgID = 1
+	g.OrgID = orgID
 	g.Provenance = "api"
 	r.Provenance = &g.Provenance
 	r.Grafana, err = json.Marshal(g)
@@ -425,7 +427,11 @@ func LegacyGraphMatches(rule model.AlertRule) bool {
 	if json.Unmarshal(rule.Grafana, &g) != nil {
 		return false
 	}
-	compiled, err := compileLegacyGrafana(g, rule.IntervalSeconds)
+	orgID := g.OrgID
+	if orgID == 0 {
+		orgID = 1
+	}
+	compiled, err := compileLegacyGrafana(g, rule.IntervalSeconds, orgID)
 	if err != nil || rule.Condition != "nonzero" || compiled.Record != rule.Record {
 		return false
 	}
@@ -437,7 +443,7 @@ func LegacyGraphMatches(rule model.AlertRule) bool {
 	return err == nil && a.String() == b.String()
 }
 
-func ExportGrafana(r model.AlertRule) GrafanaRule {
+func ExportGrafana(r model.AlertRule, orgIDs ...int64) GrafanaRule {
 	var g GrafanaRule
 	if len(r.Grafana) > 0 {
 		_ = json.Unmarshal(r.Grafana, &g)
@@ -477,7 +483,7 @@ func ExportGrafana(r model.AlertRule) GrafanaRule {
 		}
 	}
 	g.UID = r.UID
-	g.OrgID = 1
+	g.OrgID = ruleOrganization(orgIDs)
 	g.Title = r.Title
 	g.FolderUID = r.FolderUID
 	g.RuleGroup = r.Group
@@ -494,6 +500,13 @@ func ExportGrafana(r model.AlertRule) GrafanaRule {
 		g.Provenance = *r.Provenance
 	}
 	return g
+}
+
+func ruleOrganization(orgIDs []int64) int64 {
+	if len(orgIDs) > 0 {
+		return orgIDs[0]
+	}
+	return 1 // Legacy standalone callers; instance production paths pass the owner.
 }
 
 func grafanaNotificationReceiver(raw json.RawMessage) (string, error) {

@@ -107,17 +107,21 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 					return
 				}
 			}
-			// The workspace currently has one local user principal.
 			if kind := params.Get("type"); kind != "" && kind != "annotation" && kind != "alert" {
 				fail(w, 400, errors.New("invalid annotation type"))
 				return
 			}
-			if params.Get("userUID") != "" && params.Get("userUID") != "metricspanel" {
+			actor, err := s.organizationPrincipal(r.Context())
+			if err != nil {
+				fail(w, 403, err)
+				return
+			}
+			if params.Get("userUID") != "" && params.Get("userUID") != actor.Login {
 				writeJSON(w, 200, []model.Annotation{})
 				return
 			}
-			if params.Get("userUID") == "metricspanel" {
-				q.UserID = 1
+			if params.Get("userUID") != "" {
+				q.UserID = actor.ID
 			}
 			result, err := s.Store.Annotations(r.Context(), q)
 			if err != nil {
@@ -180,7 +184,12 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 				annotationError(w, err)
 				return
 			}
-			a, err := s.Store.CreateAnnotation(r.Context(), model.Annotation{DashboardUID: uid, DashboardID: id, PanelID: request.PanelID, Time: request.Time, TimeEnd: request.TimeEnd, Text: request.Text, Tags: request.Tags, Data: request.Data, UserID: 1, Login: "metricspanel"}, request.IdempotencyKey)
+			actor, err := s.organizationPrincipal(r.Context())
+			if err != nil {
+				fail(w, 403, err)
+				return
+			}
+			a, err := s.Store.CreateAnnotation(r.Context(), model.Annotation{DashboardUID: uid, DashboardID: id, PanelID: request.PanelID, Time: request.Time, TimeEnd: request.TimeEnd, Text: request.Text, Tags: request.Tags, Data: request.Data, UserID: actor.ID, Login: actor.Login}, request.IdempotencyKey)
 			if err != nil {
 				annotationError(w, err)
 				return
@@ -298,7 +307,12 @@ func (s *Server) annotationRoutes(api *http.ServeMux) {
 		if request.Data != "" {
 			text += "\n" + request.Data
 		}
-		a, err := s.Store.CreateAnnotation(r.Context(), model.Annotation{Time: when * 1000, Text: text, Tags: tags, UserID: 1, Login: "metricspanel"}, "")
+		actor, err := s.organizationPrincipal(r.Context())
+		if err != nil {
+			fail(w, 403, err)
+			return
+		}
+		a, err := s.Store.CreateAnnotation(r.Context(), model.Annotation{Time: when * 1000, Text: text, Tags: tags, UserID: actor.ID, Login: actor.Login}, "")
 		if err != nil {
 			annotationError(w, err)
 			return

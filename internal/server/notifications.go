@@ -25,6 +25,7 @@ func (s *Server) notificationRoutes(api *http.ServeMux) {
 	s.silenceRoutes(api)
 	s.muteTimingRoutes(api)
 	s.notificationTemplateRoutes(api)
+	s.inhibitionRoutes(api)
 	api.HandleFunc("GET /api/v1/alerting/contact-points", func(w http.ResponseWriter, r *http.Request) {
 		points, err := s.Store.ContactPoints(r.Context())
 		if err != nil {

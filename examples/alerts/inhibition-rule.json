@@ -1,0 +1,8 @@
+{
+  "uid": "service-severity",
+  "name": "Critical service alerts suppress warnings",
+  "source_matchers": [{ "name": "severity", "operator": "=", "value": "critical" }],
+  "target_matchers": [{ "name": "severity", "operator": "=", "value": "warning" }],
+  "equal": ["service"],
+  "disabled": false
+}

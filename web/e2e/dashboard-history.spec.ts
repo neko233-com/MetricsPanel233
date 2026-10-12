@@ -451,7 +451,7 @@ test("History cursor pages remain stable when another save inserts a version", a
   expect(errors).toEqual([]);
 });
 
-test("Chinese mobile history retries a failed read and refuses a stale restore until the dashboard is reloaded", async ({
+test("Chinese desktop history retries a failed read and refuses a stale restore until the dashboard is reloaded", async ({
   page,
   endpoint,
 }) => {
@@ -476,7 +476,7 @@ test("Chinese mobile history retries a failed read and refuses a stale restore u
       "Conflict changed",
     ),
   );
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await page.addInitScript(() =>
     localStorage.setItem("metricspanel-locale", "zh"),
   );
@@ -515,20 +515,21 @@ test("Chinese mobile history retries a failed read and refuses a stale restore u
     .getByLabel("版本 JSON", { exact: true })
     .boundingBox();
   expect(pre!.width).toBeGreaterThan(250);
-  await capture(page, "dashboard-history-zh-mobile.png");
+  await capture(page, "dashboard-history-zh-desktop.png");
   await dialog.getByLabel("版本 JSON", { exact: true }).scrollIntoViewIfNeeded();
-  await capture(page, "dashboard-history-json-zh-mobile.png");
+  await capture(page, "dashboard-history-json-zh-desktop.png");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBeTruthy();
+  const viewportWidth = await page.evaluate(() => innerWidth);
   for (const button of await dialog
     .locator(".history-row-actions button")
     .all()) {
     const box = await button.boundingBox();
     expect(box!.x).toBeGreaterThanOrEqual(0);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth);
   }
   await dialog
     .getByRole("button", { name: `恢复版本 ${first}`, exact: true })

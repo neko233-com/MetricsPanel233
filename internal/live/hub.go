@@ -15,8 +15,10 @@ import (
 
 	"github.com/centrifugal/centrifuge"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/prometheus/client_golang/prometheus"
+	"strconv"
 )
 
 const MaxChannels = 256
@@ -103,6 +105,12 @@ func (h *Hub) start() error {
 	return nil
 }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	principal, err := h.Manager().Principal(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	r = r.WithContext(identity.WithPrincipal(r.Context(), principal))
 	if err := h.start(); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -110,7 +118,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	handler := h.handler
 	h.mu.Unlock()
-	handler.ServeHTTP(w, r.WithContext(centrifuge.SetCredentials(r.Context(), &centrifuge.Credentials{UserID: "1"})))
+	userID := string(principal.Type) + ":" + strconv.FormatInt(principal.ID, 10)
+	handler.ServeHTTP(w, r.WithContext(centrifuge.SetCredentials(r.Context(), &centrifuge.Credentials{UserID: userID})))
 }
 func (h *Hub) onConnect(client *centrifuge.Client) {
 	client.OnSubscribe(func(event centrifuge.SubscribeEvent, callback centrifuge.SubscribeCallback) {
@@ -151,7 +160,7 @@ func (h *Hub) onConnect(client *centrifuge.Client) {
 			callback(centrifuge.SubscribeReply{}, centrifuge.ErrorInternal)
 			return
 		}
-		entry, err := h.acquire(client.ID(), event.Channel, pc, path, metadata, epoch)
+		entry, err := h.acquire(ctx, client.ID(), event.Channel, pc, path, metadata, epoch)
 		if err != nil {
 			callback(centrifuge.SubscribeReply{}, &centrifuge.Error{Code: 1101, Message: err.Error(), Temporary: errors.Is(err, errContextChanged)})
 			return
@@ -199,7 +208,7 @@ func (h *Hub) onConnect(client *centrifuge.Client) {
 
 var errContextChanged = errors.New("stream context changed; subscribe again")
 
-func (h *Hub) acquire(clientID, channel string, pc backend.PluginContext, path string, metadata []byte, epoch uint64) (*subscription, error) {
+func (h *Hub) acquire(authenticated context.Context, clientID, channel string, pc backend.PluginContext, path string, metadata []byte, epoch uint64) (*subscription, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -213,7 +222,11 @@ func (h *Hub) acquire(clientID, channel string, pc backend.PluginContext, path s
 		if len(h.streams) >= MaxChannels {
 			return nil, errors.New("Live channel limit reached")
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		principal, err := h.Manager().Principal(authenticated)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithCancel(identity.WithPrincipal(context.Background(), principal))
 		entry = &subscription{Channel: Channel{Channel: channel, StartedAt: time.Now().UnixMilli()}, pc: pc, path: path, metadata: metadata, clients: map[string]bool{}, ctx: ctx, cancel: cancel}
 		h.streams[channel] = entry
 	} else if !bytes.Equal(entry.metadata, metadata) {
@@ -244,7 +257,7 @@ func (h *Hub) Invalidate(scope, id string, retry bool) {
 		code = 2501
 	}
 	for _, channel := range channels {
-		_ = node.Unsubscribe("1", channel, centrifuge.WithCustomUnsubscribe(centrifuge.Unsubscribe{Code: code, Reason: "stream configuration changed"}))
+		_ = node.Unsubscribe("", channel, centrifuge.WithUnsubscribeAllUsers(true), centrifuge.WithCustomUnsubscribe(centrifuge.Unsubscribe{Code: code, Reason: "stream configuration changed"}))
 	}
 }
 func (h *Hub) release(clientID, channel string) {
@@ -308,7 +321,7 @@ func (h *Hub) run(entry *subscription) {
 			if err != nil {
 				reason = "plugin stream stopped"
 			}
-			_ = node.Unsubscribe("1", entry.Channel.Channel, centrifuge.WithCustomUnsubscribe(centrifuge.Unsubscribe{Code: 2101, Reason: reason}))
+			_ = node.Unsubscribe("", entry.Channel.Channel, centrifuge.WithUnsubscribeAllUsers(true), centrifuge.WithCustomUnsubscribe(centrifuge.Unsubscribe{Code: 2101, Reason: reason}))
 		}
 	}()
 }

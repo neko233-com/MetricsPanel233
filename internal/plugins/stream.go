@@ -29,12 +29,19 @@ func (m *Manager) StreamContext(ctx context.Context, scope, id string) (backend.
 	if p.Type == "app" {
 		return m.AppContext(ctx, id)
 	}
-	return backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: p.ID, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL})}, nil
+	orgID, namespace, user, err := m.contextIdentity(ctx)
+	if err != nil {
+		return backend.PluginContext{}, err
+	}
+	return backend.PluginContext{OrgID: orgID, Namespace: namespace, PluginID: p.ID, PluginVersion: p.Version, User: user, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL})}, nil
 }
 func validStreamPath(path string) bool {
 	return path != "" && len(path) <= 160 && !strings.ContainsAny(path, "\x00\r\n\\") && !strings.Contains(path, "..")
 }
 func (m *Manager) SubscribeStream(ctx context.Context, pc backend.PluginContext, path string, metadata []byte) (*pluginv2.SubscribeStreamResponse, error) {
+	if err := m.validateContext(ctx, pc); err != nil {
+		return nil, err
+	}
 	if !validStreamPath(path) || len(metadata) > 1<<20 {
 		return nil, errors.New("invalid stream path or metadata")
 	}
@@ -51,6 +58,9 @@ func (m *Manager) SubscribeStream(ctx context.Context, pc backend.PluginContext,
 	return host.stream.SubscribeStream(ctx, backend.ToProto().SubscribeStreamRequest(&backend.SubscribeStreamRequest{PluginContext: pc, Path: path, Data: metadata}))
 }
 func (m *Manager) PublishStream(ctx context.Context, pc backend.PluginContext, path string, value []byte) (*pluginv2.PublishStreamResponse, error) {
+	if err := m.validateContext(ctx, pc); err != nil {
+		return nil, err
+	}
 	if !validStreamPath(path) || len(value) > 1<<20 {
 		return nil, errors.New("invalid stream path or publication")
 	}
@@ -67,6 +77,9 @@ func (m *Manager) PublishStream(ctx context.Context, pc backend.PluginContext, p
 	return host.stream.PublishStream(ctx, backend.ToProto().PublishStreamRequest(&backend.PublishStreamRequest{PluginContext: pc, Path: path, Data: value}))
 }
 func (m *Manager) RunStream(ctx context.Context, pc backend.PluginContext, path string, metadata []byte, send func([]byte) error) error {
+	if err := m.validateContext(ctx, pc); err != nil {
+		return err
+	}
 	if !validStreamPath(path) || len(metadata) > 1<<20 {
 		return errors.New("invalid stream path or metadata")
 	}

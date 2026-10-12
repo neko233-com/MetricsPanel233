@@ -19,8 +19,12 @@ import (
 	webassets "github.com/neko233-com/MetricsPanel233/web"
 )
 
-func builtinGrafanaDataSource() model.DataSource {
-	return model.DataSource{ID: -1, UID: "grafana", OrgID: 1, Name: "-- Grafana --", Type: "grafana", Access: "proxy", ReadOnly: true, JSONData: json.RawMessage(`{}`), SecureJSONFields: map[string]bool{}, Version: 1}
+func builtinGrafanaDataSource(orgIDs ...int64) model.DataSource {
+	orgID := int64(1)
+	if len(orgIDs) > 0 {
+		orgID = orgIDs[0]
+	}
+	return model.DataSource{ID: -1, UID: "grafana", OrgID: orgID, Name: "-- Grafana --", Type: "grafana", Access: "proxy", ReadOnly: true, JSONData: json.RawMessage(`{}`), SecureJSONFields: map[string]bool{}, Version: 1}
 }
 
 // Like Grafana's core backend, list and randomWalk are server queries; snapshot,

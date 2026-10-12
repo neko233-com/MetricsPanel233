@@ -80,6 +80,7 @@ Usage: metricspanel <command> [flags]
   silences list | get | save | expire | preview (label matching and timed notification muting)
   mute-timings list | get | save | delete | preview (calendar intervals with timezones)
   notification-templates list | get | save | delete | preview (named notification content)
+  inhibition-rules list | get | save | delete | preview | active (source/target alert suppression)
   plugins      list | get | search | info | versions | install | catalog | enable | disable | delete
                settings | configure (Grafana application settings)
   datasources  list | get | save | query | health | delete
@@ -112,7 +113,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "contacts" || command == "notifications" || command == "silences" || command == "mute-timings" || command == "notification-templates" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "contacts" || command == "notifications" || command == "silences" || command == "mute-timings" || command == "notification-templates" || command == "inhibition-rules" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -134,6 +135,7 @@ func run(args []string) error {
 	file := f.String("file", "-", "JSON file; - reads stdin")
 	format := f.String("format", "native", "dashboard export format: native or grafana (original source)")
 	id := f.String("id", "", "resource ID")
+	inhibitionVersion := f.Int("version", 0, "expected inhibition rule version for save or delete")
 	dashboardRevision := f.Int64("revision", 0, "expected updated_at for an atomic native dashboard save")
 	dashboardVersion := f.Int64("dashboard-version", 0, "saved dashboard version to read, export or restore")
 	baseVersion := f.Int64("base-version", 0, "dashboard comparison base version")
@@ -192,6 +194,9 @@ func run(args []string) error {
 	})
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags")
+	}
+	if *inhibitionVersion < 0 || (*inhibitionVersion != 0 && (command != "inhibition-rules" || (action != "save" && action != "delete"))) {
+		return errors.New("--version must be positive and is only supported by inhibition-rules save or delete")
 	}
 	if *dashboardRevision < 0 || (*dashboardRevision != 0 && (command != "dashboards" || (action != "save" && action != "move" && action != "library-add" && action != "library-unlink" && action != "restore" && action != "layout" && action != "queries" && action != "panels" && action != "annotation-queries" && action != "variables"))) {
 		return errors.New("--revision must be positive and is only supported by dashboards save, move, library-add, library-unlink, restore, layout, queries, panels, annotation-queries and variables")
@@ -721,6 +726,63 @@ func run(args []string) error {
 			return err
 		}
 		return request("POST", "/api/v1/ingest", body)
+	case "inhibition-rules":
+		path := "/api/v1/alerting/inhibition-rules"
+		switch action {
+		case "list":
+			return request("GET", path, nil)
+		case "active":
+			if *limit < 1 || *limit > 200 {
+				return errors.New("inhibition active --limit must be 1 to 200")
+			}
+			return request("GET", path+"/active?"+url.Values{"limit": {strconv.Itoa(*limit)}}.Encode(), nil)
+		case "get", "delete":
+			if *id == "" {
+				return errors.New("--id inhibition UID is required")
+			}
+			path += "/" + url.PathEscape(*id)
+			if action == "get" {
+				return request("GET", path, nil)
+			}
+			if *inhibitionVersion <= 0 {
+				return errors.New("inhibition delete requires a positive --version")
+			}
+			return request("DELETE", path+"?"+url.Values{"version": {strconv.Itoa(*inhibitionVersion)}}.Encode(), nil)
+		case "save", "preview":
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(data, &fields) != nil || fields == nil {
+				return errors.New("inhibition file must be a JSON object")
+			}
+			if action == "preview" {
+				return request("POST", path+"/preview", fields)
+			}
+			method := "POST"
+			if *id != "" {
+				var uid string
+				if raw, ok := fields["uid"]; ok && (json.Unmarshal(raw, &uid) != nil || uid != "" && uid != *id) {
+					return errors.New("inhibition UID in file does not match --id")
+				}
+				fields["uid"], _ = json.Marshal(*id)
+				method, path = "PUT", path+"/"+url.PathEscape(*id)
+			}
+			if *inhibitionVersion > 0 {
+				if *id == "" {
+					return errors.New("inhibition save --version requires --id for an existing rule")
+				}
+				var version int
+				if raw, ok := fields["version"]; ok && (json.Unmarshal(raw, &version) != nil || version != 0 && version != *inhibitionVersion) {
+					return errors.New("inhibition version in file does not match --version")
+				}
+				fields["version"], _ = json.Marshal(*inhibitionVersion)
+			}
+			return request(method, path, fields)
+		default:
+			return errors.New("inhibition-rules requires list, get, save, delete, preview or active")
+		}
 	case "notification-templates":
 		path := "/api/v1/alerting/notification-templates"
 		switch action {

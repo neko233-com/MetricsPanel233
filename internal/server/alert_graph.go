@@ -17,6 +17,9 @@ func (s *Server) validateAlertSources(ctx context.Context, rule model.AlertRule)
 	if err != nil {
 		return err
 	}
+	if plan.OrgID != 0 && plan.OrgID != s.OrganizationID() {
+		return fmt.Errorf("alert rule organization differs from its physical store")
+	}
 	seen := map[string]bool{}
 	for _, q := range plan.Data {
 		if expressions.IsSource(q.DatasourceUID) || seen[q.DatasourceUID] {

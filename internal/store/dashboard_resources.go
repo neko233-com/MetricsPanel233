@@ -295,7 +295,9 @@ func libraryByUID(ctx context.Context, q resourceQuery, uid string) (model.Libra
 	return scanLibrary(q.QueryRowContext(ctx, `SELECT `+libraryColumns+` FROM library_elements e LEFT JOIN folders f ON f.uid=e.folder_uid WHERE e.uid=?`, uid))
 }
 func (s *Store) LibraryElement(ctx context.Context, uid string) (model.LibraryElement, error) {
-	return libraryByUID(ctx, s.DB, uid)
+	e, err := libraryByUID(ctx, s.DB, uid)
+	e.OrgID = s.OrganizationID()
+	return e, err
 }
 func (s *Store) LibraryElements(ctx context.Context) ([]model.LibraryElement, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+libraryColumns+` FROM library_elements e LEFT JOIN folders f ON f.uid=e.folder_uid ORDER BY e.name COLLATE NOCASE,e.uid`)
@@ -309,6 +311,7 @@ func (s *Store) LibraryElements(ctx context.Context) ([]model.LibraryElement, er
 		if err != nil {
 			return nil, err
 		}
+		e.OrgID = s.OrganizationID()
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -355,6 +358,7 @@ func (s *Store) SaveLibraryElement(ctx context.Context, e model.LibraryElement, 
 	if err != nil {
 		return e, err
 	}
+	e.OrgID = s.OrganizationID()
 	return e, tx.Commit()
 }
 func (s *Store) DeleteLibraryElement(ctx context.Context, uid string) error {

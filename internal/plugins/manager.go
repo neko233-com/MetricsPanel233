@@ -166,7 +166,7 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) (mode
 	}
 	if enabled {
 		if p.PackageID != p.ID {
-			parent, err := m.Store.Plugin(ctx, p.PackageID)
+			parent, err := m.Store.PluginEffective(ctx, p.PackageID)
 			if err != nil {
 				return p, err
 			}
@@ -331,15 +331,25 @@ func (m *Manager) getProcess(ctx context.Context, id string) (result *process, r
 	return host, nil
 }
 func (m *Manager) PluginContext(ctx context.Context, ds model.DataSource) (backend.PluginContext, error) {
-	p, err := m.Store.Plugin(ctx, ds.Type)
+	orgID, namespace, user, err := m.contextIdentity(ctx)
+	if err != nil || ds.OrgID != orgID {
+		if err == nil {
+			err = errors.New("datasource organization differs from the authenticated context")
+		}
+		return backend.PluginContext{}, err
+	}
+	p, err := m.Store.PluginEffective(ctx, ds.Type)
 	if err != nil {
 		return backend.PluginContext{}, err
+	}
+	if !p.Enabled {
+		return backend.PluginContext{}, errors.New("plugin is not enabled")
 	}
 	secrets, err := m.Store.DataSourceSecrets(ctx, ds.UID)
 	if err != nil {
 		return backend.PluginContext{}, err
 	}
-	pc := backend.PluginContext{OrgID: 1, Namespace: "default", PluginID: ds.Type, PluginVersion: p.Version, User: &backend.User{Login: "metricspanel", Name: "MetricsPanel233", Role: "Admin"}, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{ID: ds.ID, UID: ds.UID, Type: ds.Type, Name: ds.Name, URL: ds.URL, User: ds.User, Database: ds.Database, BasicAuthEnabled: ds.BasicAuth, BasicAuthUser: ds.BasicAuthUser, JSONData: ds.JSONData, DecryptedSecureJSONData: secrets, Updated: time.UnixMilli(ds.UpdatedAt)}}
+	pc := backend.PluginContext{OrgID: orgID, Namespace: namespace, PluginID: ds.Type, PluginVersion: p.Version, User: user, GrafanaConfig: config.NewGrafanaCfg(map[string]string{"GF_VERSION": RuntimeVersion, "GF_APP_URL": m.RootURL}), DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{ID: ds.ID, UID: ds.UID, Type: ds.Type, Name: ds.Name, URL: ds.URL, User: ds.User, Database: ds.Database, BasicAuthEnabled: ds.BasicAuth, BasicAuthUser: ds.BasicAuthUser, JSONData: ds.JSONData, DecryptedSecureJSONData: secrets, Updated: time.UnixMilli(ds.UpdatedAt)}}
 	if p.PackageID != p.ID {
 		parent, err := m.Store.Plugin(ctx, p.PackageID)
 		if err != nil {
@@ -355,6 +365,10 @@ func (m *Manager) PluginContext(ctx context.Context, ds model.DataSource) (backe
 	return pc, nil
 }
 func (m *Manager) Query(ctx context.Context, ds model.DataSource, queries []backend.DataQuery) (*backend.QueryDataResponse, error) {
+	pc, err := m.PluginContext(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
 	select {
 	case m.requests <- struct{}{}:
 		defer func() { <-m.requests }()
@@ -362,10 +376,6 @@ func (m *Manager) Query(ctx context.Context, ds model.DataSource, queries []back
 		return nil, ctx.Err()
 	}
 	host, err := m.getProcess(ctx, ds.Type)
-	if err != nil {
-		return nil, err
-	}
-	pc, err := m.PluginContext(ctx, ds)
 	if err != nil {
 		return nil, err
 	}
@@ -384,6 +394,9 @@ func (m *Manager) Health(ctx context.Context, ds model.DataSource) (*backend.Che
 	return m.HealthContext(ctx, pc)
 }
 func (m *Manager) HealthContext(ctx context.Context, pc backend.PluginContext) (*backend.CheckHealthResult, error) {
+	if err := m.validateContext(ctx, pc); err != nil {
+		return nil, err
+	}
 	select {
 	case m.requests <- struct{}{}:
 		defer func() { <-m.requests }()
@@ -408,6 +421,9 @@ func (m *Manager) Resource(ctx context.Context, ds model.DataSource, request *ba
 	return m.ResourceContext(ctx, pc, request)
 }
 func (m *Manager) ResourceContext(ctx context.Context, pc backend.PluginContext, request *backend.CallResourceRequest) ([]*backend.CallResourceResponse, error) {
+	if err := m.validateContext(ctx, pc); err != nil {
+		return nil, err
+	}
 	select {
 	case m.requests <- struct{}{}:
 		defer func() { <-m.requests }()

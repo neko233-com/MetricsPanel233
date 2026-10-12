@@ -15,12 +15,29 @@ var ErrAppConflict = errors.New("app configuration version changed; read the cur
 // PluginEffective also checks a bundled plugin's owning package. Stored child
 // flags survive a parent disable/enable without granting access while disabled.
 func (s *Store) PluginEffective(ctx context.Context, id string) (model.Plugin, error) {
+	return s.pluginEffective(ctx, id, map[string]bool{})
+}
+
+func (s *Store) pluginEffective(ctx context.Context, id string, seen map[string]bool) (model.Plugin, error) {
+	if seen[id] || len(seen) >= 8 {
+		return model.Plugin{}, errors.New("invalid plugin package ownership chain")
+	}
+	seen[id] = true
 	p, err := s.Plugin(ctx, id)
 	if err != nil {
 		return p, err
 	}
+	if p.Type == "app" {
+		app, appErr := scanApp(s.DB.QueryRowContext(ctx, `SELECT payload FROM app_settings WHERE id=?`, id))
+		if appErr != nil && !errors.Is(appErr, sql.ErrNoRows) {
+			return p, appErr
+		}
+		if appErr == nil {
+			p.Enabled = p.Enabled && app.Enabled
+		}
+	}
 	if p.PackageID != p.ID {
-		parent, err := s.Plugin(ctx, p.PackageID)
+		parent, err := s.pluginEffective(ctx, p.PackageID, seen)
 		if err != nil {
 			return p, err
 		}
@@ -38,8 +55,8 @@ func scanApp(row interface{ Scan(...any) error }) (model.AppSettings, error) {
 	err := json.Unmarshal([]byte(payload), &app)
 	return app, err
 }
-func defaultApp(p model.Plugin) model.AppSettings {
-	return model.AppSettings{ID: p.ID, OrgID: 1, Enabled: p.Enabled, JSONData: json.RawMessage(`{}`), SecureJSONFields: map[string]bool{}, UpdatedAt: p.InstalledAt}
+func defaultApp(p model.Plugin, orgID int64) model.AppSettings {
+	return model.AppSettings{ID: p.ID, OrgID: orgID, Enabled: p.Enabled, JSONData: json.RawMessage(`{}`), SecureJSONFields: map[string]bool{}, UpdatedAt: p.InstalledAt}
 }
 func (s *Store) AppSettings(ctx context.Context, id string) (model.AppSettings, error) {
 	p, err := s.PluginEffective(ctx, id)
@@ -51,8 +68,9 @@ func (s *Store) AppSettings(ctx context.Context, id string) (model.AppSettings, 
 	}
 	app, err := scanApp(s.DB.QueryRowContext(ctx, `SELECT payload FROM app_settings WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return defaultApp(p), nil
+		return defaultApp(p, s.OrganizationID()), nil
 	}
+	app.OrgID = s.OrganizationID()
 	app.Enabled = p.Enabled
 	return app, err
 }
@@ -71,17 +89,8 @@ func (s *Store) SaveAppSettings(ctx context.Context, id string, input model.AppS
 	if err := input.Validate(); err != nil {
 		return model.AppSettings{}, err
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
+	p, err := s.Plugin(ctx, id)
 	if err != nil {
-		return model.AppSettings{}, err
-	}
-	defer tx.Rollback()
-	var payload string
-	var p model.Plugin
-	if err = tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, id).Scan(&payload); err != nil {
-		return model.AppSettings{}, err
-	}
-	if err = json.Unmarshal([]byte(payload), &p); err != nil {
 		return model.AppSettings{}, err
 	}
 	if p.Type != "app" {
@@ -89,11 +98,8 @@ func (s *Store) SaveAppSettings(ctx context.Context, id string, input model.AppS
 	}
 	parentEnabled := true
 	if p.PackageID != p.ID {
-		if err = tx.QueryRowContext(ctx, `SELECT payload FROM plugins WHERE id=?`, p.PackageID).Scan(&payload); err != nil {
-			return model.AppSettings{}, err
-		}
-		var parent model.Plugin
-		if err = json.Unmarshal([]byte(payload), &parent); err != nil {
+		parent, err := s.PluginEffective(ctx, p.PackageID)
+		if err != nil {
 			return model.AppSettings{}, err
 		}
 		parentEnabled = parent.Enabled
@@ -101,10 +107,15 @@ func (s *Store) SaveAppSettings(ctx context.Context, id string, input model.AppS
 			return model.AppSettings{}, errors.New("owning package is disabled")
 		}
 	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return model.AppSettings{}, err
+	}
+	defer tx.Rollback()
 	app, err := scanApp(tx.QueryRowContext(ctx, `SELECT payload FROM app_settings WHERE id=?`, id))
 	exists := err == nil
 	if errors.Is(err, sql.ErrNoRows) {
-		app = defaultApp(p)
+		app = defaultApp(p, s.OrganizationID())
 	} else if err != nil {
 		return app, err
 	}
@@ -138,9 +149,10 @@ func (s *Store) SaveAppSettings(ctx context.Context, id string, input model.AppS
 		return app, errors.New("at most 32 stored secret fields")
 	}
 	if input.Enabled != nil {
-		p.Enabled = *input.Enabled
+		app.Enabled = *input.Enabled
 	}
-	app.Enabled = p.Enabled && parentEnabled
+	app.OrgID = s.OrganizationID()
+	app.Enabled = app.Enabled && p.Enabled && parentEnabled
 	if input.Pinned != nil {
 		app.Pinned = *input.Pinned
 	}
@@ -162,13 +174,6 @@ func (s *Store) SaveAppSettings(ctx context.Context, id string, input model.AppS
 		return app, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO app_settings(id,payload,secrets) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,secrets=excluded.secrets`, id, string(payloadBytes), sealed); err != nil {
-		return app, err
-	}
-	pluginBytes, err := json.Marshal(p)
-	if err != nil {
-		return app, err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE plugins SET payload=? WHERE id=?`, string(pluginBytes), id); err != nil {
 		return app, err
 	}
 	return app, tx.Commit()

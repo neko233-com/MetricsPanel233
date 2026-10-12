@@ -57,6 +57,17 @@ func (e *Engine) ProcessNotification(ctx context.Context, at time.Time) (bool, e
 					state, message = "failed", "Notification template rendering failed for the saved version"
 				}
 			} else {
+				checkAt := time.Now()
+				if checkAt.Before(at) {
+					checkAt = at
+				}
+				valid, err := e.Store.ValidateNotificationClaim(ctx, delivery, checkAt.UnixMilli())
+				if err != nil {
+					return true, err
+				}
+				if !valid {
+					return true, nil
+				}
 				code, message = e.deliverNotification(ctx, delivery, point, secrets, prepared, frozen)
 				if message == "" {
 					state = "sent"

@@ -56,7 +56,7 @@ func (s *Server) alertGroupRoutes(api *http.ServeMux) {
 				if graph.UID == "" {
 					graph.UID = uuid.NewString()
 				}
-				rule, err := alerting.CompileGrafana(graph, input.Interval)
+				rule, err := alerting.CompileGrafana(graph, input.Interval, s.Store.OrganizationID())
 				if err != nil {
 					fail(w, 400, err)
 					return

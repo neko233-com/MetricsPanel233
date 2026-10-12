@@ -183,7 +183,7 @@ func notificationLabels(raw string) (map[string]string, error) {
 	return payload.CommonLabels, err
 }
 
-func reconcileSuppressedNotificationsTx(ctx context.Context, tx *sql.Tx, at int64, silences []model.Silence) error {
+func reconcileSuppressedNotificationsTx(ctx context.Context, tx *sql.Tx, at int64, suppressor *notificationSuppressor) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id,rule_uid,instance_key,payload FROM alert_notification_outbox WHERE state='suppressed' AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT 128`, at)
 	if err != nil {
 		return err
@@ -213,14 +213,18 @@ func reconcileSuppressedNotificationsTx(ctx context.Context, tx *sql.Tx, at int6
 		}
 		state, message, next := "pending", "", at
 		if active == 0 {
-			state, message, next = "canceled", "Resolved while silenced", 0
+			state, message, next = "canceled", "Resolved while suppressed", 0
 		} else {
-			labels, err := notificationLabels(v.raw)
+			labels, err := currentNotificationLabelsTx(ctx, tx, v.rule, v.key, v.raw)
 			if err != nil {
 				return err
 			}
-			if until := silenceUntil(silences, labels); until > 0 {
-				state, message, next = "suppressed", "Silenced", until
+			until, reason, err := suppressor.check(labels)
+			if err != nil {
+				return err
+			}
+			if until > 0 {
+				state, message, next = "suppressed", reason, until
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state=?,last_error=?,next_attempt_at=? WHERE id=? AND state='suppressed'`, state, message, next, v.id); err != nil {
@@ -233,9 +237,13 @@ func reconcileSuppressedNotificationsTx(ctx context.Context, tx *sql.Tx, at int6
 // A silence can begin after an alert's first notification was already sent.
 // Retain a single resume record for that active period; overlapping silences
 // share it. A persistent cursor bounds each scan without starving later alerts.
-func enqueueSilenceResumesTx(ctx context.Context, tx *sql.Tx, at int64, silences []model.Silence) error {
-	if len(silences) == 0 {
+func enqueueSilenceResumesTx(ctx context.Context, tx *sql.Tx, at int64, suppressor *notificationSuppressor) error {
+	if len(suppressor.silences) == 0 && len(suppressor.rules) == 0 {
 		return nil
+	}
+	orgID, err := notificationOrganizationTx(ctx, tx)
+	if err != nil {
+		return err
 	}
 	var cursor int64
 	if err := tx.QueryRowContext(ctx, `SELECT last_id FROM alert_notification_silence_scan WHERE id=1`).Scan(&cursor); err != nil {
@@ -269,11 +277,14 @@ func enqueueSilenceResumesTx(ctx context.Context, tx *sql.Tx, at int64, silences
 	}
 	for _, item := range items {
 		cursor = item.id
-		labels, err := notificationLabels(item.raw)
+		labels, err := currentNotificationLabelsTx(ctx, tx, item.rule, item.key, item.raw)
 		if err != nil {
 			return err
 		}
-		until := silenceUntil(silences, labels)
+		until, reason, err := suppressor.check(labels)
+		if err != nil {
+			return err
+		}
 		if until == 0 {
 			continue
 		}
@@ -307,11 +318,24 @@ func enqueueSilenceResumesTx(ctx context.Context, tx *sql.Tx, at int64, silences
 		if !selected {
 			continue
 		}
-		id, err := insertNotificationTx(ctx, tx, 0, item.uid, item.rule, item.key, "firing", json.RawMessage(item.raw), at)
+		// A new resume uses the current active data, while existing queued/rendered
+		// notifications keep their original snapshots and identities.
+		var payload any = json.RawMessage(item.raw)
+		for _, instance := range rule.Runtime.Instances {
+			if instance.Key == item.key && notificationActive(instance.State) {
+				var startedAt int64
+				if err := tx.QueryRowContext(ctx, `SELECT started_at FROM alert_notification_active WHERE rule_uid=? AND instance_key=?`, item.rule, item.key).Scan(&startedAt); err != nil {
+					return err
+				}
+				payload = webhookPayload(point, rule.AlertRule, model.AlertEvent{UID: item.rule, Key: item.key, Labels: instance.Labels, Annotations: instance.Annotations, Value: instance.Value, Timestamp: at, To: instance.State}, "firing", startedAt, orgID)
+				break
+			}
+		}
+		id, err := insertNotificationTx(ctx, tx, 0, item.uid, item.rule, item.key, "firing", payload, at)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='suppressed',last_error='Silenced',next_attempt_at=? WHERE id=?`, until, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='suppressed',last_error=?,next_attempt_at=? WHERE id=?`, reason, until, id); err != nil {
 			return err
 		}
 	}
