@@ -196,9 +196,17 @@ func (s *Server) resolveGrafanaLibraryPanels(ctx context.Context, raw []byte, fo
 		pending[e.UID] = e
 	}
 	cache := map[string]model.LibraryElement{}
+	expansions := 0
 	lookup := func(uid string) (model.LibraryElement, error) {
+		expansions++
+		if expansions > 1024 {
+			return model.LibraryElement{}, errors.New("library panel expansion exceeds 1024 references or contains a cycle")
+		}
 		if e, ok := cache[uid]; ok {
 			return e, nil
+		}
+		if err := s.authorizeLibraryRead(ctx, uid); err != nil {
+			return model.LibraryElement{}, err
 		}
 		e, err := s.Store.LibraryElement(ctx, uid)
 		if errors.Is(err, sql.ErrNoRows) {

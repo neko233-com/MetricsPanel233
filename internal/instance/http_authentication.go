@@ -65,12 +65,13 @@ func NewHTTPAuthenticator(catalog *identity.Store, config HTTPAuthenticationConf
 type requestCredentialKey struct{}
 
 type requestCredential struct {
-	issuer    *HTTPAuthenticator
-	method    AuthenticationMethod
-	login     string
-	secret    string
-	principal identity.Principal
-	sessionID int64
+	issuer        *HTTPAuthenticator
+	method        AuthenticationMethod
+	login         string
+	secret        string
+	passwordProof *identity.PasswordProof
+	principal     identity.Principal
+	sessionID     int64
 }
 
 func (requestCredential) String() string   { return "[redacted request credential]" }
@@ -170,10 +171,21 @@ func (a *HTTPAuthenticator) readCredential(r *http.Request) (requestCredential, 
 	return credential, nil
 }
 
-func (a *HTTPAuthenticator) authenticate(ctx context.Context, credential requestCredential, orgID int64) (identity.Principal, identity.Session, error) {
+func (a *HTTPAuthenticator) authenticate(ctx context.Context, credential *requestCredential, orgID int64) (identity.Principal, identity.Session, error) {
 	switch credential.method {
 	case AuthenticationPassword:
-		p, err := a.catalog.AuthenticatePassword(ctx, credential.login, credential.secret, orgID)
+		if credential.passwordProof != nil {
+			p, err := a.catalog.RevalidatePasswordProof(ctx, credential.passwordProof)
+			if err == nil && p.OrgID != orgID {
+				err = identity.ErrUnauthenticated
+			}
+			return p, identity.Session{}, err
+		}
+		p, proof, err := a.catalog.AuthenticatePasswordWithProof(ctx, credential.login, credential.secret, orgID)
+		if err == nil {
+			credential.passwordProof = proof
+			credential.login, credential.secret = "", ""
+		}
 		return p, identity.Session{}, err
 	case AuthenticationToken:
 		p, err := a.catalog.AuthenticateServiceToken(ctx, credential.secret, orgID)
@@ -199,7 +211,7 @@ func (a *HTTPAuthenticator) AuthenticateRequest(r *http.Request) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
-	p, session, err := a.authenticate(r.Context(), credential, RequestOrganization(r))
+	p, session, err := a.authenticate(r.Context(), &credential, RequestOrganization(r))
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +236,7 @@ func (a *HTTPAuthenticator) Revalidate(ctx context.Context, incoming identity.Pr
 	if !ok || credential.issuer != a || !present || !samePermissionIdentity(bound, incoming) || !samePermissionIdentity(credential.principal, incoming) {
 		return identity.Principal{}, identity.ErrUnauthenticated
 	}
-	p, session, err := a.authenticate(ctx, credential, credential.principal.OrgID)
+	p, session, err := a.authenticate(ctx, &credential, credential.principal.OrgID)
 	if err != nil {
 		return identity.Principal{}, err
 	}

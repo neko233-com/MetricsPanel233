@@ -98,20 +98,31 @@ func writeAnnotation(ctx context.Context, tx *sql.Tx, a model.Annotation) error 
 }
 
 func (s *Store) PatchAnnotation(ctx context.Context, id int64, p model.AnnotationPatch) (model.Annotation, error) {
+	if (p.Time != nil && *p.Time < 0) || (p.TimeEnd != nil && *p.TimeEnd < 0) {
+		return model.Annotation{}, fmt.Errorf("%w: negative timestamps", model.ErrInvalidAnnotation)
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Annotation{}, err
+	}
+	defer tx.Rollback()
+	a, err := patchAnnotationTx(ctx, tx, id, p)
+	if err != nil {
+		return a, err
+	}
+	return a, tx.Commit()
+}
+
+func patchAnnotationTx(ctx context.Context, tx *sql.Tx, id int64, p model.AnnotationPatch) (model.Annotation, error) {
 	var a model.Annotation
 	if (p.Time != nil && *p.Time < 0) || (p.TimeEnd != nil && *p.TimeEnd < 0) {
 		return a, fmt.Errorf("%w: negative timestamps", model.ErrInvalidAnnotation)
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return a, err
-	}
-	defer tx.Rollback()
 	var payload string
-	if err = tx.QueryRowContext(ctx, `SELECT payload FROM annotations WHERE id=?`, id).Scan(&payload); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM annotations WHERE id=?`, id).Scan(&payload); err != nil {
 		return a, err
 	}
-	if err = json.Unmarshal([]byte(payload), &a); err != nil {
+	if err := json.Unmarshal([]byte(payload), &a); err != nil {
 		return a, err
 	}
 	if a.Time == a.TimeEnd && p.Time != nil && *p.Time > 0 && p.TimeEnd == nil {
@@ -132,14 +143,14 @@ func (s *Store) PatchAnnotation(ctx context.Context, id int64, p model.Annotatio
 	if len(p.Data) > 0 {
 		a.Data = p.Data
 	}
-	if err = a.Normalize(); err != nil {
+	if err := a.Normalize(); err != nil {
 		return a, err
 	}
 	a.Updated = time.Now().UnixMilli()
-	if err = writeAnnotation(ctx, tx, a); err != nil {
+	if err := writeAnnotation(ctx, tx, a); err != nil {
 		return a, err
 	}
-	return a, tx.Commit()
+	return a, nil
 }
 
 func (s *Store) DeletePanelAnnotations(ctx context.Context, uid string, panelID int64) error {

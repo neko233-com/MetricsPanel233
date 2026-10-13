@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/neko233-com/MetricsPanel233/internal/alerting"
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 )
@@ -47,12 +48,22 @@ func (s *Server) dashboardResourceRoutes(api routeRegistrar) {
 			resourceError(w, err)
 			return
 		}
+		folders, err = s.filterReadableFolders(r.Context(), folders)
+		if err != nil {
+			writeResourceReadError(w, err)
+			return
+		}
 		writeJSON(w, 200, folders)
 	})
 	api.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
 		folders, err := s.Store.Folders(r.Context())
 		if err != nil {
 			resourceError(w, err)
+			return
+		}
+		folders, err = s.filterReadableFolders(r.Context(), folders)
+		if err != nil {
+			writeResourceReadError(w, err)
 			return
 		}
 		parent := model.RootFolderUID(r.URL.Query().Get("parentUid"))
@@ -115,6 +126,15 @@ func (s *Server) dashboardResourceRoutes(api routeRegistrar) {
 		f, err := s.Store.Folder(r.Context(), r.PathValue("uid"))
 		if err != nil {
 			dashboardResourceError(w, err)
+			return
+		}
+		f, allowed, err := s.readableFolder(r.Context(), f)
+		if err != nil {
+			writeResourceReadError(w, err)
+			return
+		}
+		if !allowed {
+			writeResourceReadError(w, identity.ErrForbidden)
 			return
 		}
 		writeJSON(w, 200, f)
@@ -186,14 +206,36 @@ func (s *Server) dashboardResourceRoutes(api routeRegistrar) {
 			dashboardResourceError(w, err)
 			return
 		}
+		f, allowed, err := s.readableFolder(r.Context(), f)
+		if err != nil {
+			writeResourceReadError(w, err)
+			return
+		}
+		if !allowed {
+			writeResourceReadError(w, identity.ErrForbidden)
+			return
+		}
 		out := []model.Folder{}
+		seen := map[string]bool{f.UID: true}
 		for f.ParentUID != "" {
+			if len(seen) >= 64 || seen[f.ParentUID] {
+				writeResourceReadError(w, store.ErrPermissionAncestry)
+				return
+			}
+			seen[f.ParentUID] = true
 			f, err = s.Store.Folder(r.Context(), f.ParentUID)
 			if err != nil {
 				dashboardResourceError(w, err)
 				return
 			}
-			out = append(out, f)
+			f, allowed, err = s.readableFolder(r.Context(), f)
+			if err != nil {
+				writeResourceReadError(w, err)
+				return
+			}
+			if allowed {
+				out = append(out, f)
+			}
 		}
 		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 			out[i], out[j] = out[j], out[i]

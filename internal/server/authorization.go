@@ -110,7 +110,12 @@ func (m *authorizationMux) Handle(pattern string, handler http.Handler) {
 			fail(w, http.StatusForbidden, identity.ErrForbidden)
 			return
 		}
-		handler.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), current)))
+		r = r.WithContext(identity.WithPrincipal(r.Context(), current))
+		if ResourceReadRoute(route) {
+			m.server.serveResourceRead(w, r, route, handler)
+			return
+		}
+		handler.ServeHTTP(w, r)
 	})
 	if m.surface == RouteEndpoint {
 		// These registrations sit outside the /api and /prometheus wrappers.

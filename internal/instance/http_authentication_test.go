@@ -290,12 +290,9 @@ func TestHTTPAuthenticationRotationGateAndFreshRoutePolicy(t *testing.T) {
 
 func TestProtectedOrganizationHTTPDispatchIsolationAndLegacyRefusal(t *testing.T) {
 	f := newHTTPAuthenticationFixture(t)
-	policy, err := f.auth.NewRequestAuthorizer(func(_ *http.Request, route server.ProtectedRoute, _ identity.Principal) error {
-		if route.Surface == server.RouteAPI && route.Pattern == "GET /api/v1/dashboards" {
-			return nil
-		}
-		return identity.ErrForbidden
-	})
+	readPolicy, err := NewResourceReadPolicy(f.registry, f.auth)
+	require.NoError(t, err)
+	policy, err := f.auth.NewRequestAuthorizer(readPolicy)
 	require.NoError(t, err)
 	h, err := NewProtectedOrganizationHandler(f.registry, f.auth, policy)
 	require.NoError(t, err)
@@ -314,6 +311,21 @@ func TestProtectedOrganizationHTTPDispatchIsolationAndLegacyRefusal(t *testing.T
 	require.NoError(t, err)
 	_, err = child.Store.SaveDashboard(context.Background(), model.Dashboard{ID: "same-uid", Name: "child-only"})
 	require.NoError(t, err)
+	for _, selected := range []*server.Server{f.primary, child} {
+		internal := identity.BackgroundPrincipal(selected.OrganizationID())
+		resolver, err := NewPermissionIdentityResolver(f.catalog, PermissionResolverOptions{TrustedInternalPrincipal: &internal})
+		require.NoError(t, err)
+		ready, err := selected.Store.MigrateResourcePermissions(identity.WithPrincipal(context.Background(), internal), 100, resolver)
+		require.NoError(t, err)
+		require.True(t, ready.Ready)
+		if selected == child {
+			ref := model.PermissionResource{OrgID: org.ID, Kind: model.PermissionDashboard, UID: "same-uid"}
+			doc, err := child.Store.ResourcePermissions(context.Background(), ref)
+			require.NoError(t, err)
+			_, err = child.Store.ReplaceResourcePermissions(identity.WithPrincipal(context.Background(), internal), ref, doc.Version, []model.ResourcePermissionGrant{{Subject: model.ResourcePermissionSubject{Kind: model.PermissionUser, ID: f.user.ID}, Permission: model.PermissionView}}, resolver)
+			require.NoError(t, err)
+		}
+	}
 	for _, tc := range []struct{ org, own, other string }{{"1", "primary-only", "child-only"}, {"2", "child-only", "primary-only"}} {
 		r := f.basic("/api/v1/dashboards")
 		r.Header.Set("X-Grafana-Org-Id", tc.org)
@@ -464,4 +476,42 @@ func TestHTTPAuthenticationPolicyFenceReachesMutationHandler(t *testing.T) {
 	saved, err := f.primary.Store.Dashboard(ctx, dashboard.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "After policy", saved.Name)
+}
+
+func TestHTTPAuthenticationBasicProofIsPrivateAndCannotBeReusedAsNewCredentials(t *testing.T) {
+	f := newHTTPAuthenticationFixture(t)
+	ctx := context.Background()
+	bound, err := f.auth.AuthenticateRequest(f.basic("/api/user"))
+	require.NoError(t, err)
+	credential, ok := bound.Context().Value(requestCredentialKey{}).(requestCredential)
+	require.True(t, ok)
+	require.NotNil(t, credential.passwordProof)
+	assert.Empty(t, credential.secret, "the actual Basic password is discarded after its first verification")
+	assert.Empty(t, credential.login)
+	p, present := identity.FromContext(bound.Context())
+	require.True(t, present)
+	name := "Current profile after password verification"
+	updated, err := f.catalog.UpdateUser(ctx, f.user.ID, f.user.Version, identity.UserProfileUpdate{Name: &name})
+	require.NoError(t, err)
+	fresh, err := f.auth.Revalidate(bound.Context(), p)
+	require.NoError(t, err)
+	assert.Equal(t, name, fresh.Name)
+	// A new request must verify its own password, even if trusted test code
+	// supplied the old authenticated context. There is no cross-request cache.
+	wrong := f.basic("/api/user").WithContext(bound.Context())
+	wrong.SetBasicAuth(f.user.Login, "incorrect-new-request-password")
+	_, err = f.auth.AuthenticateRequest(wrong)
+	require.ErrorIs(t, err, identity.ErrUnauthenticated)
+	updated, err = f.catalog.ChangePassword(ctx, updated.ID, updated.Version, "replacement-proof-password-233")
+	require.NoError(t, err)
+	_, err = f.auth.Revalidate(bound.Context(), p)
+	require.ErrorIs(t, err, identity.ErrUnauthenticated)
+	_, err = f.catalog.ChangePassword(ctx, updated.ID, updated.Version, httpFixturePassword)
+	require.NoError(t, err)
+	_, err = f.auth.Revalidate(bound.Context(), p)
+	require.ErrorIs(t, err, identity.ErrUnauthenticated, "the observed invalidated proof cannot be revived")
+	newRequest, err := f.auth.AuthenticateRequest(f.basic("/api/user"))
+	require.NoError(t, err)
+	newCredential := newRequest.Context().Value(requestCredentialKey{}).(requestCredential)
+	assert.NotSame(t, credential.passwordProof, newCredential.passwordProof)
 }

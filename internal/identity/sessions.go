@@ -26,18 +26,26 @@ type Session struct {
 
 type passwordCandidate struct {
 	userID, userVersion, credentialVersion, orgID int64
+	alias                                         string
+	fingerprint                                   [32]byte
 	format                                        string
 	salt, hash                                    []byte
 }
 
 func (s *Store) passwordCandidate(ctx context.Context, login, password string) (passwordCandidate, error) {
 	var candidate passwordCandidate
-	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.version,c.version,u.current_org_id,c.format,c.salt,c.hash FROM user_identifiers i JOIN users u ON u.id=i.user_id JOIN password_credentials c ON c.user_id=u.id WHERE i.identifier=?`, strings.ToLower(strings.TrimSpace(login))).Scan(&candidate.userID, &candidate.userVersion, &candidate.credentialVersion, &candidate.orgID, &candidate.format, &candidate.salt, &candidate.hash)
+	candidate.alias = strings.ToLower(strings.TrimSpace(login))
+	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.version,c.version,u.current_org_id,c.format,c.salt,c.hash FROM user_identifiers i JOIN users u ON u.id=i.user_id JOIN password_credentials c ON c.user_id=u.id WHERE i.identifier=?`, candidate.alias).Scan(&candidate.userID, &candidate.userVersion, &candidate.credentialVersion, &candidate.orgID, &candidate.format, &candidate.salt, &candidate.hash)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		clear(candidate.salt)
+		clear(candidate.hash)
 		return candidate, err
 	}
+	candidate.fingerprint = passwordCredentialFingerprint(candidate.format, candidate.salt, candidate.hash)
 	valid, hashErr := verifyPassword(ctx, password, candidate.salt, candidate.hash, candidate.format)
+	clear(candidate.salt)
 	clear(candidate.hash)
+	candidate.salt, candidate.hash = nil, nil
 	if hashErr != nil {
 		return passwordCandidate{}, hashErr
 	}
@@ -48,10 +56,8 @@ func (s *Store) passwordCandidate(ctx context.Context, login, password string) (
 }
 
 func (candidate passwordCandidate) principal(ctx context.Context, tx *sql.Tx, requestedOrgID int64) (Principal, error) {
-	var userVersion, credentialVersion int64
-	var disabled bool
-	err := tx.QueryRowContext(ctx, `SELECT u.version,c.version,u.disabled FROM users u JOIN password_credentials c ON c.user_id=u.id WHERE u.id=?`, candidate.userID).Scan(&userVersion, &credentialVersion, &disabled)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (disabled || userVersion != candidate.userVersion || credentialVersion != candidate.credentialVersion) {
+	current, err := passwordCredentialForAlias(ctx, tx, candidate.alias)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (current.disabled || current.userID != candidate.userID || current.userVersion != candidate.userVersion || current.credentialVersion != candidate.credentialVersion || !samePasswordFingerprint(current.fingerprint, candidate.fingerprint)) {
 		return Principal{}, ErrUnauthenticated
 	}
 	if err != nil {

@@ -222,14 +222,27 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 			fail(w, 500, err)
 			return
 		}
-		for i, d := range v {
-			v[i], err = s.resolveDashboardLibrary(r.Context(), d)
+		visible := make([]model.Dashboard, 0, len(v))
+		for _, candidate := range v {
+			d, allowed, readErr := s.readableDashboard(r.Context(), candidate, true)
+			if readErr != nil {
+				writeResourceReadError(w, readErr)
+				return
+			}
+			if !allowed {
+				continue
+			}
+			d, err = s.resolveDashboardLibrary(r.Context(), d)
 			if err != nil {
+				if s.Authorizer != nil && errors.Is(err, identity.ErrForbidden) {
+					continue
+				}
 				fail(w, 500, err)
 				return
 			}
+			visible = append(visible, d)
 		}
-		writeJSON(w, 200, v)
+		writeJSON(w, 200, visible)
 	})
 	api.HandleFunc("POST /api/v1/dashboards", s.saveDashboard)
 	s.dashboardExportRoutes(api)

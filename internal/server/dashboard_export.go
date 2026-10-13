@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 )
 
 func (s *Server) dashboardExportRoutes(api routeRegistrar) {
@@ -35,6 +37,16 @@ func (s *Server) dashboardExportRoutes(api routeRegistrar) {
 		for _, dashboard := range dashboards {
 			if dashboard.ID != r.PathValue("id") {
 				continue
+			}
+			var allowed bool
+			dashboard, allowed, err = s.readableDashboard(r.Context(), dashboard, false)
+			if err != nil {
+				writeResourceReadError(w, err)
+				return
+			}
+			if !allowed {
+				writeResourceReadError(w, identity.ErrForbidden)
+				return
 			}
 			w.Header().Set("Cache-Control", "no-store")
 			if format == "native" {

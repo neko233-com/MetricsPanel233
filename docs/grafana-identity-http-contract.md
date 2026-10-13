@@ -28,6 +28,10 @@ Device DTOs use the exact Apache-2.0 `uap-go` version pinned by Grafana 13.2.3, 
 
 ## Implemented local session lifecycle, opt-in
 
+Successful Basic authentication now issues a private request-local password proof and clears the alias and plaintext password from the private credential binding. Argon2 runs once for initial authentication; later checks validate the issuing catalog, original alias owner, credential version/fingerprint, fixed organization, active membership generation and current profile/role. An observed invalidation permanently burns shared copies. This does not detect an unobserved byte-identical raw database rollback and does not introduce a reusable client credential.
+
+`NewResourceReadPolicy` supplies an opt-in action policy for eight current dashboard/folder/search/export GET registrations. It filters actual native resource grants before pagination or expansion, checks every recursively fetched library owner, and buffers finite responses up to 32 MiB. Before sending a successful response, all live identity callbacks finish first; every captured control-store fence is then checked in one final read transaction. Catalog and control databases still do not share an atomic transaction. History, queries, mutations, Live and plugin routes remain denied by this limited policy; the production CLI does not activate it.
+
 `NewSessionHTTPHandler` supplies the following actual catalog-backed operations. Paths include the configured application subpath; the caller mounts this handler separately from current-user and organization-resource handlers. Production CLI activation is still pending.
 
 | Route | Implemented behavior |

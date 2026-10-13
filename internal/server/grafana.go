@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
 
@@ -47,9 +48,23 @@ func (s *Server) grafanaRoutes(api routeRegistrar, prometheus http.Handler) {
 			fail(w, 404, errors.New("dashboard not found"))
 			return
 		}
+		var allowed bool
+		d, allowed, err = s.readableDashboard(r.Context(), d, true)
+		if err != nil {
+			writeResourceReadError(w, err)
+			return
+		}
+		if !allowed {
+			writeResourceReadError(w, identity.ErrForbidden)
+			return
+		}
 		d, err = s.resolveDashboardLibrary(r.Context(), d)
 		if err != nil {
-			writeGrafanaError(w, err)
+			if s.Authorizer != nil {
+				writeResourceReadError(w, err)
+			} else {
+				writeGrafanaError(w, err)
+			}
 			return
 		}
 		folder, err := s.resolveDashboardFolder(r.Context(), d.FolderUID, 0)
@@ -57,15 +72,39 @@ func (s *Server) grafanaRoutes(api routeRegistrar, prometheus http.Handler) {
 			writeGrafanaError(w, err)
 			return
 		}
+		folder, allowed, err = s.readableFolder(r.Context(), folder)
+		if err != nil {
+			writeResourceReadError(w, err)
+			return
+		}
+		if !allowed {
+			folder = model.Folder{UID: d.FolderUID}
+		}
+		canEdit, canAdmin := true, true
+		if state, err := s.resourceReadAccess(r.Context()); err != nil {
+			writeResourceReadError(w, err)
+			return
+		} else if state != nil {
+			permission, err := s.Store.EffectiveResourcePermission(r.Context(), model.PermissionResource{OrgID: s.OrganizationID(), Kind: model.PermissionDashboard, UID: d.ID}, state.principal, state.resolver)
+			if err != nil {
+				writeResourceReadError(w, err)
+				return
+			}
+			canEdit, canAdmin = permission.Permission.Includes(model.PermissionEdit), permission.Permission.Includes(model.PermissionAdmin)
+		}
 		classic, err := json.Marshal(classicDocument(d))
 		if err == nil {
 			classic, err = s.resolveGrafanaLibraryPanels(r.Context(), classic, d.FolderUID)
 		}
 		if err != nil {
-			writeGrafanaError(w, err)
+			if s.Authorizer != nil {
+				writeResourceReadError(w, err)
+			} else {
+				writeGrafanaError(w, err)
+			}
 			return
 		}
-		writeJSON(w, 200, map[string]any{"dashboard": json.RawMessage(classic), "meta": map[string]any{"isStarred": false, "canSave": true, "canEdit": true, "canAdmin": true, "folderId": folder.ID, "folderUid": folder.UID, "folderTitle": folder.Title, "pluginId": d.PluginID, "url": grafanaDashboardURL(r.PathValue("uid"), d.Name)}})
+		writeJSON(w, 200, map[string]any{"dashboard": json.RawMessage(classic), "meta": map[string]any{"isStarred": false, "canSave": canEdit, "canEdit": canEdit, "canAdmin": canAdmin, "folderId": folder.ID, "folderUid": folder.UID, "folderTitle": folder.Title, "pluginId": d.PluginID, "url": grafanaDashboardURL(r.PathValue("uid"), d.Name)}})
 	})
 	api.HandleFunc("DELETE /api/dashboards/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
 		d, found, err := s.grafanaDashboard(r.Context(), r.PathValue("uid"))
@@ -90,7 +129,11 @@ func (s *Server) grafanaRoutes(api routeRegistrar, prometheus http.Handler) {
 	api.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
 		result, err := s.grafanaSearch(r)
 		if err != nil {
-			writeGrafanaError(w, err)
+			if s.Authorizer != nil {
+				writeResourceReadError(w, err)
+			} else {
+				writeGrafanaError(w, err)
+			}
 			return
 		}
 		writeJSON(w, 200, result)
@@ -163,6 +206,20 @@ func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
 	for _, folder := range folders {
 		byUID[folder.UID] = folder
 	}
+	visibleFolders, err := s.filterReadableFolders(r.Context(), folders)
+	if err != nil {
+		return nil, err
+	}
+	visibleByUID := map[string]model.Folder{"": byUID[""]}
+	for _, folder := range visibleFolders {
+		visibleByUID[folder.UID] = folder
+	}
+	visibleParent := func(uid string) model.Folder {
+		if folder, ok := visibleByUID[uid]; ok {
+			return folder
+		}
+		return model.Folder{UID: uid}
+	}
 	query, kind := strings.ToLower(params.Get("query")), params.Get("type")
 	matches := func(uid, title, parent string, id int64) bool {
 		if !strings.Contains(strings.ToLower(title), query) || len(wantedUIDs) > 0 && !contains(wantedUIDs, uid) || len(wantedIDs) > 0 && !containsID(wantedIDs, id) {
@@ -178,9 +235,9 @@ func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
 		return map[string]any{"id": id, "uid": uid, "orgId": s.OrganizationID(), "title": title, "type": typ, "url": location, "uri": "db/" + slug(title), "slug": slug(title), "tags": tags, "isStarred": false, "isDeleted": false, "sortMeta": 0, "folderId": parent.ID, "folderUid": parent.UID, "folderTitle": parent.Title, "folderUrl": parent.URL}
 	}
 	if (kind == "" || kind == "dash-folder") && len(params["tag"]) == 0 {
-		for _, folder := range folders {
+		for _, folder := range visibleFolders {
 			if matches(folder.UID, folder.Title, folder.ParentUID, folder.ID) {
-				result = append(result, hit(folder.UID, folder.Title, "dash-folder", folder.URL, folder.ID, byUID[folder.ParentUID], nil))
+				result = append(result, hit(folder.UID, folder.Title, "dash-folder", folder.URL, folder.ID, visibleParent(folder.ParentUID), nil))
 			}
 		}
 	}
@@ -189,7 +246,14 @@ func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, d := range dashboards {
+		for _, candidate := range dashboards {
+			d, allowed, err := s.readableDashboard(r.Context(), candidate, false)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				continue
+			}
 			doc := classicDocument(d)
 			uid, _ := doc["uid"].(string)
 			parent := model.RootFolderUID(d.FolderUID)
@@ -210,7 +274,7 @@ func (s *Server) grafanaSearch(r *http.Request) ([]map[string]any, error) {
 			}
 			if allTags {
 				sort.Strings(tags)
-				result = append(result, hit(uid, d.Name, "dash-db", grafanaDashboardURL(uid, d.Name), d.GrafanaID, byUID[parent], tags))
+				result = append(result, hit(uid, d.Name, "dash-db", grafanaDashboardURL(uid, d.Name), d.GrafanaID, visibleParent(parent), tags))
 			}
 		}
 	}

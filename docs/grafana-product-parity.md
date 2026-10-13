@@ -4,6 +4,8 @@ Confirmed acceptance scope: all Grafana 13.2.3 OSS functionality, matching the p
 
 Full replacement is not complete. This checklist describes implemented behavior and remaining work; it is not a compatibility certificate. The [datasource and visualization matrix](grafana-compatibility.md) lists the tagged core plugins individually.
 
+The latest permission slice adds opt-in current dashboard/folder/search/export reads with filtering, recursive library ownership checks and final response fencing, request-local Basic password proofs, and guarded library/manual-annotation storage mutations. Production multiuser activation, mutation action policies and complete query/history/Live enforcement remain pending. These additions are source milestones, not full Grafana parity. See [PLAN.md](../PLAN.md) for the next work session.
+
 | Area | Current implementation | Remaining acceptance work |
 | --- | --- | --- |
 | Collection and storage | Native database/big-data collectors, compatible exporter input, SQLite and ClickHouse persistence, upstream PromQL engine | Native histogram/exemplar storage; cluster discovery; actual big-data cluster verification beyond protocol fixtures |
