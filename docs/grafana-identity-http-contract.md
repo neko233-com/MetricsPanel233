@@ -1,6 +1,30 @@
 # Grafana identity HTTP contract notes
 
-Status: source audit and implementation requirements, 2026-10-12. Baseline is **Grafana v13.2.3 OSS**. This supplements [the identity design](grafana-identity-design.md). It does not certify the new native identity catalog as a complete Grafana authentication implementation. Native credentials currently use `mp233_session_` / `mp233_sa_` opaque formats; these are not Grafana token encodings. HTTP authentication, authorization, organization dispatch and PC login are separate acceptance steps. Enterprise custom RBAC, SAML, SCIM and Enterprise datasource permissions are excluded here.
+Status: source audit and implementation requirements, 2026-10-13. Baseline is **Grafana v13.2.3 OSS**. This supplements [the identity design](grafana-identity-design.md). It does not certify the new native identity catalog as a complete Grafana authentication implementation. Native credentials currently use `mp233_session_` / `mp233_sa_` opaque formats; these are not Grafana token encodings. HTTP authentication, authorization, organization dispatch and PC login are separate acceptance steps. Enterprise custom RBAC, SAML, SCIM and Enterprise datasource permissions are excluded here.
+
+## Implemented request adapter, opt-in
+
+`internal/instance.HTTPAuthenticator` now validates Basic human passwords, native service-account Bearer tokens, Basic `api_key` token credentials and native browser-session cookies against the actual persistent catalog. It binds the credential privately to the request's typed identity and selected organization; resource permission callbacks and selected route authorizers revalidate that original credential. Looking up a live user ID, supplying an old role or placing a local/system principal in request context does not authenticate a request. Organization selectors cannot add memberships or move a service-account token. Native namespace precedence uses the already implemented `default` / `org-ID` mapping; Grafana stack-namespace formats remain pending.
+
+The adapter defaults to cookie name `grafana_session` and a ten-minute native rotation gate, both configurable at construction. It does not issue cookies or expose a login screen. An overdue session returns 401, including when its rotation deadline passes between initial dispatch authentication and the selected route's second check. Session/token revocation, password changes, current roles and organization state are rechecked; metadata exposes only the authentication method and the actual authenticated session ID. A valid cookie cannot rescue an invalid explicit Authorization header; repeated Authorization headers or repeated matching session cookies are rejected. This ordering deliberately differs from Grafana's configured-client fallthrough.
+
+Foreign Origin or cross-site fetch requests fail before session last-seen/token-seen writes. Origin comparison uses the actual transport scheme and host; untrusted forwarding headers cannot override it. Configurable trusted reverse-proxy origin/subpath handling has not yet been implemented.
+
+`NewProtectedOrganizationHandler` resolves the authenticated principal to the physical organization server. It refuses a nil, legacy or different authorizer with 503, and permits authenticated Role None identities to reach explicit action/resource checks. Every child must be configured with the exact immutable credential authorizer before its Handler is built. The CLI still mounts the existing single-workspace service: the new handler is not activated until the complete action matrix, permission migration/readiness, list/body filtering, plugin lifecycle and Live revocation/cache boundaries are implemented and verified.
+
+`NewCurrentUserHandler` independently provides these real signed-in operations:
+
+| Route | Implemented behavior |
+| --- | --- |
+| `GET /api/login/ping` | Revalidates human or service-account credentials and returns 200; missing/revoked/invalid credentials return 401. |
+| `GET /api/user` | Returns the local human's actual profile, immutable UID and UTC timestamps. A temporary request organization selector does not change persisted profile `orgId`. |
+| `GET /api/user/orgs` | Lists only that human's active memberships in active organizations, with current roles. |
+| `GET /api/user/auth-tokens` | Lists that human's available devices. The active ID comes from the private credential binding; Basic authentication has no active browser device. No credential, digest or raw User-Agent is returned. |
+| `POST /api/user/revoke-auth-token` | Atomically verifies target ownership/availability and revokes the device. The active cookie device is 400; foreign/absent/expired/revoked targets are indistinguishable 404s. Revocation survives restart. |
+
+The four user routes currently support local humans only: service-account callers receive 403 before body parsing, including equal numeric human/account IDs. Grafana's reduced service-account profile and its 304 human-helper oddities remain unimplemented. Native revocation retains a private tombstone and excludes unavailable devices rather than exposing Grafana's hard-deletion semantics. Body parsing is limited to 64 KiB, one JSON object, known fields and exact int64 IDs; these stricter validation rules are native behavior. Unknown identity administration/preferences/login routes remain absent.
+
+Device DTOs use the exact Apache-2.0 `uap-go` version pinned by Grafana 13.2.3, major/minor versions and local-password auth-module mapping. Tests use real persistent SQLite catalogs and real HTTP requests, including Windows Edge metadata, cookie persistence after reopen, typed identity separation, organization isolation, changed/revoked credentials, unknown-route denial and origin-before-write behavior. They do not establish PC login, cookie issuance/rotation responses, all identity APIs or whole-product Grafana compatibility.
 
 ## Authentication and browser entry
 

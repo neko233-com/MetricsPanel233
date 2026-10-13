@@ -23,6 +23,7 @@ require (
 	github.com/prometheus/prometheus v0.315.0
 	github.com/shopspring/decimal v1.4.0
 	github.com/stretchr/testify v1.12.1
+	github.com/ua-parser/uap-go v0.0.0-20251207011819-db9adb27a0b8
 	golang.org/x/crypto v0.57.0
 	google.golang.org/grpc v1.84.0
 	modernc.org/sqlite v1.60.1
@@ -150,6 +151,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.37.0 // indirect
 	k8s.io/client-go v0.37.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect

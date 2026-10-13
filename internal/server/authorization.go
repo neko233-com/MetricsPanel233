@@ -93,6 +93,8 @@ func (m *authorizationMux) Handle(pattern string, handler http.Handler) {
 		current, err := m.authorizer.AuthorizeRequest(r, route)
 		if err != nil {
 			switch {
+			case errors.Is(err, identity.ErrSessionNeedsRotation):
+				fail(w, http.StatusUnauthorized, identity.ErrSessionNeedsRotation)
 			case errors.Is(err, identity.ErrUnauthenticated):
 				fail(w, http.StatusUnauthorized, identity.ErrUnauthenticated)
 			case errors.Is(err, identity.ErrForbidden):

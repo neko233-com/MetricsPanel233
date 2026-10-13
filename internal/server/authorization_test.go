@@ -130,6 +130,7 @@ func TestRoutePolicyCannotChangeIdentityAndDoesNotExposeProviderErrors(t *testin
 		status    int
 	}{
 		{"revoked", identity.Principal{}, identity.ErrUnauthenticated, http.StatusUnauthorized},
+		{"rotation became due", identity.Principal{}, identity.ErrSessionNeedsRotation, http.StatusUnauthorized},
 		{"denied", identity.Principal{}, identity.ErrForbidden, http.StatusForbidden},
 		{"provider failure", identity.Principal{}, errors.New("secret-token-password"), http.StatusInternalServerError},
 		{"cancelled", identity.Principal{}, context.Canceled, http.StatusInternalServerError},
