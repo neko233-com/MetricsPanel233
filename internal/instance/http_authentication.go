@@ -282,7 +282,10 @@ func (a *CredentialRequestAuthorizer) AuthorizeRequest(r *http.Request, route se
 	if err != nil {
 		return identity.Principal{}, err
 	}
-	r = r.WithContext(identity.WithPrincipal(r.Context(), p))
+	// Policy installs request-local action/fence state for the selected handler.
+	// Preserve those context additions on the actual request, as well as its
+	// original private credential binding, rather than a discarded local copy.
+	*r = *r.WithContext(identity.WithPrincipal(r.Context(), p))
 	if err := a.policy(r, route, p); err != nil {
 		return identity.Principal{}, err
 	}

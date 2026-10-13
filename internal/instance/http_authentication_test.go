@@ -14,6 +14,7 @@ import (
 	"github.com/neko233-com/MetricsPanel233/internal/identity"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
+	"github.com/neko233-com/MetricsPanel233/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -408,4 +409,59 @@ func TestHTTPAuthenticationPermissionResolverUsesBoundCredentialAndTypedGrants(t
 	require.NoError(t, f.catalog.Logout(ctx, key))
 	_, err = f.primary.Store.EffectiveResourcePermission(bound.Context(), ref, p, resolver)
 	require.ErrorIs(t, err, identity.ErrUnauthenticated, "an old bound request does not outlive actual cookie revocation")
+}
+
+func TestHTTPAuthenticationPolicyFenceReachesMutationHandler(t *testing.T) {
+	f := newHTTPAuthenticationFixture(t)
+	ctx := context.Background()
+	dashboard, err := f.primary.Store.SaveDashboard(ctx, model.Dashboard{ID: "policy-fence", Name: "Before"})
+	require.NoError(t, err)
+	internal := identity.BackgroundPrincipal(1)
+	trusted, err := NewPermissionIdentityResolver(f.catalog, PermissionResolverOptions{TrustedInternalPrincipal: &internal})
+	require.NoError(t, err)
+	ref := model.PermissionResource{OrgID: 1, Kind: model.PermissionDashboard, UID: dashboard.ID}
+	_, err = f.primary.Store.InitializeResourcePermissions(identity.WithPrincipal(ctx, internal), ref, model.ResourcePermissionSeed{Policy: model.PermissionRootDefaults}, trusted)
+	require.NoError(t, err)
+	_, key := f.login(t, f.user)
+	request, err := f.auth.AuthenticateRequest(cookieRequest("/api/v1/dashboards/policy-fence", key))
+	require.NoError(t, err)
+	type policyFenceKey struct{}
+	authorizer, err := f.auth.NewRequestAuthorizer(func(r *http.Request, _ server.ProtectedRoute, p identity.Principal) error {
+		resolver, err := f.auth.PermissionResolver()
+		if err != nil {
+			return err
+		}
+		fence, err := f.primary.Store.CapturePermissionMutation(r.Context(), []model.PermissionResource{ref}, resolver)
+		if err != nil {
+			return err
+		}
+		effective, err := fence.Effective(ref)
+		if err != nil {
+			return err
+		}
+		if effective.Permission < model.PermissionEdit {
+			return identity.ErrForbidden
+		}
+		*r = *r.WithContext(context.WithValue(r.Context(), policyFenceKey{}, fence))
+		return nil
+	})
+	require.NoError(t, err)
+	p, err := authorizer.AuthorizeRequest(request, server.ProtectedRoute{Surface: server.RouteAPI, Pattern: "PUT /api/v1/dashboards/{id}"})
+	require.NoError(t, err)
+	// The downstream mutation sees the same request, its original credential
+	// capability, the fresh principal and the opaque policy-created snapshot.
+	fence, present := request.Context().Value(policyFenceKey{}).(store.PermissionMutationFence)
+	require.True(t, present, "authorization context must reach the downstream handler")
+	metadata, present := f.auth.Metadata(request.Context())
+	require.True(t, present)
+	assert.Equal(t, AuthenticationSession, metadata.Method)
+	fresh, err := f.auth.Revalidate(request.Context(), p)
+	require.NoError(t, err)
+	assert.Equal(t, p, fresh)
+	dashboard.Name = "After policy"
+	_, err = f.primary.Store.SaveDashboardWithPermissions(request.Context(), dashboard, &dashboard.UpdatedAt, model.ResourcePermissionSeed{}, fence)
+	require.NoError(t, err)
+	saved, err := f.primary.Store.Dashboard(ctx, dashboard.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "After policy", saved.Name)
 }
