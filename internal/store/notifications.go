@@ -583,6 +583,9 @@ func insertNotificationTx(ctx context.Context, tx *sql.Tx, eventID int64, uid, r
 	if err := snapshotNotificationTemplatesTx(ctx, tx, id, uid); err != nil {
 		return 0, err
 	}
+	if err := snapshotReceiverNotificationSourceTx(ctx, tx, id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -622,6 +625,7 @@ func (s *Store) Notifications(ctx context.Context, uid string, limit int) ([]mod
 }
 
 func (s *Store) EnqueueTestNotification(ctx context.Context, uid string) (model.NotificationDelivery, error) {
+	ctx = receiverProducerContext(ctx, s)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return model.NotificationDelivery{}, err
@@ -652,6 +656,7 @@ func (s *Store) EnqueueTestNotification(ctx context.Context, uid string) (model.
 // A delivery lease expires after a crash. Stable delivery IDs allow receivers to
 // deduplicate the unavoidable ambiguous result of an interrupted HTTP request.
 func (s *Store) ClaimNotification(ctx context.Context, at int64) (model.NotificationDelivery, json.RawMessage, error) {
+	ctx = receiverProducerContext(ctx, s)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return model.NotificationDelivery{}, nil, err
@@ -676,6 +681,9 @@ func (s *Store) ClaimNotification(ctx context.Context, at int64) (model.Notifica
 	}
 	var id int64
 	if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET state='failed',last_error='Delivery interrupted after final attempt',next_attempt_at=0 WHERE state='sending' AND next_attempt_at<=? AND attempts>=max_attempts`, at); err != nil {
+		return model.NotificationDelivery{}, nil, err
+	}
+	if err := s.reconcileReceiverSourceTerminalTx(ctx, tx, at); err != nil {
 		return model.NotificationDelivery{}, nil, err
 	}
 	var candidateRaw, candidateStatus, candidateRule, candidateKey string
@@ -760,6 +768,9 @@ func (s *Store) FinishNotification(ctx context.Context, delivery model.Notificat
 		return err
 	}
 	if count > 0 {
+		if err := s.reconcileReceiverSourceTerminalTx(ctx, tx, at); err != nil {
+			return err
+		}
 		if err := finishGroupNotificationTx(ctx, tx, delivery.ID, state, at); err != nil {
 			return err
 		}

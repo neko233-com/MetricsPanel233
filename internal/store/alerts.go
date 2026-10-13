@@ -68,6 +68,7 @@ func (s *Store) DueAlertRules(ctx context.Context, at int64) ([]string, error) {
 // SaveAlertRule uses optimistic concurrency. A zero version creates only; an
 // update must carry the version returned by GET, including for pause changes.
 func (s *Store) SaveAlertRule(ctx context.Context, rule model.AlertRule) (model.AlertRuleView, error) {
+	ctx = receiverProducerContext(ctx, s)
 	rule.Defaults()
 	if err := rule.Validate(); err != nil {
 		return model.AlertRuleView{}, err
@@ -176,6 +177,7 @@ func pruneAlertHistory(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 func (s *Store) CommitAlertEvaluation(ctx context.Context, uid string, version int, runtime model.AlertRuntime, events []model.AlertEvent) error {
+	ctx = receiverProducerContext(ctx, s)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -220,6 +222,7 @@ func (s *Store) CommitAlertEvaluation(ctx context.Context, uid string, version i
 	return tx.Commit()
 }
 func (s *Store) DeleteAlertRule(ctx context.Context, uid string) error {
+	ctx = receiverProducerContext(ctx, s)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err

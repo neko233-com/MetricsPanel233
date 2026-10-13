@@ -135,6 +135,15 @@ type ReceiverPreparedDelivery struct {
 	Revision       int64
 	Prepared       receivers.Prepared
 	Periods        map[string][]ReceiverPeriod
+	Members        map[string][]ReceiverMember `json:",omitempty"`
+}
+
+// ReceiverMember retains an immutable alert period's individual status even
+// when the destination notification's overall status is firing.
+type ReceiverMember struct {
+	Period      ReceiverPeriod `json:"period"`
+	Status      string         `json:"status"`
+	ACKRevision int64          `json:"ack_revision,omitempty"`
 }
 type ReceiverDispatchInput struct {
 	ReceiverUID      string

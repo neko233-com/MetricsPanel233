@@ -61,6 +61,7 @@ func comparableAlertRule(rule model.AlertRule, evaluation bool) []byte {
 // Nil rules update the interval only. An explicit empty slice deletes the group.
 // Config, schedules, state, transition history and annotations share one commit.
 func (s *Store) ReplaceAlertRuleGroup(ctx context.Context, folder, group string, interval int, rules []model.AlertRule, provenance string) ([]model.AlertRuleView, error) {
+	ctx = receiverProducerContext(ctx, s)
 	if err := ValidateAlertGroup(folder, group, interval); err != nil {
 		return nil, err
 	}

@@ -39,6 +39,13 @@ func (e *Engine) ProcessNotification(ctx context.Context, at time.Time) (bool, e
 	if err != nil {
 		return false, err
 	}
+	owner, err := e.Store.NotificationQueueOwnership(ctx)
+	if err != nil {
+		return true, err
+	}
+	if owner.Mode == "native" {
+		return true, e.processReceiverNotification(ctx, delivery, at)
+	}
 	state, message, code := "pending", "", 0
 	point, err := e.Store.ContactPoint(ctx, delivery.ContactPointUID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && point.Disabled) {

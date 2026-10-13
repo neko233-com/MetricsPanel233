@@ -19,6 +19,7 @@ import (
 type receiverPreparedSnapshot struct {
 	Prepared receivers.Prepared                `json:"prepared"`
 	Periods  map[string][]model.ReceiverPeriod `json:"periods"`
+	Members  map[string][]model.ReceiverMember `json:"members,omitempty"`
 }
 type receiverDispatchSnapshot struct {
 	ReceiverVersion int64 `json:"receiver_version"`
@@ -33,9 +34,11 @@ type ClaimedReceiverDelivery struct {
 	token       string
 	prepared    receivers.Prepared
 	periods     map[string][]model.ReceiverPeriod
+	members     map[string][]model.ReceiverMember
 	claimedKeys map[string]bool
 	progress    receivers.Progress
 	transport   receivers.JournaledTransport
+	source      *ReceiverNotificationSource
 }
 
 func (c *ClaimedReceiverDelivery) Transport() receivers.JournaledTransport { return c.transport }
@@ -152,7 +155,55 @@ func normalizeReceiverPrepared(d model.ReceiverPreparedDelivery, status string) 
 		}
 	}
 	d.Periods = periods
+	if d.Members != nil {
+		members := map[string][]model.ReceiverMember{}
+		for _, op := range operations {
+			values := append([]model.ReceiverMember{}, d.Members[op.Key]...)
+			if len(values) != len(periods[op.Key]) {
+				return d, model.ErrInvalidReceiver
+			}
+			byPeriod := map[model.ReceiverPeriod]model.ReceiverMember{}
+			firing := false
+			for _, member := range values {
+				if !member.Period.Valid() || member.Status != "firing" && member.Status != "resolved" || status == "resolved" && member.Status != "resolved" || status == "test" || member.ACKRevision < 0 || member.Status == "firing" && member.ACKRevision != 0 {
+					return d, model.ErrInvalidReceiver
+				}
+				if _, exists := byPeriod[member.Period]; exists {
+					return d, model.ErrInvalidReceiver
+				}
+				byPeriod[member.Period] = member
+				firing = firing || member.Status == "firing"
+			}
+			if status == "firing" && !firing {
+				return d, model.ErrInvalidReceiver
+			}
+			for _, p := range periods[op.Key] {
+				member, ok := byPeriod[p]
+				if !ok {
+					return d, model.ErrInvalidReceiver
+				}
+				members[op.Key] = append(members[op.Key], member)
+			}
+		}
+		for key := range d.Members {
+			if !seen[key] {
+				return d, model.ErrInvalidReceiver
+			}
+		}
+		d.Members = members
+	}
 	return d, nil
+}
+
+func preparedReceiverMembers(d model.ReceiverPreparedDelivery, key, status string) []model.ReceiverMember {
+	if d.Members != nil {
+		return d.Members[key]
+	}
+	result := []model.ReceiverMember{}
+	for _, p := range d.Periods[key] {
+		result = append(result, model.ReceiverMember{Period: p, Status: status})
+	}
+	return result
 }
 func (s *Store) receiverTargetKey(protocol, target string) string {
 	return s.receiverHash("operation-target", []string{protocol, target})
@@ -162,6 +213,19 @@ func (s *Store) receiverPeriodKey(p model.ReceiverPeriod) string {
 }
 
 func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.ReceiverDispatchInput) (model.ReceiverDispatch, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return model.ReceiverDispatch{}, err
+	}
+	defer tx.Rollback()
+	v, err := s.enqueueReceiverDispatchTx(ctx, tx, input, nil)
+	if err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func (s *Store) enqueueReceiverDispatchTx(ctx context.Context, tx *sql.Tx, input model.ReceiverDispatchInput, frozen *model.Receiver) (model.ReceiverDispatch, error) {
 	if input.ReceiverUID == "" || input.ReceiverVersion < 1 || input.Generation < 1 || input.GroupKey == "" || len(input.GroupKey) > 1024 || strings.ContainsRune(input.GroupKey, 0) || len(input.Deliveries) < 1 || len(input.Deliveries) > 32 || (input.Status != "firing" && input.Status != "resolved" && input.Status != "test") || len(input.DataSnapshot)+len(input.TemplateSnapshot) > 2*receivers.MaxPayloadBytes {
 		return model.ReceiverDispatch{}, model.ErrInvalidReceiver
 	}
@@ -206,17 +270,12 @@ func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.Receive
 		return model.ReceiverDispatch{}, model.ErrInvalidReceiver
 	}
 	sort.Slice(input.Deliveries, func(i, j int) bool { return input.Deliveries[i].IntegrationUID < input.Deliveries[j].IntegrationUID })
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return model.ReceiverDispatch{}, err
-	}
-	defer tx.Rollback()
 	// HMAC covers the actual frozen bundle, not creation time. Retry with the
 	// same generation remains idempotent even after a configuration edit.
 	freeze := receiverDispatchSnapshot{ReceiverVersion: input.ReceiverVersion, Data: input.DataSnapshot, Templates: input.TemplateSnapshot, Deliveries: input.Deliveries}
 	fingerprint := s.receiverHash("dispatch-fingerprint", []any{input.ReceiverUID, input.GroupKey, input.Generation, input.Status, freeze})
 	var existing model.ReceiverDispatch
-	err = tx.QueryRowContext(ctx, `SELECT id,receiver_uid,group_key,generation,fingerprint,status,state,created_at FROM alert_receiver_dispatches WHERE receiver_uid=? AND group_key=? AND generation=?`, input.ReceiverUID, input.GroupKey, input.Generation).Scan(&existing.ID, &existing.ReceiverUID, &existing.GroupKey, &existing.Generation, &existing.Fingerprint, &existing.Status, &existing.State, &existing.CreatedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id,receiver_uid,group_key,generation,fingerprint,status,state,created_at FROM alert_receiver_dispatches WHERE receiver_uid=? AND group_key=? AND generation=?`, input.ReceiverUID, input.GroupKey, input.Generation).Scan(&existing.ID, &existing.ReceiverUID, &existing.GroupKey, &existing.Generation, &existing.Fingerprint, &existing.Status, &existing.State, &existing.CreatedAt)
 	if err == nil {
 		if existing.Fingerprint != fingerprint {
 			return model.ReceiverDispatch{}, ErrReceiverGeneration
@@ -229,6 +288,9 @@ func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.Receive
 	receiver, err := receiverTx(ctx, tx, input.ReceiverUID)
 	if err != nil {
 		return model.ReceiverDispatch{}, err
+	}
+	if frozen != nil {
+		receiver = *frozen
 	}
 	if receiver.Version != input.ReceiverVersion {
 		return model.ReceiverDispatch{}, ErrReceiverConflict
@@ -275,16 +337,33 @@ func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.Receive
 		if d.Prepared.Protocol() != expected {
 			return model.ReceiverDispatch{}, model.ErrInvalidReceiver
 		}
-		if input.Status == "resolved" {
-			for _, op := range d.Prepared.Operations() {
-				for _, p := range d.Periods[op.Key] {
-					var count int
-					if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM alert_receiver_firing_receipts WHERE integration_uid=? AND channel_epoch=? AND period_key=? AND target_key=?`, i.UID, i.ChannelEpoch, s.receiverPeriodKey(p), s.receiverTargetKey(expected, op.Target)).Scan(&count); err != nil {
+		for _, op := range d.Prepared.Operations() {
+			for _, member := range preparedReceiverMembers(d, op.Key, input.Status) {
+				if member.Status != "resolved" {
+					continue
+				}
+				if i.DisableResolveMessage {
+					return model.ReceiverDispatch{}, ErrReceiverSuppressed
+				}
+				if member.ACKRevision > 0 && member.ACKRevision != d.Revision {
+					old, err := s.integrationSnapshotTx(ctx, tx, i.UID, member.ACKRevision)
+					if err != nil {
 						return model.ReceiverDispatch{}, err
 					}
-					if count != 1 {
+					equivalent, err := s.receiverSourceChannelEquivalentTx(ctx, tx, i, old.Integration)
+					if err != nil {
+						return model.ReceiverDispatch{}, err
+					}
+					if !equivalent {
 						return model.ReceiverDispatch{}, ErrReceiverUnacknowledged
 					}
+				}
+				var count int
+				if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM alert_receiver_firing_receipts f JOIN alert_receiver_deliveries ack ON ack.id=f.delivery_id WHERE f.integration_uid=? AND f.channel_epoch=? AND f.period_key=? AND f.target_key=? AND (?=0 OR ack.revision=?)`, i.UID, i.ChannelEpoch, s.receiverPeriodKey(member.Period), s.receiverTargetKey(expected, op.Target), member.ACKRevision, member.ACKRevision).Scan(&count); err != nil {
+					return model.ReceiverDispatch{}, err
+				}
+				if count != 1 {
+					return model.ReceiverDispatch{}, ErrReceiverUnacknowledged
 				}
 			}
 		}
@@ -306,7 +385,7 @@ func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.Receive
 	}
 	for _, d := range input.Deliveries {
 		i := integrationMap[d.IntegrationUID]
-		snapshot := receiverPreparedSnapshot{d.Prepared, d.Periods}
+		snapshot := receiverPreparedSnapshot{Prepared: d.Prepared, Periods: d.Periods, Members: d.Members}
 		deliveryFingerprint := s.receiverHash("delivery-fingerprint", []any{fingerprint, i.UID, i.Revision, i.ChannelEpoch, snapshot})
 		result, err = tx.ExecContext(ctx, `INSERT INTO alert_receiver_deliveries(dispatch_id,integration_uid,revision,channel_epoch,fingerprint,next_attempt_at,created_at,sealed) VALUES(?,?,?,?,?,?,?,X'')`, id, i.UID, i.Revision, i.ChannelEpoch, deliveryFingerprint, input.CreatedAt, input.CreatedAt)
 		if err != nil {
@@ -330,7 +409,7 @@ func (s *Store) EnqueueReceiverDispatch(ctx context.Context, input model.Receive
 		}
 	}
 	value := model.ReceiverDispatch{ID: id, ReceiverUID: input.ReceiverUID, GroupKey: input.GroupKey, Generation: input.Generation, Fingerprint: fingerprint, Status: input.Status, State: "pending", CreatedAt: input.CreatedAt}
-	return value, tx.Commit()
+	return value, nil
 }
 
 const receiverDeliverySelect = `SELECT d.id,d.dispatch_id,x.receiver_uid,d.integration_uid,d.revision,d.channel_epoch,x.group_key,x.generation,d.fingerprint,x.status,d.state,d.attempts,d.next_attempt_at,d.lease_until,d.created_at,d.completed_at FROM alert_receiver_deliveries d JOIN alert_receiver_dispatches x ON x.id=d.dispatch_id `
@@ -379,6 +458,10 @@ func (s *Store) ReceiverOperations(ctx context.Context, deliveryID int64) ([]mod
 // ClaimReceiverDelivery reclaims expired leases with a new token. It never
 // reclaims persisted sent operations, including ACKs committed before a crash.
 func (s *Store) ClaimReceiverDelivery(ctx context.Context, at time.Time, lease time.Duration) (*ClaimedReceiverDelivery, error) {
+	return s.claimReceiverDelivery(ctx, at, lease, nil)
+}
+
+func (s *Store) claimReceiverDelivery(ctx context.Context, at time.Time, lease time.Duration, source *ReceiverNotificationSource) (*ClaimedReceiverDelivery, error) {
 	if at.UnixMilli() < 1 || lease < receivers.MaxTimeout+5*time.Second || lease > 5*time.Minute {
 		return nil, model.ErrInvalidReceiver
 	}
@@ -393,7 +476,7 @@ func (s *Store) ClaimReceiverDelivery(ctx context.Context, at time.Time, lease t
 		if err := retryCtx.Err(); err != nil {
 			return nil, err
 		}
-		claim, err := s.claimReceiverDeliveryOnce(retryCtx, at.Add(time.Since(started)), lease)
+		claim, err := s.claimReceiverDeliveryForSourceOnce(retryCtx, at.Add(time.Since(started)), lease, source)
 		if err == nil {
 			return claim, nil
 		}
@@ -415,12 +498,33 @@ func (s *Store) ClaimReceiverDelivery(ctx context.Context, at time.Time, lease t
 }
 
 func (s *Store) claimReceiverDeliveryOnce(ctx context.Context, at time.Time, lease time.Duration) (*ClaimedReceiverDelivery, error) {
+	return s.claimReceiverDeliveryForSourceOnce(ctx, at, lease, nil)
+}
+
+func (s *Store) claimReceiverDeliveryForSourceOnce(ctx context.Context, at time.Time, lease time.Duration, source *ReceiverNotificationSource) (*ClaimedReceiverDelivery, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	v, err := scanReceiverDelivery(tx.QueryRowContext(ctx, receiverDeliverySelect+`WHERE ((d.state IN ('pending','partial') AND d.next_attempt_at<=?) OR (d.state='sending' AND d.lease_until<=?)) AND NOT EXISTS(SELECT 1 FROM alert_receiver_deliveries p JOIN alert_receiver_dispatches y ON y.id=p.dispatch_id WHERE p.integration_uid=d.integration_uid AND y.group_key=x.group_key AND p.id<d.id AND p.state IN ('pending','partial','sending')) ORDER BY d.id LIMIT 1`, at.UnixMilli(), at.UnixMilli()))
+	query := receiverDeliverySelect + `WHERE ((d.state IN ('pending','partial') AND d.next_attempt_at<=?) OR (d.state='sending' AND d.lease_until<=?)) AND NOT EXISTS(SELECT 1 FROM alert_receiver_deliveries p JOIN alert_receiver_dispatches y ON y.id=p.dispatch_id WHERE p.integration_uid=d.integration_uid AND y.group_key=x.group_key AND p.id<d.id AND p.state IN ('pending','partial','sending'))`
+	args := []any{at.UnixMilli(), at.UnixMilli()}
+	if source == nil {
+		query += ` AND NOT EXISTS(SELECT 1 FROM alert_receiver_source_dispatches l WHERE l.dispatch_id=x.id)`
+	} else {
+		if err = s.validateReceiverSourceTx(ctx, tx, source, at.UnixMilli()); err != nil {
+			return nil, err
+		}
+		// A parent may contain many destinations. Extend the SAME parent claim
+		// while reserving a child so its transport deadline remains inside the
+		// durable parent lease; no second scheduler or ownership token is created.
+		if _, err = tx.ExecContext(ctx, `UPDATE alert_notification_outbox SET next_attempt_at=? WHERE id=? AND state='sending' AND attempts=? AND last_attempt_at=?`, at.Add(time.Minute).UnixMilli(), source.ID, source.lease.Attempts, source.lease.LastAttemptAt); err != nil {
+			return nil, err
+		}
+		query += ` AND EXISTS(SELECT 1 FROM alert_receiver_source_dispatches l WHERE l.dispatch_id=x.id AND l.notification_id=?)`
+		args = append(args, source.ID)
+	}
+	v, err := scanReceiverDelivery(tx.QueryRowContext(ctx, query+` ORDER BY d.id LIMIT 1`, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +556,7 @@ func (s *Store) claimReceiverDeliveryOnce(ctx context.Context, at time.Time, lea
 	if err != nil {
 		return nil, err
 	}
-	c := &ClaimedReceiverDelivery{ReceiverDelivery: v, token: uuid.NewString(), periods: snapshot.Periods, claimedKeys: map[string]bool{}, progress: receivers.Progress{}, transport: transport}
+	c := &ClaimedReceiverDelivery{ReceiverDelivery: v, token: uuid.NewString(), periods: snapshot.Periods, members: snapshot.Members, claimedKeys: map[string]bool{}, progress: receivers.Progress{}, transport: transport, source: source}
 	committed := false
 	defer func() {
 		if !committed {
@@ -532,7 +636,7 @@ func (s *Store) claimReceiverDeliveryOnce(ctx context.Context, at time.Time, lea
 	return c, nil
 }
 
-func validateReceiverClaimTx(ctx context.Context, tx *sql.Tx, c *ClaimedReceiverDelivery, at int64) error {
+func (s *Store) validateReceiverClaimTx(ctx context.Context, tx *sql.Tx, c *ClaimedReceiverDelivery, at int64) error {
 	if c == nil || c.token == "" || at < 1 {
 		return ErrReceiverLease
 	}
@@ -543,6 +647,23 @@ func validateReceiverClaimTx(ctx context.Context, tx *sql.Tx, c *ClaimedReceiver
 	}
 	if count != 1 {
 		return ErrReceiverLease
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM alert_receiver_source_dispatches WHERE dispatch_id=?`, c.DispatchID).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		if c.source == nil {
+			return ErrReceiverLease
+		}
+		if err = s.validateReceiverSourceTx(ctx, tx, c.source, at); err != nil {
+			return err
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM alert_receiver_source_dispatches WHERE dispatch_id=? AND notification_id=?`, c.DispatchID, c.source.ID).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrReceiverLease
+		}
 	}
 	var raw string
 	if err = tx.QueryRowContext(ctx, `SELECT r.config FROM alert_receiver_integrations i JOIN alert_receivers x ON x.uid=i.receiver_uid JOIN alert_receiver_integration_revisions r ON r.uid=i.uid AND r.revision=i.revision WHERE i.uid=? AND i.deleted=0 AND x.deleted=0`, c.IntegrationUID).Scan(&raw); err != nil {
@@ -558,6 +679,15 @@ func validateReceiverClaimTx(ctx context.Context, tx *sql.Tx, c *ClaimedReceiver
 	if current.Disabled || c.Status == "resolved" && current.DisableResolveMessage {
 		return ErrReceiverSuppressed
 	}
+	if current.DisableResolveMessage {
+		for key := range c.claimedKeys {
+			for _, member := range c.members[key] {
+				if member.Status == "resolved" {
+					return ErrReceiverSuppressed
+				}
+			}
+		}
+	}
 	return nil
 }
 func (s *Store) ValidateReceiverClaim(ctx context.Context, c *ClaimedReceiverDelivery, at time.Time) error {
@@ -566,7 +696,7 @@ func (s *Store) ValidateReceiverClaim(ctx context.Context, c *ClaimedReceiverDel
 		return err
 	}
 	defer tx.Rollback()
-	return validateReceiverClaimTx(ctx, tx, c, at.UnixMilli())
+	return s.validateReceiverClaimTx(ctx, tx, c, at.UnixMilli())
 }
 
 var receiverOutcomeCode = regexp.MustCompile(`^[a-z_]{1,64}$`)
@@ -577,7 +707,7 @@ func validReceiverOutcome(out receivers.Outcome) bool {
 }
 
 func (s *Store) checkpointReceiverTx(ctx context.Context, tx *sql.Tx, c *ClaimedReceiverDelivery, outcomes []receivers.Outcome, at int64) error {
-	if err := validateReceiverClaimTx(ctx, tx, c, at); err != nil {
+	if err := s.validateReceiverClaimTx(ctx, tx, c, at); err != nil {
 		return err
 	}
 	seen := map[string]bool{}
@@ -603,7 +733,11 @@ func (s *Store) checkpointReceiverTx(ctx context.Context, tx *sql.Tx, c *Claimed
 			return err
 		}
 		if c.Status == "firing" {
-			for _, p := range c.periods[out.OperationKey] {
+			for _, member := range preparedReceiverMembers(model.ReceiverPreparedDelivery{Periods: c.periods, Members: c.members}, out.OperationKey, c.Status) {
+				if member.Status != "firing" {
+					continue
+				}
+				p := member.Period
 				if _, err := tx.ExecContext(ctx, `INSERT INTO alert_receiver_firing_receipts VALUES(?,?,?,?,?,?,?) ON CONFLICT(integration_uid,channel_epoch,period_key,target_key) DO NOTHING`, c.IntegrationUID, c.ChannelEpoch, s.receiverPeriodKey(p), target, c.ID, out.OperationKey, at); err != nil {
 					return err
 				}
@@ -719,7 +853,7 @@ func (s *Store) FinishReceiverDelivery(ctx context.Context, c *ClaimedReceiverDe
 	}
 	defer tx.Rollback()
 	now := at.UnixMilli()
-	if err = validateReceiverClaimTx(ctx, tx, c, now); err != nil {
+	if err = s.validateReceiverClaimTx(ctx, tx, c, now); err != nil {
 		return err
 	}
 	indexed := map[string]receivers.Outcome{}
@@ -874,7 +1008,7 @@ func (s *Store) beginReceiverSendOnce(ctx context.Context, c *ClaimedReceiverDel
 		return nil, "", err
 	}
 	defer tx.Rollback()
-	if err = validateReceiverClaimTx(ctx, tx, c, at.UnixMilli()); err != nil {
+	if err = s.validateReceiverClaimTx(ctx, tx, c, at.UnixMilli()); err != nil {
 		return nil, "", err
 	}
 	var currentClaim, currentSend string
@@ -929,7 +1063,7 @@ func (s *Store) beginReceiverSendOnce(ctx context.Context, c *ClaimedReceiverDel
 	if err = s.openReceiver("delivery", fmt.Sprint(c.ID), c.Revision, sealed, &snapshot); err != nil {
 		return nil, "", err
 	}
-	work := &ClaimedReceiverDelivery{ReceiverDelivery: c.ReceiverDelivery, token: c.token, transport: c.transport, periods: snapshot.Periods, claimedKeys: map[string]bool{}, progress: receivers.Progress{}}
+	work := &ClaimedReceiverDelivery{ReceiverDelivery: c.ReceiverDelivery, token: c.token, transport: c.transport, periods: snapshot.Periods, members: snapshot.Members, claimedKeys: map[string]bool{}, progress: receivers.Progress{}, source: c.source}
 	states := map[string]string{}
 	rows, err := tx.QueryContext(ctx, `SELECT op_key,state,receipt FROM alert_receiver_operations WHERE delivery_id=?`, c.ID)
 	if err != nil {

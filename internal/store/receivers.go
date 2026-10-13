@@ -28,6 +28,8 @@ func (s *Store) InitializeReceiverSchema(ctx context.Context) error {
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_receiver_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,migrated INTEGER NOT NULL);
  INSERT OR IGNORE INTO alert_receiver_schema VALUES(1,1,0);
+ CREATE TABLE IF NOT EXISTS alert_receiver_ownership(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL CHECK(mode IN ('legacy','native')),epoch INTEGER NOT NULL);
+ INSERT OR IGNORE INTO alert_receiver_ownership VALUES(1,'legacy',1);
  CREATE TABLE IF NOT EXISTS alert_receivers(uid TEXT PRIMARY KEY,version INTEGER NOT NULL,name TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,config TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS alert_smtp_profiles(uid TEXT PRIMARY KEY,version INTEGER NOT NULL,name TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,config TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS alert_smtp_profile_revisions(uid TEXT NOT NULL REFERENCES alert_smtp_profiles(uid),revision INTEGER NOT NULL,config TEXT NOT NULL,sealed BLOB NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(uid,revision));
@@ -41,6 +43,14 @@ func (s *Store) InitializeReceiverSchema(ctx context.Context) error {
  CREATE TABLE IF NOT EXISTS alert_receiver_operations(delivery_id INTEGER NOT NULL REFERENCES alert_receiver_deliveries(id),op_key TEXT NOT NULL,target_key TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,max_attempts INTEGER NOT NULL DEFAULT 8,next_attempt_at INTEGER NOT NULL,code TEXT NOT NULL DEFAULT '',status_code INTEGER NOT NULL DEFAULT 0,receipt TEXT NOT NULL DEFAULT '',PRIMARY KEY(delivery_id,op_key));
  CREATE TABLE IF NOT EXISTS alert_receiver_firing_receipts(integration_uid TEXT NOT NULL,channel_epoch INTEGER NOT NULL,period_key TEXT NOT NULL,target_key TEXT NOT NULL,delivery_id INTEGER NOT NULL REFERENCES alert_receiver_deliveries(id),op_key TEXT NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(integration_uid,channel_epoch,period_key,target_key));
  CREATE TABLE IF NOT EXISTS alert_receiver_legacy_outbox(legacy_id INTEGER PRIMARY KEY,receiver_uid TEXT NOT NULL REFERENCES alert_receivers(uid),state TEXT NOT NULL,sealed BLOB NOT NULL);`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_receiver_sources(notification_id INTEGER PRIMARY KEY,receiver_uid TEXT NOT NULL REFERENCES alert_receivers(uid),receiver_version INTEGER NOT NULL,owner_epoch INTEGER NOT NULL,group_key TEXT NOT NULL,generation INTEGER NOT NULL,status TEXT NOT NULL,fingerprint TEXT NOT NULL,sealed BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_receiver_source_dispatches(notification_id INTEGER NOT NULL REFERENCES alert_receiver_sources(notification_id),dispatch_id INTEGER NOT NULL UNIQUE REFERENCES alert_receiver_dispatches(id),PRIMARY KEY(notification_id,dispatch_id));`)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alert_receiver_source_preparations(notification_id INTEGER PRIMARY KEY REFERENCES alert_receiver_sources(notification_id),fingerprint TEXT NOT NULL)`)
+	}
 	if err != nil {
 		return err
 	}
@@ -97,6 +107,7 @@ func (s *Store) InitializeReceiverSchema(ctx context.Context) error {
 		{`SELECT CAST(id AS TEXT),generation,sealed FROM alert_receiver_dispatches`, "dispatch"},
 		{`SELECT CAST(id AS TEXT),revision,sealed FROM alert_receiver_deliveries`, "delivery"},
 		{`SELECT CAST(legacy_id AS TEXT),0,sealed FROM alert_receiver_legacy_outbox`, "legacy-outbox"},
+		{`SELECT CAST(notification_id AS TEXT),owner_epoch,sealed FROM alert_receiver_sources`, "notification-source"},
 	} {
 		rows, e := tx.QueryContext(ctx, spec.query)
 		if e != nil {

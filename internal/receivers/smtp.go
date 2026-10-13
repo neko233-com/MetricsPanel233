@@ -65,6 +65,21 @@ type EmailContent struct {
 	ReplyTo     []string
 	Attachments []EmailAttachment
 }
+
+// EmailRecipients exposes the validated envelope destinations before content
+// rendering, so grouped recovery membership can be selected per destination.
+func EmailRecipients(settings EmailSettings) ([]string, error) {
+	addresses, err := emailAddresses(settings)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		result = append(result, address.Address)
+	}
+	return result, nil
+}
+
 type EmailAttachment struct {
 	Name        string
 	ContentType string

@@ -265,6 +265,10 @@ func payloadForGroup(g notificationGroup, members []groupMember, orgID int64) (m
 }
 
 func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, suppressor *notificationSuppressor) error {
+	ownership, err := notificationQueueOwnershipTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	orgID, err := notificationOrganizationTx(ctx, tx)
 	if err != nil {
 		return err
@@ -338,7 +342,18 @@ func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, su
 			return err
 		}
 		for _, member := range all {
-			if member.Status == "resolved" && !member.Notified {
+			acknowledged := member.Notified
+			if member.Status == "resolved" && ownership.Mode == "native" {
+				producer, ok := ctx.Value(receiverProducerContextKey{}).(*Store)
+				if !ok {
+					return ErrReceiverSourceChanged
+				}
+				acknowledged, err = producer.receiverAnyFiringACKTx(ctx, tx, g.Receiver, model.ReceiverPeriod{RuleUID: member.Rule, InstanceKey: member.Key, StartedAt: member.StartedAt})
+				if err != nil {
+					return err
+				}
+			}
+			if member.Status == "resolved" && !acknowledged {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM alert_notification_group_members WHERE group_key=? AND rule_uid=? AND instance_key=? AND started_at=?`, g.Key, member.Rule, member.Key, member.StartedAt); err != nil {
 					return err
 				}
@@ -432,12 +447,18 @@ func reconcileNotificationGroupsTx(ctx context.Context, tx *sql.Tx, at int64, su
 			}
 			continue
 		}
-		id, err := insertNotificationTx(ctx, tx, 0, g.Receiver, visible[0].Rule, visible[0].Key, payload["status"].(string), payload, at)
+		// Freeze the native source only after its exact membership row exists,
+		// still in this producer transaction. Ungrouped producers freeze at insert.
+		groupProducer := context.WithValue(ctx, receiverPendingGroupSourceContextKey{}, true)
+		id, err := insertNotificationTx(groupProducer, tx, 0, g.Receiver, visible[0].Rule, visible[0].Key, payload["status"].(string), payload, at)
 		if err != nil {
 			return err
 		}
 		raw, _ := json.Marshal(visible)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO alert_notification_group_deliveries(notification_id,group_key,generation,members,payload_hash,muted_until) VALUES(?,?,?,?,?,?)`, id, g.Key, g.Generation, string(raw), hash, mutedUntil); err != nil {
+			return err
+		}
+		if err := snapshotReceiverNotificationSourceTx(ctx, tx, id); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE alert_notification_groups SET inflight_id=?,dirty=0 WHERE group_key=?`, id, g.Key); err != nil {
