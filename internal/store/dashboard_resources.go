@@ -103,11 +103,19 @@ func (s *Store) CreateFolder(ctx context.Context, f model.Folder) (model.Folder,
 		return f, err
 	}
 	defer tx.Rollback()
-	if err = validateFolderParent(ctx, tx, f.UID, f.ParentUID); err != nil {
+	f, err = createFolderTx(ctx, tx, f)
+	if err != nil {
+		return f, err
+	}
+	return f, tx.Commit()
+}
+
+func createFolderTx(ctx context.Context, tx *sql.Tx, f model.Folder) (model.Folder, error) {
+	if err := validateFolderParent(ctx, tx, f.UID, f.ParentUID); err != nil {
 		return f, err
 	}
 	now := time.Now().UnixMilli()
-	_, err = tx.ExecContext(ctx, `INSERT INTO folders(uid,title,parent_uid,description,version,created,updated) VALUES(?,?,?,?,1,?,?)`, f.UID, f.Title, f.ParentUID, f.Description, now, now)
+	_, err := tx.ExecContext(ctx, `INSERT INTO folders(uid,title,parent_uid,description,version,created,updated) VALUES(?,?,?,?,1,?,?)`, f.UID, f.Title, f.ParentUID, f.Description, now, now)
 	if err != nil {
 		return f, resourceConstraint(err)
 	}
@@ -115,7 +123,7 @@ func (s *Store) CreateFolder(ctx context.Context, f model.Folder) (model.Folder,
 	if err != nil {
 		return f, err
 	}
-	return f, tx.Commit()
+	return f, nil
 }
 func (s *Store) UpdateFolder(ctx context.Context, f model.Folder, overwrite bool) (model.Folder, error) {
 	if err := f.Validate(); err != nil {
@@ -126,6 +134,14 @@ func (s *Store) UpdateFolder(ctx context.Context, f model.Folder, overwrite bool
 		return f, err
 	}
 	defer tx.Rollback()
+	f, err = updateFolderTx(ctx, tx, f, overwrite)
+	if err != nil {
+		return f, err
+	}
+	return f, tx.Commit()
+}
+
+func updateFolderTx(ctx context.Context, tx *sql.Tx, f model.Folder, overwrite bool) (model.Folder, error) {
 	old, err := folderByUID(ctx, tx, f.UID)
 	if err != nil {
 		return f, err
@@ -141,7 +157,7 @@ func (s *Store) UpdateFolder(ctx context.Context, f model.Folder, overwrite bool
 	if err != nil {
 		return f, err
 	}
-	return f, tx.Commit()
+	return f, nil
 }
 func (s *Store) MoveFolder(ctx context.Context, uid, parent string) (model.Folder, error) {
 	parent = model.RootFolderUID(parent)
@@ -153,6 +169,15 @@ func (s *Store) MoveFolder(ctx context.Context, uid, parent string) (model.Folde
 		return model.Folder{}, err
 	}
 	defer tx.Rollback()
+	f, err := moveFolderTx(ctx, tx, uid, parent)
+	if err != nil {
+		return f, err
+	}
+	return f, tx.Commit()
+}
+
+func moveFolderTx(ctx context.Context, tx *sql.Tx, uid, parent string) (model.Folder, error) {
+	parent = model.RootFolderUID(parent)
 	f, err := folderByUID(ctx, tx, uid)
 	if err != nil {
 		return f, err
@@ -168,7 +193,7 @@ func (s *Store) MoveFolder(ctx context.Context, uid, parent string) (model.Folde
 	if err != nil {
 		return f, err
 	}
-	return f, tx.Commit()
+	return f, nil
 }
 func (s *Store) DeleteFolder(ctx context.Context, uid string, forceDeleteRules bool) error {
 	return s.DeleteFolderWithRuleGate(ctx, uid, forceDeleteRules, nil)
@@ -185,6 +210,34 @@ func (s *Store) DeleteFolderWithRuleGate(ctx context.Context, uid string, forceD
 		return err
 	}
 	defer tx.Rollback()
+	heldGate, release := holdFolderRuleGate(gate)
+	defer func() { _ = tx.Rollback(); release() }()
+	if err = deleteFolderTx(ctx, tx, uid, forceDeleteRules, heldGate); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Keep the scheduler paused until the owning transaction has committed or
+// rolled back, even when the deletion body is shared by multiple entry points.
+func holdFolderRuleGate(gate func([]string) (func(), error)) (func([]string) (func(), error), func()) {
+	if gate == nil {
+		return nil, func() {}
+	}
+	var release func()
+	return func(uids []string) (func(), error) {
+			var err error
+			release, err = gate(uids)
+			return func() {}, err
+		}, func() {
+			if release != nil {
+				release()
+			}
+		}
+}
+
+func deleteFolderTx(ctx context.Context, tx *sql.Tx, uid string, forceDeleteRules bool, gate func([]string) (func(), error)) error {
+	var err error
 	if _, err = folderByUID(ctx, tx, uid); err != nil {
 		return err
 	}
@@ -243,7 +296,7 @@ func (s *Store) DeleteFolderWithRuleGate(ctx context.Context, uid string, forceD
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) DashboardByGrafanaID(ctx context.Context, id int64) (model.Dashboard, error) {

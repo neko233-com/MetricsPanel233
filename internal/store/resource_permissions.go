@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS resource_acl_revision_ledger(
 org_id INTEGER NOT NULL CHECK(org_id>0),resource_kind TEXT NOT NULL CHECK(resource_kind IN ('folder','dashboard')),resource_uid TEXT NOT NULL,
 last_version INTEGER NOT NULL CHECK(typeof(last_version)='integer' AND last_version>0),
 PRIMARY KEY(org_id,resource_kind,resource_uid));
+CREATE TABLE IF NOT EXISTS resource_acl_migration(
+id INTEGER PRIMARY KEY CHECK(id=1),org_id INTEGER NOT NULL CHECK(org_id>0),schema_version INTEGER NOT NULL CHECK(schema_version>0),
+phase TEXT NOT NULL CHECK(phase IN ('running','ready')),cursor_kind TEXT NOT NULL,cursor_uid TEXT NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS resource_acl_migration_owner BEFORE INSERT ON resource_acl_migration WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS resource_acl_migration_owner_update BEFORE UPDATE OF org_id ON resource_acl_migration WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_revision_owner BEFORE INSERT ON resource_acl_revision_ledger WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_revision_owner_update BEFORE UPDATE OF org_id ON resource_acl_revision_ledger WHEN NEW.org_id!=(SELECT organization_id FROM store_identity WHERE id=1) BEGIN SELECT RAISE(ABORT,'permission organization mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS resource_acl_revision_monotonic BEFORE UPDATE OF last_version ON resource_acl_revision_ledger WHEN NEW.last_version<OLD.last_version BEGIN SELECT RAISE(ABORT,'permission revision cannot decrease'); END;
@@ -269,22 +274,26 @@ func (s *Store) InitializeResourcePermissions(ctx context.Context, ref model.Per
 	if existing, err := s.ResourcePermissions(ctx, ref); !errors.Is(err, ErrPermissionUninitialized) {
 		return existing, err
 	}
-	var creatorGeneration int64
-	if seed.Creator != nil {
-		if seed.Creator.Kind != model.PermissionUser && seed.Creator.Kind != model.PermissionServiceAccount {
-			return model.ResourcePermissionDocument{}, errors.New("only a human or service account can receive creator permissions")
-		}
-		resolved, err := validatePermissionGrants(ctx, ref.OrgID, []model.ResourcePermissionGrant{{Subject: *seed.Creator, Permission: model.PermissionAdmin}}, resolver)
-		if err != nil {
-			return model.ResourcePermissionDocument{}, err
-		}
-		creatorGeneration = resolved[0].IdentityGeneration
+	prepared, err := preparePermissionSeed(ctx, ref.OrgID, seed, resolver)
+	if err != nil {
+		return model.ResourcePermissionDocument{}, err
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return model.ResourcePermissionDocument{}, err
 	}
 	defer tx.Rollback()
+	doc, err := initializeResourcePermissionsTx(ctx, tx, ref, prepared)
+	if err != nil {
+		return doc, err
+	}
+	return doc, tx.Commit()
+}
+
+func initializeResourcePermissionsTx(ctx context.Context, tx *sql.Tx, ref model.PermissionResource, prepared preparedPermissionSeed) (model.ResourcePermissionDocument, error) {
+	if err := ref.Validate(); err != nil {
+		return model.ResourcePermissionDocument{}, err
+	}
 	if doc, err := permissionDocument(ctx, tx, ref); !errors.Is(err, ErrPermissionUninitialized) {
 		return doc, err
 	}
@@ -298,8 +307,8 @@ func (s *Store) InitializeResourcePermissions(ctx context.Context, ref model.Per
 			model.ResourcePermissionGrant{Subject: model.ResourcePermissionSubject{Kind: model.PermissionRole, Role: "Viewer"}, Permission: model.PermissionView},
 			model.ResourcePermissionGrant{Subject: model.ResourcePermissionSubject{Kind: model.PermissionRole, Role: "Editor"}, Permission: model.PermissionEdit})
 	}
-	if seed.Creator != nil && !seed.Provisioned && (parent == "" || seed.Policy == model.PermissionLegacyDefaults) {
-		grants = append(grants, model.ResourcePermissionGrant{Subject: *seed.Creator, Permission: model.PermissionAdmin, IdentityGeneration: creatorGeneration})
+	if prepared.creator != nil && !prepared.provisioned && (parent == "" || prepared.policy == model.PermissionLegacyDefaults) {
+		grants = append(grants, model.ResourcePermissionGrant{Subject: *prepared.creator, Permission: model.PermissionAdmin, IdentityGeneration: prepared.generation})
 	}
 	now := time.Now().UnixMilli()
 	version, err := nextPermissionVersion(ctx, tx, ref)
@@ -316,7 +325,7 @@ func (s *Store) InitializeResourcePermissions(ctx context.Context, ref model.Per
 	if err != nil {
 		return doc, err
 	}
-	return doc, tx.Commit()
+	return doc, nil
 }
 
 // ReplaceResourcePermissions changes only direct ACL data, without authorizing
