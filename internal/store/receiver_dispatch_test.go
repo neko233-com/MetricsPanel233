@@ -709,7 +709,7 @@ func TestReceiverIndependentStoreConnectionsCannotDoubleClaim(t *testing.T) {
 	c := <-claims
 	defer c.Close()
 	for err := range failures {
-		assert.True(t, errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "SQLITE_BUSY"), "SQLite transaction promotion may ask a competing worker to retry, but never returns a duplicate claim: %v", err)
+		require.ErrorIs(t, err, sql.ErrNoRows, "the whole transaction retries contention; only one committed winner receives a claim")
 	}
 	for _, db := range stores {
 		_, err := db.ClaimReceiverDelivery(ctx, at.Add(time.Second), time.Minute)
@@ -1167,4 +1167,92 @@ func TestReceiverSafeSendSQLiteContentionHonorsCallerCancellation(t *testing.T) 
 	_, err = s.SendClaimedReceiverDelivery(ctx, c)
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), hits.Load())
+}
+
+func TestReceiverClaimRetriesSQLiteContentionAndHonorsCancellation(t *testing.T) {
+	s := receiverStore(t)
+	ctx := context.Background()
+	r, err := s.SaveReceiver(ctx, receiverSlackInput("claim-contention", "Claim contention", "https://example.test/hook"))
+	require.NoError(t, err)
+	at := time.Now()
+	_, err = s.EnqueueReceiverDispatch(ctx, queueSlack(t, s, r, 1, "firing", at, model.ReceiverPeriod{RuleUID: "rule", InstanceKey: "instance", StartedAt: at.UnixMilli()}))
+	require.NoError(t, err)
+	other, err := Open(s.Path)
+	require.NoError(t, err)
+	defer other.DB.Close()
+	writer, err := other.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer writer.Rollback()
+	_, err = writer.ExecContext(ctx, `UPDATE alert_receiver_deliveries SET attempts=attempts WHERE id=(SELECT min(id) FROM alert_receiver_deliveries)`)
+	require.NoError(t, err)
+	canceled, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	claim, err := s.ClaimReceiverDelivery(canceled, at, time.Minute)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, claim)
+	assert.Less(t, time.Since(started), time.Second)
+	require.NoError(t, writer.Rollback())
+	operations, err := s.ReceiverOperations(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), operations[0].Attempts, "canceled WAL promotion did not consume an attempt")
+	// Release a second genuine writer after contention has reached the wrapper.
+	writer, err = other.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer writer.Rollback()
+	_, err = writer.ExecContext(ctx, `UPDATE alert_receiver_deliveries SET attempts=attempts WHERE id=1`)
+	require.NoError(t, err)
+	_, err = s.DB.Exec(`PRAGMA busy_timeout=0`)
+	require.NoError(t, err)
+	type result struct {
+		claim *ClaimedReceiverDelivery
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { c, err := s.ClaimReceiverDelivery(ctx, at, time.Minute); done <- result{c, err} }()
+	select {
+	case result := <-done:
+		if result.claim != nil {
+			result.claim.Close()
+		}
+		t.Fatalf("claim returned before writer released: %v", result.err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	require.NoError(t, writer.Commit())
+	select {
+	case result := <-done:
+		require.NoError(t, result.err)
+		require.NotNil(t, result.claim)
+		defer result.claim.Close()
+	case <-time.After(3 * time.Second):
+		t.Fatal("claim did not progress after SQLite lock released")
+	}
+	operations, err = s.ReceiverOperations(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), operations[0].Attempts)
+	_, err = s.ClaimReceiverDelivery(ctx, at, time.Minute)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestReceiverSQLiteExtendedBusySnapshotIsTypedContention(t *testing.T) {
+	s := receiverStore(t)
+	ctx := context.Background()
+	_, err := s.DB.Exec(`CREATE TABLE receiver_retry_snapshot_probe(value INTEGER NOT NULL);INSERT INTO receiver_retry_snapshot_probe VALUES(0)`)
+	require.NoError(t, err)
+	other, err := Open(s.Path)
+	require.NoError(t, err)
+	defer other.DB.Close()
+	reader, err := s.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer reader.Rollback()
+	var value int
+	require.NoError(t, reader.QueryRowContext(ctx, `SELECT value FROM receiver_retry_snapshot_probe`).Scan(&value))
+	_, err = other.DB.Exec(`UPDATE receiver_retry_snapshot_probe SET value=1`)
+	require.NoError(t, err)
+	_, err = reader.ExecContext(ctx, `UPDATE receiver_retry_snapshot_probe SET value=2`)
+	require.Error(t, err)
+	var code interface{ Code() int }
+	require.ErrorAs(t, err, &code)
+	assert.Equal(t, 517, code.Code(), "real WAL read snapshot promotion returns BUSY_SNAPSHOT")
+	assert.True(t, receiverSQLiteContention(err), "retry classification uses typed primary code, never message text")
 }

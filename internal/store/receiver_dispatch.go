@@ -382,6 +382,39 @@ func (s *Store) ClaimReceiverDelivery(ctx context.Context, at time.Time, lease t
 	if at.UnixMilli() < 1 || lease < receivers.MaxTimeout+5*time.Second || lease > 5*time.Minute {
 		return nil, model.ErrInvalidReceiver
 	}
+	// Like execution-latch acquisition, claiming may lose a WAL read-to-write
+	// promotion race (BUSY_SNAPSHOT=517). Roll back the entire losing attempt;
+	// only the committed winner consumes operation attempts or owns a token.
+	retryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	delay := 5 * time.Millisecond
+	for {
+		if err := retryCtx.Err(); err != nil {
+			return nil, err
+		}
+		claim, err := s.claimReceiverDeliveryOnce(retryCtx, at.Add(time.Since(started)), lease)
+		if err == nil {
+			return claim, nil
+		}
+		if contextErr := retryCtx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		if !receiverSQLiteContention(err) {
+			return nil, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-retryCtx.Done():
+			timer.Stop()
+			return nil, retryCtx.Err()
+		case <-timer.C:
+		}
+		delay = min(2*delay, 50*time.Millisecond)
+	}
+}
+
+func (s *Store) claimReceiverDeliveryOnce(ctx context.Context, at time.Time, lease time.Duration) (*ClaimedReceiverDelivery, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
