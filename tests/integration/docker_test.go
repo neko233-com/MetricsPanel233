@@ -603,13 +603,10 @@ func (e environment) verifyAlertGraph(address string, restarted bool) {
 		assert.Equal(e.t, "Firing", view.Runtime.Instances[0].State)
 		assert.Contains(e.t, string(view.Runtime.Instances[0].Matches), `"value":"2"`)
 	}
-	status, raw, err := e.request(address, "POST", "/api/v1/alerts/rules/"+uid+"/evaluate", nil)
-	require.NoError(e.t, err)
-	if status == 409 {
-		raw = e.must(address, "GET", "/api/v1/alerts/rules/"+uid, nil)
-	} else {
-		require.Equal(e.t, 200, status, string(raw))
-	}
+	// A busy response identifies an active scheduler evaluation, not a finished
+	// result. Use the same bounded, exact ErrBusy retry as the other graph probes.
+	// Reading immediately after 409 can still return the initial unknown state.
+	raw := e.must(address, "POST", "/api/v1/alerts/rules/"+uid+"/evaluate", nil)
 	require.NoError(e.t, json.Unmarshal(raw, &view))
 	require.Equal(e.t, "ok", view.Runtime.Health, view.Runtime.Error)
 	require.Len(e.t, view.Runtime.Instances, 1)
