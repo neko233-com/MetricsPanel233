@@ -39,6 +39,27 @@ import "./TimeSeriesRenderer.css";
 const theme = createTheme({ colors: { mode: "dark" } });
 const COLORS = ["#5794f2", "#73bf69", "#ff9830", "#f2495c", "#b877d9", "#56a3a6", "#fade2a"];
 
+// uPlot and browser tests read pixels repeatedly. Mark 2D contexts so Chrome
+// uses a readback-friendly backing store instead of emitting a warning.
+if (typeof HTMLCanvasElement !== "undefined") {
+  const prototype = HTMLCanvasElement.prototype as typeof HTMLCanvasElement.prototype & {
+    __metricspanelReadFrequently?: boolean;
+  };
+  if (!prototype.__metricspanelReadFrequently) {
+    const original = prototype.getContext;
+    prototype.getContext = function (this: HTMLCanvasElement, ...args: any[]) {
+      if (args[0] === "2d") {
+        return original.call(this, "2d", {
+          ...(args[1] || {}),
+          willReadFrequently: true,
+        }) as any;
+      }
+      return original.apply(this, args as any) as any;
+    } as typeof prototype.getContext;
+    prototype.__metricspanelReadFrequently = true;
+  }
+}
+
 type PlotSeries = {
   id: string;
   name: string;
@@ -46,6 +67,11 @@ type PlotSeries = {
   values: (number | null)[];
   color: string;
   dashed: boolean;
+  axis: "y" | "y2";
+  axisLabel?: string;
+  log: boolean;
+  stack: "none" | "normal" | "percent";
+  stackGroup: string;
   defaultVisible: boolean;
 };
 type PlotModel = {
@@ -124,6 +150,14 @@ function makePlotModel(frames: DataFrame[]): PlotModel {
       } catch {
         // Invalid plugin-provided color metadata should not prevent chart rendering.
       }
+      const custom = (field.config.custom || {}) as {
+        axisPlacement?: string;
+        axisLabel?: string;
+        scaleDistribution?: { type?: string };
+        stacking?: { mode?: string; group?: string };
+        hideFrom?: { viz?: boolean };
+      };
+      const stackMode = custom.stacking?.mode;
       series.push({
         id: entry.frame.refId + ":" + fieldIndex + ":" + name,
         name,
@@ -131,12 +165,46 @@ function makePlotModel(frames: DataFrame[]): PlotModel {
         values,
         color,
         dashed: comparison,
-        defaultVisible: !field.config.custom?.hideFrom?.viz,
+        axis: custom.axisPlacement === "right" ? "y2" : "y",
+        axisLabel: custom.axisLabel,
+        log: custom.scaleDistribution?.type === "log",
+        stack: stackMode === "percent" ? "percent" : stackMode === "normal" ? "normal" : "none",
+        stackGroup: custom.stacking?.group || "default",
+        defaultVisible: !custom.hideFrom?.viz,
       });
     }
   }
+  applyStacking(series, x.length);
   const signature = series.map((item) => item.id + ":" + item.color).join("|");
   return { data: [x, ...series.map((item) => item.values)], series, signature };
+}
+
+function applyStacking(series: PlotSeries[], length: number) {
+  const groups = new Map<string, PlotSeries[]>();
+  for (const item of series) {
+    if (item.stack === "none") continue;
+    const key = `${item.axis}:${item.stackGroup}`;
+    groups.set(key, [...(groups.get(key) || []), item]);
+  }
+  for (const members of groups.values()) {
+    const mode = members[0].stack;
+    for (let index = 0; index < length; index += 1) {
+      const raw = members.map((item) => item.values[index]);
+      const total = mode === "percent"
+        ? raw.reduce<number>((sum, value) => sum + Math.max(0, value ?? 0), 0)
+        : 0;
+      let cumulative = 0;
+      for (let member = 0; member < members.length; member += 1) {
+        const value = raw[member];
+        if (value == null) continue;
+        const part = mode === "percent"
+          ? total > 0 ? Math.max(0, value) / total * 100 : 0
+          : value;
+        cumulative += part;
+        members[member].values[index] = cumulative;
+      }
+    }
+  }
 }
 
 function formatValue(field: Field, value: unknown, timezone: string): string {
@@ -270,6 +338,13 @@ export default function TimeSeriesRenderer({
   const activeSet = useMemo(() => new Set(activeIds), [activeIds]);
   const legend = timeSeriesLegend(options);
   const tooltip = timeSeriesTooltip(options);
+  const leftSeries = model.series.filter((item) => item.axis === "y");
+  const rightSeries = model.series.filter((item) => item.axis === "y2");
+  const percentStacked = model.series.some((item) => item.stack === "percent");
+  const leftLabel = leftSeries.find((item) => item.axisLabel)?.axisLabel;
+  const rightLabel = rightSeries.find((item) => item.axisLabel)?.axisLabel;
+  const leftLog = leftSeries.some((item) => item.log);
+  const rightLog = rightSeries.some((item) => item.log);
   const hasSamples = hasTimeSeriesSamples(baseFrames);
   const canRender = size.width > 0 && size.height > 0 && model.series.length > 0 && model.data[0].length > 0;
   const onZoom = useCallback((from: number, to: number) => {
@@ -302,7 +377,22 @@ export default function TimeSeriesRenderer({
       class: "native-timeseries-plot",
       scales: {
         x: { time: true, min: resolved.start, max: resolved.end },
-        y: { auto: true },
+        y: {
+          auto: !percentStacked,
+          range: percentStacked ? [0, 100] : undefined,
+          distr: leftLog ? 3 : 1,
+          log: 10,
+        },
+        ...(rightSeries.length
+          ? {
+              y2: {
+                auto: !percentStacked,
+                range: percentStacked ? [0, 100] : undefined,
+                distr: rightLog ? 3 : 1,
+                log: 10,
+              },
+            }
+          : {}),
       },
       axes: [
         {
@@ -314,15 +404,32 @@ export default function TimeSeriesRenderer({
         },
         {
           scale: "y",
+          label: leftLabel,
+          labelSize: 18,
           stroke: "rgba(180, 190, 205, 0.65)",
           grid: { stroke: "rgba(180, 190, 205, 0.10)", width: 1 },
           ticks: { stroke: "rgba(180, 190, 205, 0.16)", width: 1 },
+          ...(percentStacked
+            ? { values: (_plot: uPlot, ticks: number[]) => ticks.map((value) => `${Math.round(value)}%`) }
+            : {}),
         },
+        ...(rightSeries.length
+          ? [{
+              scale: "y2",
+              side: 1 as const,
+              label: rightLabel,
+              labelSize: 18,
+              stroke: "rgba(180, 190, 205, 0.65)",
+              grid: { show: false },
+              ticks: { stroke: "rgba(180, 190, 205, 0.16)", width: 1 },
+            }]
+          : []),
       ],
       series: [
         { label: t("Time") },
         ...model.series.map((item) => ({
           label: item.name,
+          scale: item.axis,
           stroke: item.color,
           width: 1.5,
           dash: item.dashed ? [1, 5, 4, 5] : undefined,
@@ -576,8 +683,13 @@ export default function TimeSeriesRenderer({
                   <button
                     type="button"
                     aria-pressed={activeSet.has(item.id)}
-                    onClick={() => setVisible((current) =>
-                      changeSeriesVisibility(ids, current ?? defaultVisible, item.id, "select"),
+                    onClick={(event) => setVisible((current) =>
+                      changeSeriesVisibility(
+                        ids,
+                        current ?? defaultVisible,
+                        item.id,
+                        event.ctrlKey || event.metaKey ? "append" : "select",
+                      ),
                     )}
                   >
                     <i style={{ background: item.color }} />

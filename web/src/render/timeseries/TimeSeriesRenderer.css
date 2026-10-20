@@ -150,8 +150,7 @@
   max-height: none;
 }
 .native-timeseries-legend-item {
-  display: inline-grid;
-  grid-template-columns: 8px minmax(60px, 1fr) auto;
+  display: flex;
   gap: 6px;
   align-items: center;
   min-width: 0;
@@ -160,9 +159,21 @@
   background: transparent;
   border: 0;
   text-align: left;
-  cursor: pointer;
 }
-.native-timeseries-legend-item[aria-pressed="false"] {
+.native-timeseries-legend-item button {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.native-timeseries-legend-item button[aria-pressed="false"] {
   opacity: 0.45;
 }
 .native-timeseries-legend-item span {
