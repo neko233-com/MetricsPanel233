@@ -1,6 +1,6 @@
 # MetricsPanel233
 
-[English](README.md) · [Chinese](README.zh-CN.md)
+**English (primary)** · [简体中文](README-CN.md)
 
 [![CI](https://github.com/neko233-com/MetricsPanel233/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/neko233-com/MetricsPanel233/actions/workflows/ci.yml)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -645,6 +645,6 @@ The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2
 - [Agent guide](docs/agent/README.md) — repo map, contracts, verification commands and decision log for coding agents.
 - [Grafana compatibility matrix](docs/grafana-compatibility.md) and [product parity status](docs/grafana-product-parity.md) — implemented behavior and open gaps.
 - [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md).
-- [Chinese README](README.zh-CN.md) — translated project overview and user guide.
+- [Chinese README](README-CN.md) — translated project overview and user guide.
 
 Licensed under Apache-2.0. See [LICENSE](LICENSE).

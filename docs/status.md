@@ -76,13 +76,15 @@ downsampling land.
 
 ## Next units (ordered)
 
-1. **Logs renderer** — virtualized Loki frames with label filtering and search. Acceptance: 10k-row frame stays
-   interactive, empty/error states covered.
-2. **Traces renderer** — Tempo search table first, trace detail second. Acceptance: search, duration/status columns
-   and deep-link parameters.
-3. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
-   peak preservation.
-4. **Shell redesign** — collapsible left navigation and right content, preserving routing, permissions and the
+Execution order and acceptance criteria are maintained in [PLAN.md](../PLAN.md); this table only tracks progress.
+
+1. **Shell redesign** — collapsible left navigation and right content, preserving routing, permissions and the
    responsive suite. Acceptance: 390/768/1280, keyboard-only navigation, no layout overflow.
+2. **Logs renderer** — virtualized Loki frames with label filtering and search. Acceptance: 10k-row frame stays
+   interactive, empty/error states covered.
+3. **Traces renderer** — Tempo search table first, trace detail second. Acceptance: search, duration/status columns
+   and deep-link parameters.
+4. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
+   peak preservation.
 5. **Vite+ evaluation** — isolated comparison of build, lint, test and CI cost. Acceptance: documented decision, no
    migration until parity is proven.

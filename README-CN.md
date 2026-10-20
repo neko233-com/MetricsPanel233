@@ -1,6 +1,6 @@
 # MetricsPanel233
 
-[English](README.md) · 中文
+[English (primary)](README.md) · **简体中文**
 
 开箱即用的单机监控后台：**采集、存储、面板三合一**。不再需要 Grafana 服务、插件生态或独立的向量数据库。
 **Go 1.27 + Vite 7 + React 19 + 原生 Agent CLI**。

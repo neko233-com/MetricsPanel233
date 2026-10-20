@@ -1,6 +1,6 @@
 # Documentation
 
-This folder keeps cross-cutting architecture and product contracts. The root [README](../README.md) is the English project entry point; [README.zh-CN.md](../README.zh-CN.md) is its Chinese translation.
+This folder keeps cross-cutting architecture and product contracts. The root [README](../README.md) is the English project entry point; [README-CN.md](../README-CN.md) is its Chinese translation.
 
 ## Product direction
 
