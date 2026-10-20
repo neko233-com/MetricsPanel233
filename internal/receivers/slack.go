@@ -339,6 +339,15 @@ func slackHTTPFailure(ctx context.Context, key string, err error) Outcome {
 		}
 		return outcomeFailure(key, "cancelled", true)
 	}
+	// http.Client.Timeout cancels the transport without cancelling the caller
+	// context. Classify that case as a timeout, not a connection failure.
+	var timeoutError interface{ Timeout() bool }
+	if errors.As(err, &timeoutError) && timeoutError.Timeout() {
+		return outcomeFailure(key, "timeout", true)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return outcomeFailure(key, "timeout", true)
+	}
 	// Reuse certificate classification without exposing URL-bearing url.Error.
 	out := smtpFailure(ctx, key, "slack_connection", err)
 	return out
