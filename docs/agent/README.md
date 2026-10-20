@@ -5,11 +5,18 @@ remain authoritative.
 
 ## Read order
 
+0. [Project status](../status.md) — progress ledger, completion percentages and the mandatory report protocol.
 1. [Repo map](repo-map.md) — where each behavior lives.
 2. [Contracts](contracts.md) — product scope, auth, collection, storage and renderer boundaries.
 3. [Verification](verification.md) — which checks to run and when.
 4. [Decisions](decisions.md) — why the product is not a Grafana clone and why renderers are staged.
 5. [Skill references](skills.md) — external design/QA skills and their boundaries.
+
+## Progress reporting
+
+Every completed progress unit ends with: goal, what changed (commits/files/evidence), next units with acceptance
+checks, weighted overall percentage and per-workstream basis, risks, and the verification commands actually run.
+Update [docs/status.md](../status.md) in the same change. Do not claim completion from source inspection alone.
 
 ## Working rules
 

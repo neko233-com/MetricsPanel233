@@ -639,6 +639,7 @@ The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2
 ## Project documentation
 
 - [Project goals](docs/project-goals.md) — product scope, first-party UI policy and performance evidence.
+- [Project status](docs/status.md) — progress ledger, completion percentages and the reporting protocol.
 - [Development guide](docs/development.md) — setup, fast development, validation and contribution workflow.
 - [Architecture overview](docs/architecture.md) — subsystem ownership and runtime data flow.
 - [Agent guide](docs/agent/README.md) — repo map, contracts, verification commands and decision log for coding agents.
