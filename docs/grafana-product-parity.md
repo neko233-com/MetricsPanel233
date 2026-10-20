@@ -1,12 +1,12 @@
-# Grafana product acceptance checklist
+# Grafana compatibility inventory
 
-Confirmed acceptance scope: all Grafana 13.2.3 OSS functionality, matching the pinned frontend SDK. Windows PC browsers are the supported client. Enterprise-only functionality is excluded from this scope.
+This page is a selected interoperability inventory against Grafana 13.2.3 OSS. It is not the product acceptance scope or a commitment to implement every Grafana feature. MetricsPanel233 targets a high-performance, single-node Prometheus dashboard and metric-storage workflow with first-party UI; full Grafana parity is explicitly out of scope. See the [project goals](project-goals.md).
 
-Full replacement is not complete. This checklist describes implemented behavior and remaining work; it is not a compatibility certificate. The [datasource and visualization matrix](grafana-compatibility.md) lists the tagged core plugins individually.
+The table records existing behavior and possible compatibility work. Prioritize an item only when it supports a user migration or the core Prometheus dashboard and storage goals. The [datasource and visualization matrix](grafana-compatibility.md) lists the inspected Grafana core plugins individually.
 
-The latest permission slice adds opt-in current dashboard/folder/search/export reads with filtering, recursive library ownership checks and final response fencing, request-local Basic password proofs, and guarded library/manual-annotation storage mutations. Production multiuser activation, mutation action policies and complete query/history/Live enforcement remain pending. These additions are source milestones, not full Grafana parity. See [PLAN.md](../PLAN.md) for the next work session.
+The latest permission slice adds opt-in current dashboard/folder/search/export reads with filtering, recursive library ownership checks and final response fencing, request-local Basic password proofs, and guarded library/manual-annotation storage mutations. Production multiuser activation, mutation action policies and complete query/history/Live enforcement remain pending. These are existing compatibility experiments, not a product roadmap; see [PLAN.md](../PLAN.md) only for archived engineering context.
 
-| Area | Current implementation | Remaining acceptance work |
+| Area | Current implementation | Additional Grafana compatibility work (optional) |
 | --- | --- | --- |
 | Collection and storage | Native database/big-data collectors, compatible exporter input, SQLite and ClickHouse persistence, upstream PromQL engine | Native histogram/exemplar storage; cluster discovery; actual big-data cluster verification beyond protocol fixtures |
 | Dashboards | Custom panels, 24-column editing, native/Classic/V1/V2 import, community bindings, folders, library panels, version history | All Grafana layout modes and editors; full App Platform resource CRUD and migrations |
@@ -30,10 +30,10 @@ The internal SMTP/Slack pipeline now freezes receiver/profile revisions, all tem
 
 Inhibition applies to this service's own active alert instances. Source labels are indexed after every successful evaluation, even without a state transition. Missing and empty equal labels are equivalent; alerts matching both sides cannot inhibit themselves or another alert matching both sides. Source removal, reset, rule deletion or disable resumes only still-active targets. Suppression is checked again after rendering and before HTTP delivery; an already-started network request cannot be recalled. Delivery remains at least once. Completed notification history is bounded to 10,000 rows plus current ungrouped successful firing anchors needed for later resume.
 
-## Verification before publication
+## Verification for compatibility work
 
 Each supported item needs a working desktop operation or HTTP/CLI contract, persistence checks where applicable, and evidence against the pinned upstream behavior. Imported JSON retention alone does not establish rendering or query compatibility.
 
 Run frontend typecheck/build and unit tests, Go tests/vet/race, actual Windows PC browser workflows, and the single-container integration suite. The container runs the real database services together and is restarted to verify durable state. Protocol fixtures remain identified as fixtures.
 
-A release claiming all Grafana OSS features requires every remaining item above and every core plugin in the linked matrix to pass acceptance. Until then, release descriptions must state the tested scope and open gaps.
+The project does not target all Grafana OSS features. Releases that mention Grafana interoperability must state the exact tested scope and remaining gaps; entries in this inventory are optional unless they support a selected migration or the core Prometheus workflow.

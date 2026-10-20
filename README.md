@@ -1,188 +1,206 @@
 # MetricsPanel233
 
-[English](README.en.md) · 中文
+[English](README.md) · [Chinese](README.zh-CN.md)
 
-面向 Windows PC 的自托管监控工作空间，目标是用一个服务替代 Grafana + Prometheus 的日常监控部署。
-**Go 1.27 + Vite 7 + React 19 + 原生 Agent CLI**。
-一个服务提供指标采集、持久化存储、查询和面板。界面可切换中文 / English。
+[![CI](https://github.com/neko233-com/MetricsPanel233/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/neko233-com/MetricsPanel233/actions/workflows/ci.yml)
+[![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-支持数据库直连、服务指标接口、Prometheus / OpenMetrics exporter 和业务指标上报。
-SQLite 模式无需额外服务；ClickHouse 模式采用压缩列式时序存储、向量化聚合、按天分区、TTL 和持久化 HNSW 波形向量索引。
+A zero-configuration, single-node monitoring appliance: **collection, storage and dashboards in one service**.
+**Go 1.27, Vite 7, React 19 and a native agent CLI**.
+Collect Prometheus/OpenMetrics, OTLP/HTTP, MySQL, Redis and other common sources; store time-series samples and local
+metric-window vectors; build dashboards, Explore views and alerts without a Grafana server or plugin ecosystem.
+The product UI supports English and Chinese. Production UI assets are embedded in the Go executable.
 
-## 快速开始
+The product replaces the usual Grafana + separate scraping + separate vector-search stack. Grafana import/export is
+optional migration support, not the product foundation. See the [project goals](docs/project-goals.md).
 
-需要 Go 1.27.0、Node.js 24（或 Vite 支持的 Node 版本）。
+## Run locally
+
+### Fast development
 
 ```sh
 cd web
 npm ci
-npm run build
-cd ..
-go build -tags webui -o bin/metricspanel ./cmd/metricspanel
-./bin/metricspanel serve
+npm run dev:workspace
 ```
 
-Windows：`go build -tags webui -o bin/metricspanel.exe ./cmd/metricspanel`，随后运行 `./bin/metricspanel.exe serve`。
-打开 **http://127.0.0.1:7333**。内置采集器每 5 秒记录真实的内存、协程、HTTP 请求和运行时间。
-网页打包进 Go 二进制，生产运行不需要 Node。
+This starts the Go API at `http://127.0.0.1:7333` and the Vite development UI at `http://127.0.0.1:5173`.
+Vite proxies API, metrics, Prometheus and plugin asset requests to Go. React changes use Vite HMR; press Ctrl+C once to stop both processes.
+Use `npm run dev` when you want only the frontend server and already have the API running.
 
-### Docker + ClickHouse
+### Single-node binary (default)
+
+One executable contains the API, the UI and the default SQLite storage. Docker is optional.
 
 ```sh
-cp .env.example .env
-# 修改 .env 中两个密码，然后运行：
+# Build the executable once
+cd web && npm ci && npm run build && cd ..
+go build -tags webui -o bin/metricspanel ./cmd/metricspanel
+
+# Run it with local accounts (recommended for teams)
+./bin/metricspanel serve --auth=local --open
+```
+
+On Windows the executable is `bin/metricspanel.exe`. `serve` creates `data/metrics.db` and, with `--auth=local`,
+`data/identity.db` on first start, listens on `http://127.0.0.1:7333`, prints the workspace URL and opens the browser
+with `--open`. Real internal metrics are collected every five seconds. Stop it with Ctrl+C; data survives restarts.
+
+On the first start the console prints a one-time `Setup token`. Open the UI, enter that token and create the
+administrator account. The token disappears after initialization and is never written to the identity database.
+Administrators can then create Viewer, Editor and Admin accounts in **Users**; the role applies to the whole workspace.
+
+| Mode | Use |
+| --- | --- |
+| `--auth=local` | Users, passwords and HttpOnly browser sessions. Recommended for a team. |
+| `--auth=token` (default) | Single workspace Bearer token. Keeps existing automation and e2e behavior unchanged. |
+
+`--auth=local` keeps Bearer token access for CLI automation when `METRICSPANEL_TOKEN` is set, and always keeps the
+non-loopback token requirement. Set `METRICSPANEL_ADMIN_USER`, `METRICSPANEL_ADMIN_PASSWORD` (12+ characters) and
+optionally `METRICSPANEL_ADMIN_EMAIL` to bootstrap the first administrator without the interactive token. Identity data
+lives in `METRICSPANEL_IDENTITY_DB` (default `identity.db` beside the control database); back it up with the control
+database, `secrets.key` and the plugin directory.
+
+Roles are workspace-wide. Per-folder or per-dashboard ACLs and self-service password reset are not implemented yet;
+administrators create accounts and assign roles in the **Users** page.
+
+To reach the same process from other machines on a trusted LAN, bind a private interface and set a token:
+
+```sh
+METRICSPANEL_TOKEN="replace-with-at-least-16-characters" ./bin/metricspanel serve --listen 0.0.0.0:7333
+```
+
+Non-loopback listeners always require a token of at least 16 characters. Put an HTTPS reverse proxy in front of any
+internet-facing deployment; neither the token nor a session cookie is a substitute for TLS. Local sessions use
+`Secure` cookies when `--root-url` is HTTPS.
+
+Prebuilt archives for Windows, Linux and macOS (amd64/arm64) can be produced with `scripts/build-release.ps1` or
+`scripts/build-release.sh`. The frontend is embedded in the binary, so the target machine needs no Node.js or Go.
+See the [public deployment guide](docs/public-deployment.md) for TLS, trusted proxies, firewall, backups and the
+data-leakage checklist.
+
+### Users and agent CLI
+
+Local accounts are fully configurable from the CLI. Use Basic auth instead of putting the workspace token on a shared
+host:
+
+```sh
+export METRICSPANEL_USERNAME=admin
+export METRICSPANEL_PASSWORD='your-admin-password'
+# or: --api-password-file /root/.metricspanel-admin-password
+
+metricspanel users me
+metricspanel users list
+metricspanel users create --file user.json
+metricspanel users update --id 2 --file user-role.json
+```
+
+`user.json` contains `login`, `name`, `email`, `password` (12+ characters) and `role` (`Viewer`, `Editor`, `Admin`).
+`user-role.json` contains the returned `version`, `membershipVersion` and `role` and/or `disabled`. Pass `--file -` to
+read JSON from stdin so passwords are not written to shell history. Responses never include passwords or hashes.
+
+Grafana-compatible clients can use Basic auth with a local account or the workspace Bearer token; `GET /api/health`
+is public for load balancers.
+
+### Docker and ClickHouse (optional)
+
+Use Docker when you want ClickHouse-backed metric storage or container orchestration:
+
+```sh
+cp .env.example .env   # set METRICSPANEL_TOKEN and CLICKHOUSE_PASSWORD
 docker compose up -d --build
 ```
 
-访问相同地址，输入 `METRICSPANEL_TOKEN`。`docker compose down` 保留命名数据卷；
-`docker compose down -v` 会删除数据，**只在确实需要清空时使用**。
-非 loopback 监听要求至少 16 字符的 token。跨机器 HTTP 请通过 HTTPS 反向代理访问。
+Compose persists both the SQLite control plane and ClickHouse metrics in named volumes. `down` preserves data; `down -v` deletes it.
+The single binary keeps using SQLite unless `METRICSPANEL_STORAGE=clickhouse` and a ClickHouse endpoint are configured.
 
-手动连接 ClickHouse：
-
-```sh
-export CLICKHOUSE_URL=http://127.0.0.1:8123
-export CLICKHOUSE_USER=metricspanel
-export CLICKHOUSE_PASSWORD=your-password
-./bin/metricspanel serve --storage clickhouse --db data/control.db
-```
-
-PowerShell 设置环境变量使用 `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'`。
-ClickHouse 存指标；SQLite 存采集器、仪表盘、模板变量和模板原始 JSON，两个存储都要持久化。
-`--retention-days 30` 是默认保留期，SQLite 每小时清理，ClickHouse TTL 在后台合并时清理。
-已有 ClickHouse 表的 TTL 不会因修改启动参数自动重写；变更时执行受控的 `ALTER TABLE ... MODIFY TTL`。
-
-## 采集数据库、服务和业务指标
+## Collect and query
 
 ```sh
 metricspanel targets add --name mysql --url http://localhost:9104/metrics --interval 15s
 metricspanel targets add --name backend --url http://localhost:8080/metrics --interval 5s
-metricspanel targets list
-metricspanel targets scrape --id 1
-metricspanel targets catalog
-metricspanel targets exporters
-metricspanel targets add --file examples/collectors/redis.json
-```
-
-内置 MySQL / MariaDB、Redis、PostgreSQL 直连采集，无需 exporter。使用 JSON 文件的 `secure_settings.password` 配置密码，URL 不接受内嵌账号。密码由本地 `secrets.key` 加密保存，备份时需保留数据库与密钥。API / CLI 只返回 `secure_fields`，更新时省略密码保留原值，空字符串清除。示例默认关闭自动采集，替换地址和凭据后设置 `enabled: true`。
-
-| 类型 | 采集接口 | 范围 |
-| --- | --- | --- |
-| MySQL / MariaDB | `SHOW GLOBAL STATUS` | 连接、查询、InnoDB、复制计数器 |
-| Redis | `INFO ALL`，支持 ACL 和 `rediss` | 内存、客户端、命令、持久化、复制、键空间 |
-| PostgreSQL | `pg_stat_database` | 连接、事务、数据块、行、冲突、死锁 |
-| ClickHouse | HTTP SQL | `system.metrics` / `asynchronous_metrics` / `events` |
-| Elasticsearch | `/_nodes/stats` | JVM、索引、磁盘、线程池等节点数值 |
-| Hadoop / YARN、HDFS | `/jmx` | 按 MBean 标签保留数值属性 |
-| Hive、Kafka | Jolokia `read` | 需要配置 Jolokia agent；也可使用 JMX exporter |
-| Spark | `/metrics/json` | 需要配置 MetricsServlet |
-| Flink | REST metrics | JobManager、TaskManager 或 job 的指标地址，自动发现后批量读取 |
-
-HTTP 类型支持 Basic / Bearer 认证和 HTTPS，Bearer 配置优先。SQL TLS 支持 `disable`、`require`（仅加密）、`verify-full`（验证证书和主机名）。内置直连指标名称与第三方 exporter 不完全相同，原 exporter 仪表盘应继续采集对应 exporter。
-
-界面和 `targets exporters` 提供 18 个常用 exporter 预设，包括 Node、Windows、Process、MySQL、Redis、PostgreSQL、Elasticsearch、Kafka、JMX、cAdvisor、Kubernetes、MongoDB、RabbitMQ、Nginx、Apache、Memcached、Blackbox、SNMP。预设填写地址，exporter 需运行在被监控环境；Blackbox / SNMP 使用带探测参数的 URL。任意兼容格式的 exporter 都可自定义地址。
-
-MySQL 也可通过官方 `mysqld_exporter` 采集，使用 `.my.cnf` 配置账号。
-账号需要对应 exporter collector 的 MySQL 权限；可参考 [官方配置](https://github.com/prometheus/mysqld_exporter)。
-[Go 业务服务示例](examples/go-service/main.go) 同时展示 `/metrics` 抓取和 JSON 主动上报。
-Docker 集成测试在一个容器中启动 MySQL 协议兼容的 MariaDB、Redis、PostgreSQL、ClickHouse、官方 MySQL exporter 和业务服务。JVM / 大数据 API 使用固定协议响应验证，不代表已验证真实集群。测试账号仅用于隔离测试。
-
-```json
-{"samples":[{"name":"business_orders","labels":{"service":"checkout"},"value":233}]}
-```
-
-保存为 `samples.json`，运行 `metricspanel ingest --file samples.json`，或直接 POST `/api/v1/ingest`。
-`timestamp` 使用 Unix 毫秒，省略 / 0 使用服务端时间。同序列同时间戳重复写入覆盖旧值。
-NaN / Inf 无法存入 JSON；exporter 的非有限样本会跳过。支持 Prometheus 文本、OpenMetrics 1.0 和 delimited protobuf；经典 histogram / summary 正常入库。原生 histogram 明确拒绝，exemplar 不存储。Kerberos/SPNEGO、Sentinel 自动发现和集群自动遍历仍待补齐。
-
-## Agent CLI
-
-CLI 输出默认就是 JSON；错误写入 stderr，退出码 1。`--json` 也可显式指定。
-
-```sh
-metricspanel schema
-metricspanel health
-metricspanel stats
-metricspanel metrics
+metricspanel ingest --file samples.json
 metricspanel query --metric business_orders --range 30m --aggregation sum
 metricspanel query --expr 'sum(rate(business_http_requests_total[5m]))' --range 1h
-metricspanel query --metric business_orders --labels '{"service":"checkout"}'
-metricspanel dashboards export --id system > dashboard.json
-metricspanel dashboards save --file dashboard.json
-metricspanel dashboards save --file grafana-template.json
-metricspanel dashboards export --id IMPORTED_ID --format grafana > original-grafana.json
+metricspanel schema
 ```
 
-`METRICSPANEL_URL` / `--server` 指定服务地址；`METRICSPANEL_TOKEN` 指定 Bearer token。
-`targets set` 更新完整配置（`--id --name --url --interval --enabled`）。
-`targets delete --id ID`、`dashboards delete --id ID` 删除配置，指标保留到保留期结束。
+All client commands output JSON; failures output JSON on stderr and exit 1. Set `METRICSPANEL_URL` and `METRICSPANEL_TOKEN` for a remote workspace.
+Non-loopback listeners require a token of at least 16 characters. Use an HTTPS reverse proxy across machines.
 
-## Grafana 生态兼容范围
+Push format: `{"samples":[{"name":"business_orders","labels":{"service":"api"},"value":233}]}`.
 
-当前按 Grafana 13.2.3 开源版逐项实现和验收。完整替代尚未完成；[核心数据源与图表清单](docs/grafana-compatibility.md) 和 [产品功能验收清单](docs/grafana-product-parity.md) 记录已验证能力及缺口。
+### OpenTelemetry OTLP/HTTP
 
-自建仪表盘支持多个时间序列、数值和表格面板，可新增、编辑、复制和删除。“编辑布局”使用 24 列网格，支持拖动、右下角缩放、位置输入和键盘操作；方向键移动，Shift + 方向键调整大小。取消编辑不写入配置；保存要求当前修订号，冲突时保留草稿并提示重新加载。
-
-原生仪表盘和导入模板均可使用“面板查询”编辑 Prometheus、SQL、表达式及已安装 SDK 数据源。原生面板保留完整查询配置，编辑标题或复制面板不会覆盖数据源查询。表格使用固定版本 Grafana SDK 组件，提供排序、分页、字段显示和汇总，不再截断为 500 行。
-
-“变量”支持查询、自定义、常量、文本输入、数据源和时间间隔类型，可设置默认值、显示名称、正则、排序、多选和全部选项。依赖查询按变量关系加载，选择同步至 URL；面板查询、注释和快照使用当前选择。变量、面板查询、注释查询和布局均通过修订号检查原子保存并记录历史；服务端合并变更字段，保留原始模型中未修改的大整数与插件字段。重命名变量后仍需修改引用旧名称的查询。
+Point an OTLP/HTTP metrics exporter at `/v1/metrics` (the alias `/otlp/v1/metrics` is also accepted):
 
 ```sh
-metricspanel dashboards queries --id DASHBOARD_ID --revision UPDATED_AT --file query-edits.json
-metricspanel dashboards panels --id DASHBOARD_ID --revision UPDATED_AT --file panel-edit.json
-metricspanel dashboards variables --id DASHBOARD_ID --revision UPDATED_AT --file variable-edits.json
-metricspanel dashboards annotation-queries --id DASHBOARD_ID --revision UPDATED_AT --file annotation-edits.json
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:7333 \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $METRICSPANEL_TOKEN" \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+your-service
 ```
 
-各编辑文件的结构见 `metricspanel schema`。新查询或变量不带 `baseline`；编辑已有项需携带读取时的原模型，省略的项将删除。版本冲突不会保存部分配置。
+The receiver accepts protobuf or JSON, gzip, gauges, sums, histograms and summaries. Resource attributes become labels
+(`service.name` → `service_name`), scope name/version become `otel_scope_name`/`otel_scope_version`, and histogram
+buckets become `_bucket`/`_count`/`_sum` series. Requests are limited to 16 MiB and 10,000 samples per batch. OTLP
+writes use the same role policy as `/api/v1/ingest`; non-loopback deployments require the workspace token.
+Timestamp is Unix milliseconds; omitted / zero uses server time. Duplicate series/timestamp writes replace the prior value.
+The [Go example](examples/go-service/main.go) demonstrates both exporter and push integration. MySQL can use the official `mysqld_exporter` with `.my.cnf` credentials or the native SQL collector.
 
-MySQL/MariaDB 和 PostgreSQL 同时提供内置 SQL 数据源；采集器用于定时记录指标，数据源用于仪表盘和 Explore 执行 SQL。数据库连接配置密码加密保存；支持只读事务、连接池、查询取消、表格/时序帧、时间宏、空值及 `__text`/`__value` 变量选项。PostgreSQL 使用官方 `grafana-postgresql-datasource` ID，并接受 `postgres` 别名。默认每次查询限时 20 秒、最多 10,000 行。SQL 可视化构建器和完整核心数据源编辑器仍待补齐。
+Use `targets catalog` for twelve implemented collection paths and `targets exporters` for eighteen exporter presets. `targets add --file FILE|-` accepts native connections and encrypted `secure_settings.password` / `bearer_token`. Responses contain `secure_fields` only; omitted credentials are retained, empty values clear them. Preserve both the database and `secrets.key` in backups. URL credentials are rejected. Examples under `examples/collectors` start with automatic collection disabled.
 
-Classic / V1 / V2 导入仪表盘同样支持布局编辑。服务端只修改位置，保留查询、插件选项、共享面板引用和原始 JSON 中的大整数。V2 AutoGrid 保存为显式 Grid；Rows / Tabs 保留所属分组，跨越前一个分组底部的移动会明确拒绝。重复面板编辑基础布局，保存操作计入版本历史。
+| Integration | Implemented metrics interface |
+| --- | --- |
+| MySQL / MariaDB | `SHOW GLOBAL STATUS` |
+| Redis | `INFO ALL`, ACL authentication and verified `rediss` TLS |
+| PostgreSQL | `pg_stat_database` |
+| ClickHouse | HTTP SQL over current / asynchronous metrics and events |
+| Elasticsearch | `/_nodes/stats` numeric fields, labeled by node |
+| Hadoop / YARN / HDFS | `/jmx` numeric attributes labeled by MBean |
+| Hive / Kafka | Jolokia wildcard `read`; requires a configured agent |
+| Spark | Configured MetricsServlet `/metrics/json` |
+| Flink | REST metrics discovery and bounded batch reads at the configured scope |
 
-“创建快照”保存所选时间窗口及全部面板的数据、类型、位置和显示选项；导入模板的重复面板会按当前变量展开。保存后成为独立仪表盘，原数据更新或原仪表盘删除不影响快照。快照只使用内置 `snapshot` 查询，不访问原数据源；刷新默认关闭，保留窗口固定。数据不会写入监控指标库；快照随控制数据库持久化。可用网页或 `dashboards export --id ID --format grafana` 导出，`dashboards save --file FILE` 重新导入。CLI 可列出、导出、导入和删除快照；当前窗口的数据捕获由浏览器执行，CLI 尚无单步捕获命令。每个面板最多 512 KiB，完整快照最多 4 MiB，超限请缩短时间范围。暂未提供匿名公开快照链接、过期删除或 Grafana `/api/snapshots` 接口。
+HTTP collectors support Basic or Bearer authentication (Bearer takes precedence). SQL TLS modes are disable, require (encryption) and verify-full (certificate and hostname validation). Native metric names do not reproduce every third-party exporter contract; use the original exporter for its dashboards. Presets cover Node, Windows, Process, MySQL, Redis, PostgreSQL, Elasticsearch, Kafka, JMX, cAdvisor, Kubernetes, MongoDB, RabbitMQ, Nginx, Apache, Memcached, Blackbox and SNMP. Exporters run on monitored hosts; presets do not install them. Custom URLs accept any compatible exporter.
 
-提供 **Prometheus 数据源 API + 官方 PromQL 引擎**。Grafana 的 Prometheus 数据源 URL 指向：
+Prometheus text, OpenMetrics 1.0 and delimited protobuf support scalar samples and classic histograms/summaries. Native histogram samples fail explicitly; exemplars are not stored. Kerberos/SPNEGO, Sentinel discovery and automatic cluster fan-out remain unfinished.
 
-```text
-http://127.0.0.1:7333/prometheus
-```
+## Storage and performance
 
-配置 Bearer Authorization 请求头后可在 Grafana 中查询；支持 instant / range query、labels、label values、series、metadata、targets 和 buildinfo。
-PromQL 聚合、正则 selector、rate、histogram_quantile、子查询和常用函数由官方引擎执行。
+ClickHouse uses vectorized columnar execution, partitioned ReplacingMergeTree, compression, TTL and acknowledged durable batch inserts.
+It also persists 64-dimensional metric-window embeddings with an HNSW similarity index. SQLite WAL stores metric data and exact-search vectors in lightweight mode, and control data in both modes.
+Both modes survive application restarts; ClickHouse data survives database restarts. Persist both stores and back them up.
+Changing retention on an existing ClickHouse table requires an explicit `ALTER TABLE ... MODIFY TTL`.
 
-网页“仪表盘 → 导入 JSON”或 CLI 可以导入 Grafana Classic、V1 / V2 资源 JSON：
+Native queries support last / avg / sum / min / max / reset-aware rate, label equality filters, a maximum 31-day range, 200 series and 2,000 buckets.
+PromQL uses the official engine with a controlled in-memory storage adapter (maximum one million samples / 10,000 selected series). It does not yet push PromQL into ClickHouse.
+Each ingestion batch / exporter scrape is limited to 10,000 samples / 4 MiB; eight scrapes may run concurrently.
+This is a single-instance implementation, with no claimed distributed or production-scale throughput guarantee.
+SQLite is the zero-configuration default: exact in-process vector search is capped at 50,000 candidate patterns per
+request. Above that, add metric/label filters or move metrics and patterns to ClickHouse.
+See the [SQLite baseline](docs/performance-baseline.md) for the reproducible measurement commands, reference hardware,
+observed timings and sizing guidance for small teams.
 
-“导入仪表盘”支持输入 Grafana.com 社区 ID 或 URL、选择修订版本，也支持粘贴和上传 JSON。先加载预览，再选择数据源、填写常量、修改名称和 UID，确认后保存。未指定 UID 时生成新 UID；同名 UID 返回冲突，避免重复链接。`__inputs`、数据源变量与 V2 公共导出标签可以绑定已有数据源；常量按字面值替换。查询变量使用绑定的数据源，Prometheus 走对应代理，插件数据源调用公开 `metricFindQuery` 接口。下载仅访问 Grafana.com，限时 20 秒、JSON 最多 4 MiB。
+## Grafana compatibility
 
-本地 JSON 以原始文本提交，网页和 CLI 导出读取服务端保存的 JSON，避免 JavaScript 舍入未知的大整数。导出模板保留已选 `__inputs.value`；重新导入时可更新实际数据源引用，无法区分的同源多输入映射会返回明确错误。已展开常量的完整重新绑定仍待补齐。V2 数据源变量读取正式 `pluginId` 字段，兼容旧 `query`。
+Grafana compatibility is an optional migration and interoperability layer, tracked against Grafana 13.2.3 OSS where relevant. Full Grafana parity is not a product goal. See the [compatibility inventory](docs/grafana-compatibility.md) and [product goals](docs/project-goals.md).
 
-`GET /api/v1/dashboard-exports/{id}?format=native|grafana` 返回原生仪表盘或 Grafana 源文档，使用同一工作空间认证。Grafana 兼容读写接口也保留未知数字的精度。
+Native and imported dashboards share the Panel queries editor for Prometheus, SQL, expressions and installed SDK sources. Title edits and duplication preserve their query models. Product pages, forms, dialogs and navigation use the first-party `web/src/ui` primitives. Table panels use the first-party HTML renderer in `web/src/render` by default (sorting, pagination, footer reducers). The first-party uPlot time-series renderer covers lines, comparison and legend/zoom; it is available with `?renderer=own` or `localStorage.setItem("metricspanel-renderer", "own")`, while the compatibility bridge remains the default until log axes, percent stacking and multi-axis parity are complete. The optional imported-dashboard and plugin compatibility layer may still use Grafana packages behind that boundary. Grafana data and runtime contracts remain in the query and compatibility layers, so the project is not fully detached from the Grafana frontend SDK.
 
-```sh
-metricspanel dashboards community --id 1860 --community-revision 42
-metricspanel dashboards import-community --url https://grafana.com/grafana/dashboards/1860-node-exporter-full/ --community-revision 42 --inputs '{"ds_prometheus":"metricspanel"}' --name "Nodes" --uid company-nodes
-metricspanel dashboards preview-grafana --file dashboard.json
-metricspanel dashboards import-grafana --file dashboard.json --inputs '{"DS_PROMETHEUS":"metricspanel"}'
-```
+The Variables editor supports query, custom, constant, textbox, datasource and interval variables, default values, labels, regex, sorting, multi-selection and All. Dependent queries load in dependency order; URL selections reach panel queries, annotations and snapshots. Variables, queries, annotations, panels and layout use revision-checked atomic saves and version history. Changed fields merge into stored raw models to preserve unknown numbers and plugin settings. Renaming a variable does not rewrite existing query references.
 
-导入时可选择目标文件夹；Classic / V1 / V2 的 library panel 引用和导出的 `__elements` 同事务保存。原生 `GET /api/gnet/dashboards/{id}`、`POST /api/dashboards/interpolate`、`POST /api/dashboards/import` 以及已验证插件内置仪表盘导入可供 Grafana 工具和 agent 调用。
+Built-in MySQL/MariaDB and PostgreSQL SQL datasources serve Explore, dashboards and expression graphs. Queries use encrypted connection settings, persistent pools, read-only transactions, typed table/time-series frames, macros, null handling and SQL variable options. PostgreSQL accepts the official grafana-postgresql-datasource ID and the postgres alias. Queries are bounded to 20 seconds and 10,000 rows. The visual SQL builder and remaining core datasource editors are unfinished. See metricspanel schema for the dashboards queries, panels, variables and annotation-queries PATCH file contracts.
+Custom dashboards support multiple time series, stat and table panels, with add/edit/duplicate/delete controls. They display a uniform panel grid without collection status or a CLI promotional strip.
 
-仪表盘页提供嵌套文件夹、移动和版本检查。「库面板」保存共享面板模型；更新后所有引用读取新配置，解除引用时保留当前配置。删除仍在使用的库面板会返回冲突。删除文件夹会删除子文件夹和其中的仪表盘、未使用库面板；包含系统仪表盘或已引用库面板时拒绝删除。删除其中的告警规则需要显式选择，正在评估的规则会阻止删除。文件夹、模型、关联和稳定数字 ID 重启后保留。快照会解除库引用，避免共享配置变化影响已冻结数据。
+Create snapshot freezes the selected window and all panel data, visualizations, layout and display options. Repeated template panels expand using current variable selections. The independently saved dashboard survives source updates or source-dashboard deletion, uses only builtin snapshot queries, and defaults to fixed bounds with refresh off. Snapshot data lives in the durable control database and never enters monitoring samples. Export with `dashboards export --id ID --format grafana` and import with `dashboards save --file FILE`. The CLI lists/exports/imports/deletes snapshots; capture currently runs in the browser and has no single-step CLI command. Limits are 512 KiB/panel and 4 MiB/snapshot; shorten the window if exceeded. Anonymous sharing, expiry deletion and Grafana `/api/snapshots` routes remain pending.
 
-「版本历史」显示保存时间、作者与说明，可查看或下载旧 JSON、比较配置、恢复旧版。每次成功保存与历史记录在同一事务提交；恢复生成新版本，保留当前 UID、数字 ID、文件夹和插件元数据，库面板继续引用当前共享模型。版本冲突、相同配置恢复或缺失库引用不会写入新记录。原生面板编辑与删除使用打开窗口时的版本检查，过期编辑需关闭并重新打开。升级旧数据库只登记仍存在的当前版本，不改写原始仪表盘，也不虚构此前历史。目前保留全部历史，按数量清理的配置尚待补齐。
+Grafana's Prometheus datasource can use `http://localhost:7333/prometheus` with the workspace Bearer Authorization header.
+Instant/range query, labels, label values, series, metadata, targets and buildinfo endpoints are implemented using the upstream PromQL engine.
 
-原生 Grafana `GET /api/dashboards/uid/{uid}/versions`、版本详情及恢复接口可用；资源 API 的历史 selector 支持官方客户端的 V1/V2 双流过滤和稳定分页，原文保留真实格式，并明确标记未转换的格式。该接口尚不代表完整资源 CRUD。契约参考 [固定版本客户端](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard/api/UnifiedDashboardAPI.ts) 和 [历史模型](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/dashboardversion/model.go)。
+Import Classic, V1 and V2 dashboard resources through the UI or `metricspanel dashboards save --file grafana.json`.
+The import dialog loads Grafana.com IDs or URLs, selects a revision, folder, datasource UID and literal constant bindings before saving. It accepts pasted or uploaded JSON too. An omitted UID creates a new one; explicit duplicates return HTTP 409. Agents use `dashboards community`, `import-community`, `preview-grafana` and `import-grafana`. Native gnet, interpolation, import and verified plugin-bundled dashboard routes are available. Classic/V1/V2 library references and exported `__elements` definitions commit with the dashboard.
 
-```sh
-metricspanel dashboards save --id DASHBOARD_ID --file native.json --revision UPDATED_AT --message "Update service panels"
-metricspanel dashboards history --id DASHBOARD_ID --limit 20
-metricspanel dashboards version-export --id DASHBOARD_ID --dashboard-version 2 --format grafana
-metricspanel dashboards compare --id DASHBOARD_ID --base-version 1 --new-version 2
-metricspanel dashboards restore --id DASHBOARD_ID --dashboard-version 1 --revision UPDATED_AT
-```
-
-`history --continue-token TOKEN` 延续固定版本范围，期间的新保存不造成重复或遗漏；`version` 返回完整历史详情。原生接口同时返回字符串版本键，大整数版本不依赖浏览器浮点值。历史导出与比较保留 JSON 数字原值；没有原始 Grafana 模板的原生仪表盘可导出生成的 Classic JSON。恢复配置不回退监控样本或注释事件。
+Nested folders support creation, rename, move and version checks. Library panels share one query and visualization model across dashboards; reads resolve the latest model, and unlink freezes the current configuration. Connected libraries cannot be deleted. Folder deletion atomically removes descendants, their dashboards and unused libraries; connected libraries and the system dashboard block it. Alert rules require explicit deletion and scheduler mutation gates. Folder identities, library models, connections and stable dashboard numeric IDs survive restart. Snapshots detach library references.
 
 ```sh
 metricspanel folders create --id operations --name Operations
@@ -196,46 +214,58 @@ metricspanel dashboards library-unlink --id DASHBOARD_ID --panel NATIVE_PANEL_ID
 metricspanel api --path /api/library-elements --method GET
 ```
 
-`folders get` 和 `library get` 的 JSON 可由对应 `save --id` 读回；版本冲突需重新读取。`library model` 返回原始模型 JSON。`api --path` 支持所有已公开的本地 API 路径，使用相同认证，非 JSON 文本包装为 `content` / `contentType`。契约参考固定版本 [folder model](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) 和 [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go)。
+Folder/library GET exports round-trip through `save --id` with their current versions. `library model` returns the original model JSON. `api --path` exposes every published local API route with the same authentication; text responses return JSON `content` / `contentType`. Contracts follow pinned [folder models](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) and [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go).
 
-- 保留原始 JSON、targets、refId、instant / range、legendFormat、24 列 gridPos、fieldConfig 和 transformations；最多 500 面板，每面板 32 查询。
-- timeseries / graph、stat / singlestat、table、gauge、bargauge、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
-- 使用 **Grafana 官方 `@grafana/data`** 的标准转换算子、reducer、单位、阈值颜色和 value mapping；未知转换会明确报错。
-- query / custom / constant / textbox / interval 变量；`label_values`、`label_names`、`metrics`、`query_result`、regex / sort、多选 / All、重复面板。
-- `$__interval`、`$__rate_interval`、`$__range` 等宏，以及 regex / raw / pipe / csv / json 等变量格式；支持 `var-NAME` URL 参数。
-- 原始资源可原样导出，再由 Grafana 本体使用；安装的 React 面板插件通过官方 SDK 加载，未安装的插件显示具体错误。
-- 导入测试包含固定版本的社区 Node Exporter Full 模板。面板按可见区域加载，官方渲染依赖只在模板页加载。
+Version history shows saved time, author and message, with raw JSON viewing/download, configuration comparison and restore. Every successful save records an immutable version in the same transaction. Restore creates a new version while retaining current identity, folder and plugin metadata; library references use the current shared model. Stale, identical and missing-library restores write nothing. Native panel editing/deletion checks the dashboard captured when the dialog opened. Existing databases register only their currently available version without rewriting the source or inventing past history. All versions are currently retained; configurable retention remains pending.
 
-[Go runtime 示例](examples/dashboards/go-runtime.json) 展示真实运行指标、instant 表格转换、仪表和曲线：
+Grafana UID version list/detail/restore routes and the official resource history-selector dual V1/V2 stream are available. Resources preserve their actual source schema and report explicit conversion failures for unmatched schemas; complete resource CRUD remains pending. See the pinned [UnifiedDashboardAPI](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard/api/UnifiedDashboardAPI.ts) and [version model](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/dashboardversion/model.go).
 
 ```sh
-metricspanel dashboards save --file examples/dashboards/go-runtime.json
+metricspanel dashboards save --id DASHBOARD_ID --file native.json --revision UPDATED_AT --message "Update service panels"
+metricspanel dashboards history --id DASHBOARD_ID --limit 20
+metricspanel dashboards version-export --id DASHBOARD_ID --dashboard-version 2 --format grafana
+metricspanel dashboards compare --id DASHBOARD_ID --base-version 1 --new-version 2
+metricspanel dashboards restore --id DASHBOARD_ID --dashboard-version 1 --revision UPDATED_AT
 ```
 
-为 dashboard-as-code 工具提供 `POST /api/dashboards/db`、`GET / DELETE /api/dashboards/uid/{uid}`、`GET /api/search`，
-支持版本冲突检查 / overwrite。提供数据源发现、health 和 `/api/datasources/proxy/uid/metricspanel/...` 查询代理。
-这些接口同样要求工作空间 Bearer token，支持 `folderUid` / `folderId` 和稳定本地数字 ID。
+`history --continue-token TOKEN` continues an anchored range despite new saves; `version` returns the full record. Native responses include string version keys, exports/comparison retain exact JSON number values, and a native dashboard without an original source can export generated Classic JSON. Restoring configuration does not roll back metric samples or annotation events.
 
-**当前不是所有 Grafana 插件的替代运行时。** React 面板及 Go SDK 数据源已有原始安装包运行能力，
-但 Loki / Tempo 和各插件的全部核心服务依赖仍需逐项验证。
-部分核心 UI 扩展点、应用依赖的部分核心服务、Angular 旧插件、文件夹 / 组织权限和其余后端 API 尚未实现。Library UID 重命名和 App Platform 资源接口仍待补齐。
-V2 的 Grid / AutoGrid 会转换为网格；Rows 展开，Tabs 按文档顺序显示；条件布局可见性和 row repeat 尚未执行。
-field override 的单位、阈值、value mapping 等支持；自定义绘图选项（堆叠、双轴等）尚未完全执行。
-因此“完全兼容整个 Grafana 开源生态”仍是后续目标，不能把当前版本声称为完全兼容。
+Local imports submit the original JSON text. Browser and CLI exports read the saved source through `GET /api/v1/dashboard-exports/{id}?format=native|grafana` with workspace authentication, preserving unknown large integers. Grafana-compatible dashboard reads and writes preserve JSON number precision too. Retained datasource input values allow exported templates to rebind actual source references; ambiguous mappings return an error. Previously expanded constants do not yet support complete rebinding. V2 datasource variables use the official `pluginId` field with legacy `query` fallback.
 
-完整替代 Grafana 还需要补齐以下日常工作流：
+Panel targets, refIds, instant/range queries, legends, gridPos, fieldConfig and transformation contracts are retained.
+Limits are 500 panels and 32 queries per panel. Panels query only near the visible viewport; the official renderer dependency loads only for templates.
+Import tests include a pinned community Node Exporter Full dashboard.
+Supported renderers include graph / timeseries, stat / singlestat, table, gauge, bargauge, sanitized HTML / Markdown text and rows.
+The official `@grafana/data` package executes standard transformations, reducers, units, threshold colors and value mappings.
+Variables support label_values, label_names, metrics, query_result, regex/sort, custom/constant/textbox/interval, multi-select, All,
+repeated panels, common interval/range macros, variable formats and var-NAME URL parameters.
+Original Grafana resources are preserved and exportable with `dashboards export --id ID --format grafana`.
+The [Go runtime template](examples/dashboards/go-runtime.json) shows real metrics with an instant table transform, gauge and timeseries.
 
-| 工作流 | 已有能力 | 仍缺少的能力 |
+Dashboard-as-code tooling can use POST /api/dashboards/db, GET / DELETE /api/dashboards/uid/{uid} and GET /api/search.
+Version conflicts and overwrite are supported. Datasource discovery, health and /api/datasources/proxy/uid/metricspanel/... are available.
+These endpoints use the same workspace Bearer token, folderUid/folderId and stable local numeric dashboard IDs.
+
+**Full Grafana ecosystem parity is outside the project scope.** The following are optional interoperability gaps; prioritize them only for a selected migration workflow.
+Additional core UI extension points, some app core services, legacy Angular plugins,
+folder/organization permissions and remaining backend APIs remain unfinished. Library UID rename and App Platform resource APIs remain pending.
+V2 Grid/AutoGrid become grids, Rows expand, Tabs display in document order; conditional visibility and row repeat are not evaluated.
+Custom plotting options such as stacking and multiple axes are not all executed. Unknown transforms and plugin renderers are visible errors.
+The compatibility inventory documents selected behavior; it is not a full-parity roadmap or claim.
+
+Optional Grafana migration gaps (outside core product acceptance):
+
+| Workflow | Available | Missing |
 | --- | --- | --- |
-| 仪表盘编辑 | 多面板、模板导入、查询编辑、拖动与缩放布局、六类变量配置与选择、快照、版本历史 | 完整字段选项与转换编辑、ad hoc 和 group-by 变量 |
-| 告警通知 | 定时评估、查询图、规则组、状态历史、告警注释、Webhook 联系点、递归标签路由、分组与重复通知、静默、定时静音、通知模板预览、来源/目标告警抑制、持久化投递与重试 | 邮件 / Slack 等内置接收器、完整 Grafana 模板函数与默认格式、外部 Alertmanager 配置和其余接口 |
-| 数据源与 Explore | Prometheus、Grafana、MySQL / MariaDB、PostgreSQL SQL 查询、已安装 SDK 数据源插件 | 官方 SQL visual Builder、其余核心数据源、完整日志与追踪工作流；直连采集器只采固定指标 |
-| 用户与权限 | 工作空间令牌、同源校验、加密连接凭据 | 用户、组织、团队、角色、文件夹权限和独立服务账号 |
-| Agent 与分享 | JSON CLI、API 发现、资源配置和版本操作 | CLI 单步快照捕获、匿名分享与到期管理 |
+| Dashboard editing | Multiple panels, imports, query editing, 24-column drag/resize layout editing, configuration/selection of six variable types, snapshots and history | Full field and transformation editors, ad hoc and group-by variables |
+| Alert notifications | Scheduled evaluation, query graphs, rule groups, history, annotations, webhook contacts, recursive routes, grouping/repeats, silences, mute timings, notification template previews, source/target inhibition and durable delivery/retries | Email/Slack integrations, complete Grafana template functions/default formatting, external Alertmanager configuration and remaining APIs |
+| Datasources and Explore | Prometheus, Grafana, MySQL/MariaDB, PostgreSQL, Loki log search, Tempo trace search and installed SDK datasource plugins | Official SQL visual Builder, dedicated Loki/Tempo editors and full trace-detail views, remaining core datasources |
+| Users and permissions | Local Admin/Editor/Viewer accounts, user CLI/API, sessions and encrypted connection secrets | Organizations, teams, folder permissions, service-account UI and self-service password reset |
+| Agents and sharing | JSON CLI, API discovery, resource configuration and version operations | One-step CLI snapshot capture, anonymous sharing and expiration management |
 
-### 告警抑制
+### Alert inhibition
 
-在“告警 → 通知”添加来源和目标匹配条件，例如同一 `service` 的 critical 告警抑制 warning 通知。预览读取实际活动告警；不会创建告警。抑制只暂停通知，评估和历史记录继续。来源恢复或抑制规则停用后，仅仍活动的目标恢复发送；规则与抑制状态在重启后保留。
+Use Alerts → Notifications to define source and target matchers. For example, critical alerts suppress warning notifications for the same `service`. Preview uses actual active instances without creating alerts. Evaluation and history continue while delivery is inhibited. Clearing the source or disabling the inhibition rule resumes only targets that remain active, including after restart.
 
 ```sh
 metricspanel inhibition-rules save --file examples/alerts/inhibition-rule.json
@@ -246,115 +276,82 @@ metricspanel inhibition-rules save --id service-severity --version 1 --file exam
 metricspanel inhibition-rules delete --id service-severity --version 2
 ```
 
-更新和删除必须使用当前版本，过期写入返回 HTTP 409。此接口适用于本服务管理的告警；外部 Alertmanager 配置导入仍待完成。
+Update and delete require the current version; stale writes return HTTP 409. These APIs cover alerts managed by this service. External Alertmanager configuration import remains pending.
 
-## 向量波形分析
+## Grafana plugins and datasources
 
-在“指标查询”中执行指标查询，点击“保存当前窗口”，再选择参考窗口并“查找相似窗口”。
-窗口被转换为 **64 维 Float32 向量**，与原始指标分开持久化；比较图把两个窗口对齐到参考窗口时间轴。
-`shape` 消除均值和尺度差异，寻找相似波形；`raw` 保留实际量级。默认只比较同一指标；只匹配相同归一化和分析方式。
-计数器可以选择 `rate`，以每秒速率比较，包含重置处理。
+The plugin library searches the official Grafana catalog, filters panel/datasource/app types, and displays details, historical versions and server-platform availability. Selected versions install or update through signature verification. Published requirements do not establish runtime compatibility. Agents use `plugins search --query clock --kind panel`, `plugins info --id grafana-clock-panel`, `plugins versions --id grafana-clock-panel` and `plugins catalog --id grafana-clock-panel --plugin-version 3.2.4`; output is JSON.
 
-```sh
-metricspanel patterns capture --metric metricspanel_memory_bytes --range 30m --normalization shape
-metricspanel patterns list --limit 1000
-metricspanel patterns search --id PATTERN_ID --metric metricspanel_memory_bytes --limit 10
-metricspanel patterns search --id PATTERN_ID --exact
-metricspanel patterns get --id PATTERN_ID
-metricspanel patterns delete --id PATTERN_ID
-```
+Native `/api/gnet/plugins` preserves official catalog JSON and supports detail/version discovery. `/api/plugins/{id}/install` accepts an exact version or resolves the latest before signature verification. Uninstall, verified README/CHANGELOG and actual package-validation/backend-start errors have native routes too. `plugins catalog --id ID` installs latest; pin deployments with `--plugin-version EXACT`. Current startup errors last for the server process and clear after successful startup or uninstall.
 
-`--start` / `--end` 使用 Unix 毫秒；固定起止时间和输入数据可复现相同内容 ID，重复保存不会增加逻辑记录。
-窗口至少 64 秒，最多 31 天；至少 48 / 64 个分桶有观测数据。最多连续 8 个空桶可线性插补，只用于向量分析，原始指标不变。
-这是波形向量，未调用 LLM embedding。距离使用 L2，越小越相似，**不是概率或自动异常判定**。
+The Plugins page installs original ZIP packages or exact versions from the official catalog, enables/disables plugins and manages datasources.
+Grafana's PGP signature and every file SHA-256 are verified by default. Reinstalling an identical package preserves its timestamp and creates no extra directories.
+React panels share Grafana 13.2.3's public data/runtime/ui packages; AMD and SystemJS bundles are supported.
+The unchanged official signed Clock 3.2.4 package is tested for rendering, live clock updates, reloads and desktop layout.
 
-ClickHouse 26.8 使用 `Array(Float32)` 和持久化 HNSW，`--exact` 关闭近似索引，扫描候选向量；
-默认近似检索会重算候选距离，筛选较严格时数据库可能回退到精确扫描，或返回更少结果。
-SQLite 采用精确 top-K 扫描，限制每次最多 50,000 个匹配向量。向量库独立保留，直到主动删除，不随原始指标 TTL 清理。
-ClickHouse 数据卷保存向量和索引；SQLite 模式把向量放在同一个 WAL 数据库中。两种模式均验证了重启持久化。
-向量捕获目前使用原生指标 / 标签查询，尚未直接将任意 PromQL 派生结果转成向量。
-
-## Grafana 插件与数据源
-
-网页「插件 → 插件库」读取 Grafana 官方目录，支持搜索、按面板 / 数据源 / 应用筛选、查看详情及历史版本。详情显示已安装版本、Grafana 版本要求、Angular 检测和当前服务器的平台包；选择精确版本后使用已有的签名验证流程安装或更新。已安装插件支持启用 / 停用、卸载和配置；也可上传原始 ZIP。目录可发现 Renderer 条目，当前安装器不支持该包类型。
-
-原生 `/api/gnet/plugins` 保留官方目录 JSON，支持详情与版本查询。`/api/plugins/{id}/install` 可指定版本或使用当前最新版，安装前验证签名；卸载、README / CHANGELOG 和真实包校验 / 后端启动错误也有原生接口。`plugins catalog --id ID` 可安装最新版；需要固定部署时加 `--plugin-version EXACT`。当前启动错误随进程保存，成功重新启动或卸载后清除。
-
-```sh
-metricspanel plugins search --query clock --kind panel
-metricspanel plugins info --id grafana-clock-panel
-metricspanel plugins versions --id grafana-clock-panel
-metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
-```
-
-The plugin library reads the official Grafana catalog, with search, type filters, details and exact-version selection. CLI discovery and installation return JSON. Catalog requirements describe published packages; they do not establish runtime compatibility. Reads use a bounded five-minute cache, a 12-second timeout and a 4 MiB response limit. Installation continues to verify Grafana signatures and file hashes.
-默认验证 Grafana 官方 PGP 签名及所有文件的 SHA-256；相同安装包重复安装保留原安装时间，不增加目录。
-React 面板通过共享的 Grafana 13.2.3 `data` / `runtime` / `ui` SDK 运行，支持 AMD 与 SystemJS 包。
-已用未修改的官方 Clock 3.2.4 签名安装包验证实际渲染、时钟更新、页面刷新和移动布局。
-
-应用插件支持官方 `AppPlugin` 根页面、React 配置页和 `/a/PLUGIN_ID/` 路由。
-在「插件 → 配置」保存普通 JSON、加密密钥和导航固定状态；已保存的密钥只返回字段标记，留空会保留原值。
-原生配置 API / CLI 要求带上当前 `version`（首次为 0），冲突返回 409；Grafana 兼容的旧配置接口允许省略版本。
-插件升级保留启用状态、子插件偏好、配置和密钥。停用应用会停止整个安装包，单独停用子插件只停止该子插件。
+Application plugins support official `AppPlugin` roots, React configuration pages and routes under `/a/PLUGIN_ID/`.
+Use Plugins → Configure to save ordinary JSON, encrypted secrets and a pinned navigation entry.
+Saved secrets return only field-presence markers; omitted secrets are preserved. Native configuration writes require the current `version`
+(initially 0), with HTTP 409 on conflicts. Grafana's legacy settings endpoint also accepts versionless writes.
+Upgrades preserve enabled flags, child preferences, configuration and secrets. Disabling an app stops its whole package; disabling one child stops only that child.
 
 ```sh
 metricspanel plugins settings --id APP_ID
 metricspanel plugins configure --id APP_ID --file examples/plugins/app-settings.json
 ```
 
-示例中的版本号必须换成当前查询结果的 `version`。`secureJsonData` 可传入新密钥，`secureJsonFields` 的值设为 `false` 可清除对应密钥。
-后端资源、health、Live 和应用内的数据源接收官方 `AppInstanceSettings`，包含解密配置和更新时间。
-自动化测试使用真实 Go SDK 应用与内置数据源进程，验证页面路由、插件自带配置页、重启恢复、凭据隐藏和停用隔离。
+Replace the example's version with the current value returned by `plugins settings`. Supply new secrets through `secureJsonData`;
+set individual `secureJsonFields` entries to `false` to clear them. Resources, health, Live and bundled datasource requests receive
+official `AppInstanceSettings` with decrypted configuration and the update timestamp. Tests run real Go SDK app and bundled datasource processes,
+covering routes, plugin-owned configuration pages, persisted settings, masked credentials and disable isolation.
 
 ```sh
 metricspanel plugins catalog --id grafana-clock-panel --plugin-version 3.2.4
 metricspanel plugins install --file grafana-clock-panel-3.2.4.zip
 metricspanel plugins list
-metricspanel plugins get --id grafana-clock-panel
 metricspanel plugins disable --id grafana-clock-panel
 metricspanel plugins enable --id grafana-clock-panel
 metricspanel datasources save --file examples/datasources/prometheus.json
-metricspanel datasources list
 metricspanel datasources health --id remote-prometheus
 ```
 
-后端插件使用 Grafana Go SDK 的 gRPC 协议 2，提供 QueryData、QueryChunkedData、CheckHealth、CallResource、SubscribeStream、RunStream 和 PublishStream；查询返回官方 DataFrame JSON / Arrow 转换结果。
-运行时选择 `<executable>_<GOOS>_<GOARCH>[.exe]`，安装包必须提供当前平台可执行文件；需要系统动态库的插件还需部署相应运行库。
-后端插件最多八个并发请求，不继承应用令牌 / 数据库密码。服务关闭、插件停用或卸载时关闭对应子进程。
-数据源代理支持 HTTP(S)、Basic Auth 和 `jsonData.httpHeaderNameN` / `secureJsonData.httpHeaderValueN`（N=1–32）；插件查询走 `/api/ds/query`。
+Backend plugins use the public Grafana Go SDK's gRPC protocol 2 for QueryData, QueryChunkedData, CheckHealth, CallResource, SubscribeStream, RunStream and PublishStream, including official DataFrame JSON/Arrow conversion.
+Packages need `<executable>_<GOOS>_<GOARCH>[.exe]` for the host platform. Plugins using dynamic system libraries need those libraries installed.
+At most eight backend requests run concurrently. Plugin processes do not inherit workspace tokens/database passwords and exit on server shutdown, disable or uninstall.
+The datasource proxy supports HTTP(S), Basic Auth and secure custom headers. Plugin queries use `/api/ds/query`.
 
-数据源和应用插件的密钥通过 AES-256-GCM 加密保存。**备份时同时保留 SQLite 数据库、同目录 `secrets.key` 和 `plugins/`**；
-丢失密钥后必须恢复原密钥，不能用新密钥读取旧配置。插件资源只使用限于资源路径的短时 cookie，不授予数据 API 权限。
-`--plugins-dir` 可指定目录；`--root-url` 用于私有签名安装包的 URL 校验。
-开发插件必须显式配置 `--allow-unsigned-plugin PACKAGE_ID`，仅允许所列包。
+Datasource and application secrets are encrypted with AES-256-GCM. **Back up the control database, adjacent `secrets.key` and `plugins/` together.**
+An existing datasource or application configuration database without its original key fails to open with a restore instruction.
+Plugin assets use a short-lived cookie restricted to asset paths; that cookie cannot authorize data APIs.
+`--plugins-dir` changes the package location; `--root-url` is checked for private signatures.
+Development packages require an explicit `--allow-unsigned-plugin PACKAGE_ID` startup allowance.
 
-目前仍未达到完整 Grafana 插件运行时兼容：其余核心 UI 扩展点、完整数据源配置编辑器、旧 Angular 插件和部分核心服务待补齐。
-支持的能力和剩余项也会出现在 `metricspanel schema` 中。
+Additional core UI extension points, complete datasource configuration editors, legacy Angular and some core services are still pending.
+The CLI schema reports implemented and pending capabilities. Full compatibility remains the objective.
 
-## Grafana UI 扩展
+## Grafana UI extensions
 
-应用插件可以使用官方 `addLink`、`addComponent`、`addFunction`、`exposeComponent`，消费方支持
-`usePluginLinks`、`usePluginComponents`、`usePluginFunctions`、`usePluginComponent` 及链接 / 组件 Observable。
-提供方按 `plugin.json` 扩展声明自动加载，无需先打开应用页面；每插件限额、动态 `configure` 隐藏和覆盖、
-组件 `.meta`、同步 / 异步函数、所属插件的 `PluginContext` 和主题均已接通。链接上下文只读，保护工作空间数据；
-组件更新配置时保留本地状态，停用、卸载或升级会移除旧注册及其弹窗 / 侧栏，旧函数引用也检查当前安装包。
+App plugins register links, components, functions and exposed components through the official AppPlugin APIs.
+Consumers use `usePluginLinks`, `usePluginComponents`, `usePluginFunctions`, `usePluginComponent` and the link/component Observable APIs.
+Declared `plugin.json` extensions autoload their providers without opening the provider page. Per-plugin limits, configure-based hiding and overrides,
+component `.meta`, synchronous/asynchronous functions, provider PluginContext and theme are supported. Link contexts are read-only.
+Configuration changes preserve component state. Disable, uninstall and package changes remove old registrations and overlays; retained functions check the current package.
 
-工作空间目前接入面板菜单、AppChrome、顶栏操作、顶栏按钮、MegaMenu 操作及扩展侧栏六类核心位置。
-面板菜单传入原始面板 ID、dashboard UID、查询 targets、变量、时间范围和当前 DataFrame。
-`onClick` 助手支持 `openModal`、`openSidebar`、`closeSidebar`、`toggleSidebar`；弹窗正文收到 `onDismiss`。
-其他插件自定义扩展点可以直接使用上述消费 API。其余 Grafana 核心位置和内置 exposed components 仍需逐项接入。
+Native locations currently include dashboard panel menus, AppChrome, top-bar actions/buttons, MegaMenu actions and the extension sidebar.
+Panel context includes the original panel ID, dashboard UID, targets, variables, time range and query DataFrames.
+Link helpers implement `openModal`, `openSidebar`, `closeSidebar` and `toggleSidebar`; modal bodies receive `onDismiss`.
+Plugins can also consume their custom extension points. Other core locations and built-in exposed components remain outstanding.
+State reconciles every five seconds. Limits are four concurrent provider loads, twenty seconds per load, 1024 registrations per kind/provider and 1024 requested points.
+Agents can inspect declarations with `plugins get --id ID`; client callbacks require the browser runtime.
+Tests use two providers and an independent consumer for metadata, limits, state preservation, updates, revocation, overlays and desktop layout.
+See the [official API contract](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions); this runtime targets the shared 13.2.3 SDK.
 
-每五秒同步配置及安装状态；提供方最多四个并行加载、每次限二十秒；每插件每类注册最多 1024 条、
-页面最多请求 1024 个扩展点。`plugins get --id ID` 可让 Agent 发现声明，实际客户端回调需要浏览器运行时。
-自动化用两个提供方与独立消费方验证上下文、限额、状态保持、升级、撤销、弹窗、侧栏和桌面布局。
-契约参考 [Grafana UI extensions](https://grafana.com/developers/plugin-tools/reference/ui-extensions-reference/ui-extensions)，实现匹配当前共享的 13.2.3 SDK。
+## Durable annotations
 
-## 持久化注释
-
-`/api/annotations` 支持创建、查询、完整更新、局部更新、删除和标签枚举；另有 Graphite 写入与明确面板范围的批量删除。
-时间使用 Unix 毫秒，Graphite `when` 使用秒；时间点与区间都按交叠查询，标签默认为 AND，`matchAny=true` 切换 OR。
-支持 `dashboardUID` / 旧版 `dashboardId` 与 `panelId`；当前工作空间使用一个本地主体，接口沿用统一 Bearer 认证。
-注释和标签索引存于 SQLite WAL 控制库，两种指标后端均在重启后保留。可选 `idempotencyKey` 让同一规范化创建请求重试返回相同 ID，键对应不同内容返回 HTTP 409。
+`/api/annotations` supports creation, queries, full and partial updates, deletion and tag enumeration, plus Graphite creation and explicit dashboard/panel mass deletion.
+Times use Unix milliseconds; Graphite `when` uses seconds. Queries match overlapping points/regions and AND tags; `matchAny=true` uses OR.
+Dashboard UID/deprecated numeric ID and panel scopes share the workspace's existing Bearer authentication and single local principal.
+Records and indexed tags live in the SQLite WAL control plane for either metric backend. An optional creation `idempotencyKey` returns the same ID on retries across restarts; a different normalized payload for the key returns HTTP 409.
 
 ```sh
 metricspanel annotations save --file annotation.json
@@ -365,153 +362,150 @@ metricspanel annotations list --type alert --alert-uid RULE_UID
 metricspanel annotations delete --id 1
 ```
 
-创建文件示例：`{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"部署完成","tags":["deploy"],"idempotencyKey":"deploy-233"}`。
-原生图表的注释按钮提供中英文创建、编辑和删除；标记与区域按当前窗口裁剪，文本使用安全的纯文本提示。
-经典/V1/V2 模板的内置 Grafana 仪表盘与标签查询、变量标签、`enable`、面板 `filter.ids` 会执行；模板的 `hide` 不会隐藏事件。
-SDK 面板通过公开 `PanelData.annotations` 接收官方 `arrayToDataFrame` 转换的帧；混合来源保留完整字段，注释与指标序列分别传递。
-每次查询最多 1000 条，前端最多 32 个注释查询/1000 条合并事件，正文最多 8192 字节、标签最多 32 个。
-告警的等待、触发、恢复、无数据/错误，以及规则修改、暂停和删除会自动生成带 `prevState`/`newState` 的时间点注释。
-状态、历史、注释和标签在同一事务中提交；未改变的状态和过期执行不会重复生成，重启后可通过 `type=alert`、`alertUID` 或稳定数值 `alertId` 查询。
-规则注解中的 `__dashboardUid__` 与正整数 `__panelId__` 关联模板面板；无面板关联时，可用公开标签生成的 `key:value` 标签查询。
-原生图表按状态着色，注释列表以中英文显示状态；自动记录在编辑器中只读。SDK 混合注释帧保留状态字段。
-自动注释跟随最近 100000 条告警状态历史保留，手工注释独立保留。升级前的历史不会回填；recording rule 不生成告警注释。
-插件数据源通过公开 `AnnotationSupport` 执行默认查询、预处理、查询准备和自定义事件转换；旧版 `annotationQuery` 入口也会执行。
-默认转换支持字段名（忽略大小写）、固定文本、跳过字段和标签拆分，使用官方 SDK merge 算子合并帧；旧字符串查询模型会迁移到 target。
-模板查询提供面板实际时间范围、时区、变量、interval 和 `__annotation` 上下文，支持数据源 UID 变量。
-流式更新保持订阅；单个查询失败会显示名称和错误，其他注释及指标继续显示。每个查询限 60 秒无更新/10000 帧行/1000 事件，共享缓存最多 200 项。
-离开页面取消可订阅的数据源请求，包括 Go SDK HTTP/gRPC；旧版 Promise 的迟到结果会忽略，并向插件传递可选取消信号。
-不同数据源的事件 ID 分别保留并隔离，外部事件在编辑器中只读，不自动写入本地注释表。`annotations list` 查询本地记录；agent 可用 `datasources query --id UID --file FILE` 读取数据源原始帧，前端 SDK 回调由浏览器执行。
-Testify 和真实浏览器用例验证 Go SDK 帧、重启后的数据源设置、经典/V1/V2 模板、字段映射、同 ID 不同来源、错误隔离、变量和取消。
-仪表盘工具栏的“注释查询”提供增删、排序、启用、颜色、面板筛选和测试结果；内置查询可选择当前仪表盘或标签 AND/OR。
-外部数据源优先使用 `AnnotationSupport.QueryEditor`，然后使用插件普通 `components.QueryEditor`，传入官方数据源上下文、时间范围及测试 DataFrame；支持 `onChange` / `onAnnotationChange` / `onRunQuery`。
-Prometheus 提供 PromQL 输入；标准转换可配置字段、固定文本或跳过，插件自定义事件处理仍由插件负责。高级 JSON 可编辑其他插件字段。
-Prometheus 注释查询遵循数据源 `jsonData.timeInterval` 的最低步长，默认 15 秒，参考 [官方间隔配置](https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/)。
-取消和测试不会写配置；保存前检查打开时的仪表盘版本，检测到其他修改时要求重新打开。离开或停止测试会取消订阅。
-经典、V1 与 V2 保存原外壳和其他字段；未修改的 V2 查询资源原样保留，字段映射和插件附加字段跟随各自资源。
-原生仪表盘使用可选的 `annotations` 数组，存于 SQLite 控制库的现有 extras 中（最多 32 条、128 KiB），CLI 的仪表盘保存 / 导出也保留它；省略使用内置默认查询，`[]` 显式禁用全部查询。无需额外迁移服务。
-周期时间区域使用内置数据源的 `target.queryType: "timeRegions"` 和 `target.timeRegion`，支持简单星期／时间配置和高级 Cron 配置。
-开始时间由 `browser`、`utc` 或 IANA 时区确定；缺省时区沿用浏览器，新建查询默认仪表盘时区。简单区间支持每日跨午夜、显式星期跨周和仅星期配置的结束日包含。
-使用与 Grafana 13.2.3 相同的 Croner 9.1.0，支持五／六段表达式、星期名称、`L` 和 `#`。Croner 9.1 的夏令时缺口向后归一化，重复时段执行一次；持续时长按 SDK 换算后的固定毫秒累加，不重新对齐每个结束时间的本地钟表。
-按面板实际时间窗口计算包含重叠区间，保留未裁剪的开始／结束时间，图表裁剪显示；结束恰好位于窗口起点的区域排除，开始恰好位于终点的区域包含。每个查询最多 1000 个区域，超限或无效配置显示独立查询错误。
-原生色带和 SDK 注解帧接收相同事件；生成事件只读，不写入数据库，也不会出现在 CLI `annotations list` 中。CLI 仪表盘保存／导出保留其配置。
-星期、Cron、时区和持续时长可在中英文注释编辑器修改与预览，原生／经典／V1／V2 格式和未知字段均保留；存储重启、时区／夏令时、边界与浏览器 SDK 帧由自动测试覆盖。
-旧 Angular 注释编辑器和完整组织权限仍需补齐。周期配置参考 [Grafana 注解文档](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/) 和 [13.2.3 时间区域契约](https://github.com/grafana/grafana/blob/v13.2.3/public/app/core/utils/timeRegions.ts)。
-Testify、真实 SDK 浏览器用例与 Docker 两轮重启测试覆盖持久化、幂等、区间、标签、CRUD 和桌面布局。
-契约参考 [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/)。
-插件契约参考 [Grafana 13.2.3 查询执行器](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) 与 [标准注释转换](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts)。
-宿主初始化官方日志注册表，并同步 SDK 的数据源设置缓存和插件加载器；数据源服务重新加载时，设置增删改会同步新版与旧版服务。
-缓存与 expression 启动接口属于固定版本 SDK 的 core 实现，发布包未公开其入口；Vite 使用三个仅供宿主调用的 13.2.3 路径别名，升级 SDK 时必须重新验证这些接口。
+Example creation JSON: `{"dashboardUID":"system","time":1791590000000,"timeEnd":1791590060000,"text":"Deployment complete","tags":["deploy"],"idempotencyKey":"deploy-233"}`.
+Native charts offer a Chinese/English editor, point markers and clipped regions with plain-text tooltips.
+Classic/V1/V2 builtin Grafana dashboard/tag queries execute with variable tags, enabled state and panel filter IDs. Template `hide` preserves visible events.
+SDK panels receive public `PanelData.annotations` frames through official `arrayToDataFrame`; mixed sources retain all fields and annotation frames stay separate from metric series.
+Queries return at most 1000 events; the frontend permits 32 annotation queries and 1000 merged events, text 8192 bytes and 32 tags.
+Pending, firing, recovery, no-data/error transitions, and rule update/pause/deletion create point annotations with `prevState`/`newState`.
+State, history, annotations and tags commit together. Unchanged states and stale evaluations produce no duplicates; queries by `type=alert`, `alertUID` and stable numeric `alertId` survive restarts.
+Rule annotations `__dashboardUid__` and a positive `__panelId__` link events to template panels. Unlinked events can be queried by public label tags in `key:value` form.
+Native charts use state colors and bilingual state labels; automatic rows are read-only in the editor. Mixed public SDK annotation frames retain the state fields.
+Automatic annotations follow the newest 100000 transitions, while manual annotations are retained independently. Pre-upgrade history is not backfilled, and recording rules create no alert annotations.
+Plugin sources execute public `AnnotationSupport` defaults, preparation, query and custom event processing, plus the legacy `annotationQuery` entrypoint.
+Standard conversion supports case-insensitive fields, constant text, skipped fields and split tags; the official SDK merge operator combines frames, and old string queries migrate to targets.
+Requests carry the actual panel window, timezone, variables, interval and `__annotation` scope, including variable datasource UIDs.
+Streaming updates remain subscribed. Named query failures preserve other annotations and metric data. Limits are 60 seconds without an update, 10000 frame rows and 1000 events per query, with 200 shared cache entries.
+Leaving the page cancels observable datasource work, including Go SDK HTTP/gRPC calls. Late legacy Promise results are ignored; plugins also receive an optional cancellation signal.
+IDs from different sources remain separate. External rows are read-only and are not automatically ingested into local annotations. `annotations list` reads local records; agents use `datasources query --id UID --file FILE` to inspect raw datasource frames. Frontend SDK callbacks execute in the browser.
+Testify and real browser coverage verify Go SDK frames, datasource settings after restart, classic/V1/V2 templates, mappings, colliding source IDs, isolated errors, variables and cancellation.
+The dashboard toolbar's annotation query editor adds/removes, reorders, enables, colors and filters queries, and previews real results. Builtin queries select dashboard scope or AND/OR tags.
+External sources prefer `AnnotationSupport.QueryEditor`, then the plugin's ordinary `components.QueryEditor`, with official datasource context, range and preview DataFrames. `onChange`, `onAnnotationChange` and `onRunQuery` are supported.
+Prometheus offers a PromQL input. Standard mapping supports fields, constant text and skipped fields; custom event processing remains owned by its plugin. Advanced JSON edits other plugin fields.
+Prometheus annotation requests honor the datasource `jsonData.timeInterval` minimum, defaulting to 15 seconds, following the [official interval configuration](https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/).
+Cancel and preview do not persist configuration. Save checks the version present when the editor opened and reports detected concurrent edits; stop or unmount cancels subscriptions.
+Classic, V1 and V2 saves retain the original envelope and unrelated fields. Unchanged V2 query resources remain exact, with each resource's mappings and plugin extensions preserved.
+Native dashboards use an optional `annotations` array in the existing SQLite extras (32 queries, 128 KiB); CLI dashboard save/export preserves it. Omission uses builtin defaults; `[]` explicitly disables all queries. No separate migration service is required.
+Recurring regions use the builtin datasource's `target.queryType: "timeRegions"` and `target.timeRegion`, with simple weekday/time and advanced Cron editors.
+Starts use `browser`, `utc` or IANA zones. An omitted zone uses the browser; newly created configurations default to the dashboard zone. Simple schedules support daily overnight spans, explicit weekday week rollover and inclusive end days for day-only definitions.
+Croner 9.1.0 matches Grafana 13.2.3, including five/six fields, weekday names, `L` and `#`. This version normalizes DST gaps forward and runs folds once. Duration is converted by the SDK, then added as fixed milliseconds for every region rather than realigning each wall-clock end.
+Queries use the actual panel window and retain full overlapping intervals; charts clip them. An end exactly at the window start is excluded; a start at its end is included. Invalid configurations and more than 1000 regions produce isolated named errors.
+Native bands and SDK annotation frames share the events. Generated regions are read-only, never stored and absent from CLI `annotations list`; CLI dashboard save/export retains their configuration.
+Chinese/English editors preview and save weekday/Cron/timezone/duration in native, classic, V1 and V2 formats while preserving unknown fields. Automated tests cover persistence after restart, DST, boundaries and real browser SDK frames.
+Legacy Angular annotation editors and full organization permissions remain pending. See the [Grafana annotation guide](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/) and [13.2.3 time-region contract](https://github.com/grafana/grafana/blob/v13.2.3/public/app/core/utils/timeRegions.ts).
+Testify, real SDK/browser tests and two Docker restart rounds verify durability, retries, overlap, tags, CRUD and desktop layout.
+See the [Grafana annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/).
+Plugin execution follows the [Grafana 13.2.3 query runner](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/executeAnnotationQuery.ts) and [standard annotation converter](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/annotations/standardAnnotationSupport.ts).
+The host initializes official loggers, synchronizes the SDK datasource settings cache and registers its plugin importer; datasource service reloads synchronize edits across both SDK generations.
+The published package omits the cache/expression core boot exports. Three host-only Vite aliases bind the pinned 13.2.3 core modules; revalidate these bindings when upgrading the SDK.
 
-## 内置 Grafana 数据源
+## Builtin Grafana datasource
 
-发现 API 与两代公开 SDK 都提供只读 `-- Grafana --` 数据源，UID 为 `grafana`、数字 ID 为 `-1`；按名称、UID、ID 或仅 `type: grafana` 引用均可解析。默认指标数据源仍为 `metricspanel`。数据源变量读取实际实例并按插件类型和名称正则筛选，界面可选择其 UID。
+Discovery and both public SDK generations expose the read-only `-- Grafana --` instance with UID `grafana` and numeric ID `-1`. UID, name, numeric ID and type-only `grafana` references resolve it; `metricspanel` remains the default metric source. Datasource variables discover actual instances, filter by plugin type/name regex and expose their UIDs in the selector.
 
-前端执行 `randomWalk`、`snapshot`、`timeRegions`、`annotations` 和 `measurements`。随机序列支持初始值、上下限、spread、noise 和 dropPercent；快照使用官方 DataFrame JSON 转换并保留原始 refId。Live measurements 支持变量通道、字段筛选和缓冲，最后一个订阅结束会取消后端流。原生与经典/V1/V2 面板可以和 Prometheus 查询混用。
+The frontend executes `randomWalk`, `snapshot`, `timeRegions`, `annotations` and `measurements`. Random walks support start/min/max/spread/noise/dropPercent; snapshots use official DataFrame JSON conversion and retain original refIds. Live measurements support channel variables, field filters and buffering; the final unsubscribe cancels backend work. Native and classic/V1/V2 panels can mix these frames with Prometheus queries.
 
-导入模板后打开“面板查询”，选择 `-- Grafana --`，可用中英文表单编辑六种内置查询。切换类型保留原有快照、过滤器和未知选项；快照显示帧数量，数据帧可在高级 JSON 中编辑。预览通过真实 SDK 查询执行，实时流可停止，关闭编辑器也会取消订阅。“当前仪表盘”注释只读取当前 UID 的事件；标签查询可设置匹配方式和条数。保存同时更新原始 Classic/V1/V2 资源，CLI 导出保留资源封装。服务端告警表单仅允许 `randomWalk` 与 `list`，浏览器查询不能用于服务端告警。
+After importing a template, open Panel queries and select `-- Grafana --` to edit all six builtin query modes with English/Chinese forms. Changing modes retains snapshots, filters and unknown options. Snapshots display their frame count; advanced JSON edits their payload. Preview executes real SDK queries, and stop/close cancels live subscriptions. Dashboard annotations use the current UID; tag queries expose match mode and limits. Saves update the original Classic/V1/V2 resource and CLI exports retain its envelope. Server-side alert forms only allow `randomWalk` and `list`; browser queries cannot evaluate server-side alerts.
 
-后端与 agent 提供 `randomWalk` 和 `list`，沿用 [Grafana 13.2.3 内置后端分工](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go)。`listFiles` 只列出程序内嵌的公共网页文件，拒绝绝对路径和路径穿越；`list` 可省略时间范围。生成序列、快照和周期区域不会写入指标或注释存储。随机序列每帧最多 10,000 点、128 帧、每查询合计 1,000,000 点，非法配置和非有限数值返回具体错误。
+The backend and agent execute `randomWalk` and `list`, following the [Grafana 13.2.3 core backend split](https://github.com/grafana/grafana/blob/v13.2.3/pkg/tsdb/grafanads/grafana.go). `listFiles` only lists embedded public web assets and rejects absolute/traversal paths; list queries may omit the time range. Generated sequences, snapshots and recurring regions never enter metric or annotation storage. Random walks allow 10,000 points/frame, 128 frames and 1,000,000 points/query; invalid inputs and non-finite output produce explicit errors.
 
 ```json
 {"from":"now-5m","to":"now","queries":[{"refId":"A","queryType":"randomWalk","intervalMs":1000,"startValue":233,"spread":0}]}
 ```
 
-将上述 JSON 保存为文件后，运行 `metricspanel datasources query --id grafana --file query.json`，加 `--stream` 输出 NDJSON。前端 SDK 回调仍由浏览器执行；Grafana scopes 注释查询暂未实现，会明确报错。
+Save this as `query.json` and run `metricspanel datasources query --id grafana --file query.json`; add `--stream` for NDJSON. Frontend callbacks execute in the browser. Grafana scopes annotation queries remain unsupported and return an explicit error.
 
-旧版 `DataSourceSrv.registerRuntimeDataSource` 与公开 `@grafana/runtime/unstable` 注册入口共享运行时实例，重载设置后仍可发现，重复 UID 明确拒绝。此类临时实例随浏览器会话结束，不作为持久采集器。真实 SDK 浏览器用例验证发现、变量、注册、混合帧和流取消；Testify 与两轮 SQLite/ClickHouse Docker 测试验证 agent 输出及重启行为。
+Legacy `DataSourceSrv.registerRuntimeDataSource` and the public `@grafana/runtime/unstable` registration share runtime instances, preserve discovery after settings reload and reject duplicate UIDs. These instances live in the browser session rather than durable collectors. Real SDK browser tests cover discovery, variables, registration, mixed frames and stream cancellation; Testify and two SQLite/ClickHouse Docker rounds verify agent output and restart behavior.
 
-## 服务端 expression 查询
+## Server expression queries
 
-只读 expression 实例使用 UID / 类型 `__expr__`，兼容旧 ID `-100` 和名称 `Expression`，不作为可安装数据源显示。两代 SDK 共享同一个实例；经典、V1、V2 模板和未知字段保留。隐藏输入参与计算但不会渲染，跨数据源请求合并为后端依赖图。
+The read-only expression instance uses UID/type `__expr__`, legacy ID `-100` and name `Expression`, separate from installable datasource discovery. Both public SDK generations share its instance. Classic/V1/V2 templates retain envelopes and unknown fields. Hidden inputs execute without rendering; mixed sources run as one backend dependency graph.
 
-支持 Math、Reduce、Resample、Threshold、Classic conditions。Math 包含文档运算符及 13 个函数，引用写作 `$A` 或 `${query name}`；幂按 Grafana 13.2.3 解析器左结合，一元运算优先于幂。标签按相等、子集或无标签广播匹配，序列仅计算共同时间戳；各只有一个且标签不匹配时，结果去掉标签。相同标签键使用索引，测试覆盖 10,000 组维度。
+Math, Reduce, Resample, Threshold and Classic conditions operate on actual SDK frames. Math supports `$A` / `${query name}`, documented operators and 13 functions. Grafana 13.2.3 exponentiation is left associative; unary operators bind more tightly. Labels join by equality/subset/unlabelled broadcast, and series intersect timestamps. A single unmatched item on each side joins without labels. Equal label-key sets use an indexed join, tested with 10,000 dimensions.
 
-Reduce 支持 sum / mean / min / max / count / last / median，以及严格、dropNN、replaceNN 模式。Resample 支持 sum / mean / min / max / last 降采样和 pad / backfilling / fillna 填充；从窗口起点推进，包含可到达的结束点。Threshold 支持比较和包含／不包含边界的范围检查，保留数字、序列和空值类型。
+Reduce supports sum/mean/min/max/count/last/median and strict/dropNN/replaceNN modes. Resample supports sum/mean/min/max/last downsampling and pad/backfilling/fillna upsampling, from range start through the reachable inclusive endpoint. Threshold supports comparisons and exclusive/inclusive range checks over numbers or series, retaining nulls.
 
-`classic_conditions` 从各条件的 `query.params[0]` 获取输入引用，旧时间范围参数和未知字段保留。12 个经典归约函数包括 avg、diff / diff_abs、percent_diff / percent_diff_abs 和 count_non_null；序列跳过 null / NaN，保留 Inf，instant 数字直接比较。AND / OR 按文档顺序组合，logic-or 在已触发时停止后续条件计算；支持 no_value、反向范围以及包含边界的比较。最终输出单个无标签的 1 / 0 / null，`frame.meta.custom` 包含匹配数值（字符串）、指标和标签。比较窗口同时重命名条件引用，Classic / V1 / V2 模板均有浏览器测试。
+`classic_conditions` reads input RefIDs from condition `query.params[0]`, retaining legacy range parameters and unknown fields. Its 12 reducers include avg, diff/diff_abs, percent_diff/percent_diff_abs and count_non_null. Series reducers skip null/NaN and retain infinities; instant numbers bypass reduction. AND/OR fold in document order; logic-or stops further condition computation when already firing. Evaluators include no_value and reversed/inclusive ranges. Output is one unlabelled 1/0/null, with match diagnostics (string value, metric and labels) in `frame.meta.custom`. Comparison queries remap condition references. Browser tests cover Classic/V1/V2 templates.
 
-真实内存指标示例：`metricspanel datasources query --id __expr__ --file examples/queries/classic-conditions.json`，加上 `--stream` 可获取同样的匹配元数据。
+Use real memory metrics with `metricspanel datasources query --id __expr__ --file examples/queries/classic-conditions.json`; add `--stream` to receive the same match metadata.
 
-Grafana 告警规则使用同一后端表达式引擎执行原始查询图，支持多数据源和复合经典条件；持久化规则与 CLI 见下文告警章节。
+Grafana alert rules execute their persisted query graphs through the same backend expression engine, including multiple datasources and compound classic conditions. See alerting below for agent and persistence details.
 
 ```json
 {"from":"now-5m","to":"now","queries":[{"refId":"A","hide":true,"datasource":{"uid":"metricspanel"},"expr":"sum(up)","instant":true},{"refId":"B","type":"math","expression":"$A*100"}]}
 ```
 
-保存为文件后运行 `metricspanel datasources query --id __expr__ --file expression.json`；`--stream` 输出计算完成后的官方 NDJSON 帧。两种模式都保留成功结果，部分失败时返回非零退出码。依赖图无须按 RefID 排序；循环、缺失引用、非法节点报告具体引用，独立成功分支仍可用。计算不依赖浏览器，不修改输入，不写入存储。
+Save this as `expression.json` and run `metricspanel datasources query --id __expr__ --file expression.json`; add `--stream` for official NDJSON frames after graph computation. Both modes preserve successful results and exit nonzero for partial failures. RefIDs may arrive out of dependency order. Cycles, missing references and invalid nodes produce named errors while independent branches remain usable. Computation needs no browser, never alters inputs and never writes metrics or annotations.
 
-输入为宽时间序列、单数值列加字符串维度的数字表、Prometheus instant vector；null / NaN / Inf 使用官方 DataFrame JSON 保留。比较窗口重命名表达式依赖并保持历史时间戳。每请求最多 32 个查询、10,000 个匹配项、1,000,000 个工作点（输入和中间结果合计）、20 秒及 32 MiB 响应。
+Inputs are wide time series, one numeric column with string dimensions, or Prometheus instant vectors. Official DataFrame JSON preserves null/NaN/Inf. Panel comparisons remap references and retain historical timestamps. Limits: 32 queries, 10,000 joined items, 1,000,000 working points across inputs/intermediates, 20 seconds and 32 MiB response per request.
 
-SQL 表达式使用与 Grafana 13.2.3 相同的嵌入式 Go MySQL 引擎，支持 JOIN、CTE、子查询、窗口函数和固定版本函数白名单。后端 RefID 对应表；数字／时间序列 wide、multi 帧转换为 `__value__`、`__metric_name__`、可选显示名及标签列，普通表保留多数值列、字符串、布尔、时间和 JSON。每图只允许一个 SQL 终端节点，只能读取后端数据源，其他表达式不能消费 SQL 结果。查询最长 10000 字节，最多 100000 输入／输出单元格、10 秒；输出超限按完整行截断并附警告，输入超限报错。数据写入、文件访问和会话变量均拒绝。
+SQL expressions use the same embedded Go MySQL engine as Grafana 13.2.3, with JOINs, CTEs, subqueries, windows and its pinned function allowlist. Backend RefIDs are tables. Wide/multi numeric and time-series frames expand into full-long metric, value, optional display-name and label columns; ordinary tables retain numeric, string, boolean, time and JSON fields. Each graph permits one terminal SQL node, reading backend queries only; expressions cannot consume SQL results. Limits are 10000 query bytes, 100000 input/output cells and 10 seconds. Excess output truncates at a complete row with a warning; excess input fails. Writes, file access and session variables are rejected.
 
-Agent 可运行 `metricspanel datasources query --id __expr__ --file examples/queries/sql-metrics.json --stream`；告警示例为 `examples/alerts/graph-sql-memory.json`。告警／录制结果必须恰好一个数值列，字符串列组成唯一实例标签，NULL 字符串省略；重复标签报错。规则的临时 alerting 格式不覆盖原始 JSON，重启保留规则、状态、计时和录制样本。[SQL 契约与固定版本源码](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/sql_command.go)。
+Run `metricspanel datasources query --id __expr__ --file examples/queries/sql-metrics.json --stream`; save `examples/alerts/graph-sql-memory.json` for an alert example. Alert/record results require exactly one numeric column and unique string-label combinations; NULL strings omit labels. Evaluation forces a transient alerting format while preserving saved JSON, state, timers and recorded samples across restarts. See the [pinned SQL contract](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/sql_command.go).
 
-SQL 面板支持固定偏移与前一时段比较。两次后端请求分别使用当前／历史窗口，在请求内保留原始 RefID 和 SQL，返回后添加 `-compare` 与 `timeCompare` 元数据，因此 CTE、别名、引号内文本不需改写。原生曲线对齐显示时间，SDK 帧保留历史时间。SQL 使用真实面板变量与时间宏，允许变量和输入 RefID 同名；统一的 `__display_name__` 恢复数值列显示名，混合名称继续保留逐行数据，不修改缓存帧。原始时间输入支持显式 `DATETIME(6)` 精度转换；MySQL 默认 `TIMESTAMP` 输出精度为秒。示例为 `examples/grafana-sql-comparison.json`。
+SQL panels support fixed-offset and previous-period comparisons. Independent current/historical backend requests keep original RefIDs and SQL text, then mark returned frames with `-compare` and `timeCompare` metadata. CTEs, aliases and quoted text need no rewriting. Native plots align display timestamps while SDK frames retain historical timestamps. SQL uses actual scoped dashboard variables and time macros, including variables named after input RefIDs. Uniform `__display_name__` values restore numeric field aliases; mixed names remain per-row, without mutating cached frames. Native time inputs support explicit `DATETIME(6)` casts; default MySQL `TIMESTAMP` output precision is seconds. See `examples/grafana-sql-comparison.json`.
 
-原生仪表盘和导入模板的「面板查询」入口支持可视化编辑 Math、Reduce（严格／丢弃／替换非数值）、Resample、Threshold（反转与自定义恢复阈值）、有序 Classic conditions 和 SQL（table／alerting 格式）。已安装数据源使用公开 SDK `QueryEditor`，接收插件上下文、时间窗口、查询列表和按 RefID 的响应数据；修改、运行、添加查询回调均连接实际查询图。可调整顺序、隐藏显示、参与比较，并用高级 JSON 保留插件扩展字段。预览支持实时流，停止、修改查询和关闭编辑器会取消订阅。
+Panel and alert graph editors support all six expression operations and installed backend SDK QueryEditor callbacks; unsupported operations return explicit errors. Testify, real SDK/browser coverage, bilingual desktop checks and two SQLite/ClickHouse restart rounds verify behavior.
+See the [expression contract](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/), [classic conditions](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and [pinned parser](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go).
 
-查询编辑通过原子 PATCH 同时更新运行配置与原始 Classic／V1／V2 模板，保留查询资源包装、布局、其他面板、未知字段和未修改的大数值。`If-Match: updated_at` 是必填项；过期或已删除对象返回 409。Agent 使用 `dashboards export --id ID --format native` 读取版本，再执行 `dashboards queries --id ID --file FILE --revision UPDATED_AT`，文件包含查询及打开编辑器时的 baseline。整份仪表盘的旧 PUT 接口仍可用。其余核心数据源编辑器仍待补齐，验证以 Windows PC 浏览器为准。
+## Dashboard time ranges
 
-The **Panel queries** workspace supports native and imported dashboards, all six expression operations and installed SDK editors. Saves use an atomic PATCH with mandatory `If-Match: updated_at`, retaining unchanged raw numbers, envelopes and other panels. Use `dashboards queries --id ID --revision UPDATED_AT --file FILE|-` with the baseline merge contract in `metricspanel schema`. Remaining core datasource editors are still pending.
-契约参考 [expression 文档](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/expression-queries/)、[经典条件](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) 和 [固定版本解析器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/mathexp/parse/parse.go)。
+Saved `time` / `timeSettings` and timezone defaults from classic, V1 and V2 dashboards drive real queries.
+URLs accept `from/to`, `time/time.window` and `timezone`. Explicit bounds take precedence; centered windows use Unix milliseconds.
+Changing ranges preserves `var-*` values; reloads and browser history restore the selected window.
+The custom picker accepts Unix milliseconds, ISO dates and SDK date math such as `now-1h/h` and `now/d`, including IANA zones and DST.
+One now anchors both endpoints. Fixed windows remain fixed across refreshes; ranges are limited to 31 days.
 
-## Dashboard 时间范围
+SDK `PanelProps.onChangeTimeRange` and native chart drag selection default to updating the workspace and URL, then execute real queries.
+Query requests, SDK panel ranges, variable queries, date formatting and pattern capture use the selected bounds and timezone.
+`$__from`, `$__to` and `$__range_ms` retain exact milliseconds, and TemplateSrv.updateTimeRange is connected.
+Panel `timeFrom` supports date math and variables and overrides relative dashboard ranges. `timeShift` also applies to fixed ranges, respects calendar/timezone shifts and accepts rounding such as `1d/d`.
+The query snapshot supplies SDK PanelProps, panel data, macros, transformations, chart bounds and panel menus. `hideTimeOverride` hides the time description.
+SDK zoom and native drag selection reverse a panel's shift before updating the dashboard, avoiding a second application of the same shift.
+Classic `refresh` / V2 `timeSettings.autoRefresh` and interval choices drive timers; imported dashboards default to off, native workspaces to five seconds.
+Controls offer off, explicit intervals and automatic mode. URL `refresh` overrides saved defaults; an empty value means off, and browser history preserves the choice.
+The minimum interval is five seconds. Automatic mode uses the range and viewport width. Hidden pages pause requests, resume catches up once, and unmount clears timers.
+The standard Grafana `timeCompare` field issues separate historical queries. Classic/V1 panels save it directly; V2 saves `data.spec.queryOptions.timeCompare`.
+Explicit intervals and `__previousPeriod` are supported. Query `timeRangeCompare: false` opts out; V2 retains it in `DataQuery.spec`.
+Early MetricsPanel `compareWith` templates remain supported. The standard field takes precedence; an explicit empty string disables comparison, including when a legacy alias is present.
+Comparison frames carry idempotent `-compare` refIds and SDK `timeCompare.diffMs` metadata. SDK panels retain historical timestamps; native curves use the official alignment helper and dashed styling.
+Comparison `1d` / `1M` offsets follow the SDK's fixed 24-hour / 30-day durations, whereas `timeShift` uses calendar date math. Relative raw ranges advance on refresh.
+Choosing “Zoom scope → This panel” creates a native local view: SDK zoom and drag selection query that panel while preserving the URL and other panels. Refresh retains the local window; reset or parent range/variable changes restore the dashboard window.
+Local zoom is browser view state and preserves original template exports. Comparison errors are visible while primary query data remains available.
+Twelve model tests, Testify import tests and browser tests verify historical requests, opt-out, frame metadata, alignment, refresh, local zoom and bilingual desktop layout.
+Browser tests import standard classic/V1/V2 resources and verify real queries and lossless agent CLI exports, explicit disable and legacy aliases.
+Grafana 13.2 keeps `zoomBehavior` in Scenes runtime state; its classic/V2 serializers do not persist it. Native local zoom remains a browser view operation.
+Full Scenes lifecycle and additional time interactions remain outstanding.
+See the [Grafana time URL contract](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/).
+Overrides follow the [Grafana 13.2 PanelTimeRange implementation](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx).
+Comparison fields follow the [classic serializer](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModel.ts) and [V2 serializer](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModelSchemaV2.ts).
 
-经典 JSON、V1 和 V2 resource 的 `time` / `timeSettings` 默认时间与时区会应用到实际查询。
-URL 支持 `from/to`、`time/time.window` 和 `timezone`；前者优先，中心窗口以 Unix 毫秒表示，
-切换范围保留 `var-*` 参数，重载及浏览器历史可还原窗口。
-自定义选择器支持 Unix 毫秒、ISO 日期和 SDK 日期运算（例如 `now-1h/h`、`now/d`），包含 IANA 时区及夏令时。
-每次解析共享一个 now；固定时间不会随刷新向后移动，范围限于 31 天。
+## Grafana application events
 
-SDK `PanelProps.onChangeTimeRange` 和原生折线图拖选默认更新工作空间及 URL，并触发真实查询。
-查询 request、SDK 面板时间范围、变量查询、单位日期展示和波形捕获都使用选择的边界与时区；
-`$__from`、`$__to`、`$__range_ms` 保留精确毫秒，TemplateSrv.updateTimeRange 也已接通。
-单面板 `timeFrom` 支持日期运算和变量，仅覆盖相对仪表盘范围；`timeShift` 也适用于固定范围，按时区和日历移动，支持 `1d/d` 等舍入。
-查询快照同步到 SDK PanelProps、数据时间范围、宏、转换、图表和面板菜单；`hideTimeOverride` 隐藏时间说明。
-带偏移面板的 SDK 缩放和原生拖选会先反向换算仪表盘窗口，避免查询再次应用同一偏移。
-经典 `refresh` / V2 `timeSettings.autoRefresh` 和刷新选项会应用到定时器，导入模板缺省关闭；原生工作空间缺省 5 秒。
-刷新控件提供关闭、指定间隔和自动模式；URL `refresh` 优先于模板，空值表示关闭，切换与历史保留参数。
-刷新至少间隔 5 秒，自动模式依据窗口宽度和范围计算；隐藏页面暂停请求，恢复时补一次刷新，页面卸载清理定时器。
-Grafana 标准 `timeCompare` 会追加独立的历史查询，经典/V1 面板直接保存该字段，V2 保存于 `data.spec.queryOptions.timeCompare`。
-支持明确间隔和 `__previousPeriod`；查询 `timeRangeCompare: false` 退出比较，V2 保存在 `DataQuery.spec` 中。
-早期 MetricsPanel 的 `compareWith` 字段继续可用；标准字段优先，显式空字符串关闭比较，避免旧别名意外启用历史查询。
-比较帧使用幂等的 `-compare` refId 与 SDK `timeCompare.diffMs` 元数据，SDK 保留原始历史时间戳，原生曲线使用官方对齐函数及虚线样式。
-比较的 `1d` / `1M` 按 SDK 固定时长（24 小时 / 30 天）偏移，与 `timeShift` 的日历日期运算不同；相对 raw 范围随刷新重新解析。
-面板上的“缩放范围 → 当前面板”提供原生局部视图，SDK 缩放和拖选仅查询当前面板，保留 URL 和其他面板范围；刷新保持局部窗口，重置或父范围/变量变化恢复仪表盘窗口。
-局部缩放是浏览器视图状态，原始模板导出不变。比较错误会显示并保留主查询结果。
-十二个时间模型测试、Testify 导入测试与浏览器回归覆盖历史请求、比较 opt-out、帧元数据、曲线对齐、刷新、局部缩放及中英文桌面布局。
-浏览器实际导入经典/V1/V2 标准字段并检查查询与 Agent CLI 原始导出；也验证空字符串关闭和旧别名。
-Grafana 13.2 的 `zoomBehavior` 属于 Scenes 运行状态，当前经典/V2 序列化未保存它；原生局部缩放保留为浏览器视图操作。
-完整 Scenes 生命周期及其他未实现的时间交互仍需补齐。
-参考 [Grafana 时间 URL 契约](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/create-dashboard-url-variables/)。
-时间覆盖按 [Grafana 13.2 PanelTimeRange 源码](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/scene/panel-timerange/PanelTimeRange.tsx) 实现。
-时间比较字段匹配 [经典模板序列化](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModel.ts) 与 [V2 模板序列化](https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/dashboard-scene/serialization/transformSceneToSaveModelSchemaV2.ts)。
+`getAppEvents()` returns the shared official SDK `EventBusSrv`: typed `publish/getStream/subscribe`, scoped buses
+and legacy `emit/on/off` work, including custom events between applications and extensions.
+Plugin `RefreshEvent` and legacy `refresh` trigger real workspace queries. Native refresh buttons and the five-second poll publish the same event.
+Concurrent refreshes are coalesced per workspace, with at most one pending follow-up while a request is running.
+Native range selection publishes `TimeRangeUpdatedEvent` with SDK DateTime values and raw `now-RANGE / now`.
+Independent panel buses relay refresh, time-range and theme events in both directions without echoing the source panel.
+Panel teardown removes only its own subscriptions; sibling panels and applications continue receiving events.
 
-## Grafana 应用事件
+`AppEvents.alertSuccess/alertWarning/alertError/alertInfo` show four native notification severities with title, detail and Error.message.
+Text is rendered without HTML and bounded to 8192 characters. Errors/warnings use `role=alert`; dismiss controls support Chinese and English.
+These are browser notifications; server webhook notifications are configured in Alerts → Notifications. The theme is currently dark-only.
+Native CopyPanelEvent handling, global hover/select from native charts and other app core services still need implementation.
+An independent app and two SDK panels test real query updates, duplicate prevention, unmount/remount, coalescing, notifications and desktop layout.
+See the [Grafana event subscription contract](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events).
 
-`getAppEvents()` 现在返回共享的官方 SDK `EventBusSrv`，支持 typed `publish/getStream/subscribe`、
-scoped bus 和旧版 `emit/on/off`，自定义事件可在应用和扩展间通信。
-插件发出 `RefreshEvent` 或旧版 `refresh` 会触发实际工作空间查询；原生刷新按钮和五秒轮询也广播该事件。
-并发刷新按工作空间合并，运行中的请求最多保留一次后续刷新。
-原生时间范围选择广播 `TimeRangeUpdatedEvent`，包含 SDK DateTime 及原始 `now-RANGE / now`。
-面板独立事件总线与应用总线双向转发 refresh、time-range 和 theme 事件，源面板不会收到重复广播；
-卸载面板只清理自己的订阅，其他面板和应用继续工作。
+## Grafana Live and agent subscriptions
 
-`AppEvents.alertSuccess/alertWarning/alertError/alertInfo` 显示四种原生通知，支持标题、描述及 Error.message，
-文字按纯文本展示，最多 8192 字符。错误和警告使用 `role=alert`；关闭按钮随中文 / 英文界面切换。
-这是浏览器通知；服务端告警 Webhook 在“告警 → 通知”中配置。主题目前固定为深色；CopyPanelEvent 的原生复制动作、
-原生图表的全局 hover/select，以及其他应用核心服务仍需继续接入。
-独立 App 和两个 SDK 面板测试覆盖真实查询更新、重复事件隔离、卸载 / 重挂载、限流、通知及桌面布局。
-参考 [Grafana 事件订阅契约](https://grafana.com/developers/plugin-tools/how-to-guides/panel-plugins/subscribe-events)。
-
-## Grafana Live 与 Agent 实时订阅
-
-`/api/live/ws` 提供 Centrifuge JSON WebSocket 协议。数据源通道为 `ds/UID/path`，插件通道为 `plugin/ID/path`。
-原始插件可通过 `getGrafanaLiveSrv()` 订阅；`DataSourceWithBackend` 的 DataFrame `meta.channel` 会自动接入实时流。
-浏览器使用官方 `StreamingDataFrame` 保存有界缓冲、执行已有转换和单位格式化；实时面板持续更新，普通查询保留定时刷新。
-混合面板按响应 key 合并数据；只重查普通查询，保留正在运行的实时订阅。
-同一通道共用一个后端 SDK RunStream；同页面共用一个 WebSocket，最后一个订阅离开即取消。
-更新数据源会取消旧配置并通知浏览器重新订阅；删除数据源、停用插件和关闭服务器会终止流。
+`/api/live/ws` implements the Centrifuge JSON WebSocket protocol. Channels use `ds/UID/path` or `plugin/ID/path`.
+Plugins can call `getGrafanaLiveSrv()`; `DataSourceWithBackend` automatically connects frames with `meta.channel`.
+The browser uses the official `StreamingDataFrame`, bounded buffers and the existing transforms/field formatting.
+Streaming queries continue through dashboard refreshes; ordinary queries still refresh periodically.
+Mixed panels merge response keys and refresh only the static queries while retaining active subscriptions.
+Each channel shares one SDK RunStream, each page shares one socket, and the final unsubscribe cancels the backend stream.
+Datasource updates discard the old context and trigger resubscription; deletion, plugin disable and server shutdown stop streams.
 
 ```sh
 metricspanel live channels
@@ -520,86 +514,83 @@ metricspanel live watch --channel ds/MY_DATASOURCE/path --metadata '{"key":"valu
 metricspanel live publish --channel ds/MY_DATASOURCE/path --file packet.json
 ```
 
-`watch` 每个初始帧 / 推送帧输出一行 JSON（NDJSON）：`type`、`channel`、`timestamp`、`data`。
-默认最多 10 帧 / 1 分钟，初始帧计入限额；`0` 分别关闭帧数 / 时间限额。Ctrl+C 释放订阅。
-订阅失败或连接中断返回 JSON 错误和非零退出码，Agent 可以决定是否重新连接。
-`publish` 的数据结构和权限由插件决定；同一通道的订阅 metadata 必须一致。
+Watch emits NDJSON with `type`, `channel`, `timestamp` and `data`. The initial frame counts toward the limit.
+Defaults are 10 frames and one minute; zero disables either limit. Ctrl+C releases the subscription.
+Subscribe failures and disconnects produce JSON errors on stderr and a nonzero exit code; agents decide whether to reconnect.
+The plugin defines publication payloads and permissions. Subscribers on the same channel must use matching metadata.
 
-浏览器会话 cookie 有效 15 分钟，只授权 WebSocket 路径，重连前自动刷新；CLI 使用 Bearer 升级头。
-最多 256 个活动通道、每连接 128 个通道、单包 1 MiB；前端缓冲最多 10,000 行。
-实时传输本身不落盘，插件推送不会自动写入指标库；采集器 / ingest 的 SQLite 和 ClickHouse 持久化不受影响。
+Browser cookies last 15 minutes, authorize only the WebSocket path, and renew before reconnecting. The CLI uses a Bearer upgrade header.
+Limits are 256 active channels, 128 channels per connection, 1 MiB per packet and 10,000 buffered frontend rows.
+Live transport is transient; plugin publications are not automatically ingested. Collector/ingest SQLite and ClickHouse storage remains durable.
 
-## 分块查询与 Agent NDJSON
+## Chunked queries and agent NDJSON
 
-原生支持 Grafana 连接查询接口 `POST /apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query`。
-请求采用官方 SDK DTO：`from` / `to` 支持时间表达式，查询也可提供独立 `timeRange`。默认返回普通 JSON；
-设置 `Accept: text/jsonl` 后调用 SDK `QueryChunkedData`，每个 JSON 行立即 flush，Arrow 转为官方 DataFrame JSON。
-`/api/ds/query` 也支持该 Accept，保留其原有请求格式。接口要求工作空间 Bearer token，并检查 Origin。
+POST `/apis/{pluginId}.datasource.grafana.app/v0alpha1/namespaces/default/connections/{uid}/query` accepts the official SDK request DTO.
+Global `from`/`to` support date math; queries may supply individual `timeRange` values. The default response is ordinary JSON.
+`Accept: text/jsonl` calls SDK QueryChunkedData, converts Arrow frames to DataFrame JSON and immediately flushes each record.
+The existing `/api/ds/query` also accepts this header with its original request format. Both routes enforce Bearer authentication and Origin checks.
 
 ```sh
 metricspanel datasources query --id metricspanel --file examples/datasources/query.json
 metricspanel datasources query --id MY_DATASOURCE --file query.json --stream
 ```
 
-`--stream` 每行输出 `refId`、`frameId`、`frame` 或 `error` / `errorSource`。
-同一 `(refId, frameId)` 的首块包含 schema，后续块追加数据。正常 EOF 结束，没有默认帧数截断；
-部分查询失败仍保留已输出的数据，完成后返回 JSON stderr 错误和退出码 1。Ctrl+C 会取消后端请求。
-不支持分块 RPC 的旧插件只在尚未输出任何块时回退到 QueryData，避免重复数据。
-浏览器提供官方 `BackendSrv.chunked` 原始字节 Observable，插件自行解析和追加；有限查询执行期间不会被定时刷新重启。
-限额为 32 个查询、1024 个 frame、每块 8 MiB、每请求 32 MiB、后端 60 秒，最多 4 个数据源并行。
-CLI `--duration` 默认 1 分钟，`0` 关闭客户端期限；服务器期限仍适用。
+Stream records contain `refId`, `frameId`, `frame` or `error`/`errorSource`. The first record for each `(refId, frameId)` includes schema;
+later records append data. The CLI runs until EOF without a default frame-count cutoff. Partial errors preserve stdout data and finish with JSON stderr and exit 1.
+Ctrl+C cancels the backend request. Older plugins fall back to QueryData only when the streaming RPC is unimplemented before any record.
+The browser exposes the public BackendSrv.chunked raw-byte Observable; plugins own parsing and appending. Finite queries are not restarted by dashboard refreshes while active.
+Limits are 32 queries, 1024 frames, 8 MiB per chunk, 32 MiB per request, 60 seconds on the server and four concurrent datasources.
+The CLI's `--duration` defaults to one minute; zero disables its deadline while server limits still apply.
 
-## 性能、持久化与边界
+## Vector pattern analysis
 
-- ClickHouse 同时提供**列式时序分析**和 **HNSW 指标窗口向量检索**，用于数值波形分析。
-- 批量写入（1–10,000 样本），确认异步批量插入落盘后返回；MergeTree 开启 fsync。
-- 参数化标签过滤，时间 / 指标排序键，ZSTD / Gorilla 压缩；基础聚合在 ClickHouse 执行。
-- SQLite WAL + 事务；进程重启保持已确认样本和配置；Docker 数据卷保持容器重建后的数据。
-- PromQL 目前把命中的样本加载到受控内存再执行，上限 100 万样本 / 10,000 序列，尚无查询下推。
-- labels / label values / series 发现只查询序列元数据，不传输原始指标样本；最多 10,000 个匹配序列。
-- 原生查询最长 31 天、200 序列、2,000 分桶，SQLite 原生查询最多读取 250,000 样本。
-- 每次抓取 / 推送最多 4 MiB、10,000 样本；最多 8 个并发抓取。
-- 当前为单实例设计，未验证集群、百万级序列或长期大规模生产负载，不能承诺特定吞吐。
+Run a metric query in Explore, save its current window, select a saved reference and find similar windows.
+`shape` removes mean/scale; `raw` preserves measurement levels. Counter windows can use reset-aware `rate`.
+Windows become 64-dimensional Float32 vectors; comparison charts align vectors to the reference window's timeline.
+This is numerical waveform analysis, without an LLM embedding model. L2 distance is smaller for closer matches; it is not a probability or an automatic anomaly verdict.
 
-性能测试会报告当前机器的批量确认时间和查询耗时，以实测为准。
-Docker 测试追加 4 个并发写入端：SQLite 10 万样本、ClickHouse 100 万样本，记录批量 p50 / p95 和 24 小时聚合时间。
-另外保存 10,000 个 64 维窗口向量，通过 `EXPLAIN` 确认 HNSW 被使用，与精确查询比较 recall@10，并在重启 ClickHouse 后再次检查索引查询计划。
-这验证有界工作负载，不代表百万活跃序列或长时间生产负载。
-`metricspanel stats` 的 series 指仍在保留期内的序列；写入速率是过去 60 秒平均值。
+```sh
+metricspanel patterns capture --metric metricspanel_memory_bytes --range 30m --normalization shape
+metricspanel patterns list --limit 1000
+metricspanel patterns search --id PATTERN_ID --metric metricspanel_memory_bytes --limit 10
+metricspanel patterns search --id PATTERN_ID --exact
+metricspanel patterns get --id PATTERN_ID
+metricspanel patterns delete --id PATTERN_ID
+```
 
-## 持久化告警与记录规则
+Explicit `--start` / `--end` are Unix milliseconds. Identical windows/data produce the same content ID, so repeated saves do not add logical duplicates.
+Windows must span 64 seconds–31 days, contain observations in at least 48/64 buckets, and have no gap larger than eight buckets.
+Small gaps are interpolated only for the embedding; raw metrics remain unchanged. Native metric/label capture is supported; arbitrary PromQL-derived capture is not yet available.
+ClickHouse 26.8 uses persistent HNSW with candidate rescoring. Selective filters can trigger exact scans or yield fewer approximate results.
+`--exact` disables approximate indexing. SQLite uses exact top-K, capped at 50,000 filtered vectors per search.
+Saved vectors remain until explicitly deleted, independently of metric TTL. Both vector stores and the ClickHouse index survive tested restarts.
 
-告警查询图编辑器的「预览告警查询」通过 `/api/v1/alerts/preview` 返回真实 SDK 查询帧、标签、条件真假和错误。预览使用独立的新维度判断恢复阈值，不保存规则、不推进计时或写入记录样本；与调度器共享四个执行槽和 20 秒限时，停止、修改查询或关闭窗口会取消请求。Agent 使用 `metricspanel alerts preview --file examples/alerts/graph-memory.json --at 1791640000000`；省略 `--at` 使用当前时间。文件可为原生规则或 provisioning 查询图；部分错误仍输出 JSON 帧，退出码为 1。
+## Durable alerts and recording rules
 
-网页「告警」支持创建、编辑、暂停、手动执行和查看每个标签实例的状态 / 历史。
-后台每条规则独立调度，最多四条并发查询；规则、等待触发 / 恢复计时和最近 100000 条状态变化写入 SQLite WAL 控制数据库。
-无论指标使用 SQLite 还是 ClickHouse，重启应用后计时继续。修改规则会重置实例，并记录恢复事件；原生更新需要携带 GET 返回的 `version`。
+The Alerts page creates, edits, pauses and evaluates PromQL rules, with individual label-instance states and recent history.
+The scheduler executes at most four queries concurrently. Configuration, pending/recovery timers and the latest 100,000 transitions persist in the SQLite WAL control database for both metric backends.
+API updates require the returned `version`; edits reset instances and record a resolution transition.
 
 ```sh
 metricspanel alerts save --file examples/alerts/runtime-memory.json
-metricspanel alerts list
 metricspanel alerts evaluate --id runtime-memory
 metricspanel alerts history --id runtime-memory --limit 100
-metricspanel alerts get --id runtime-memory
-metricspanel alerts get --id runtime-memory > rule.json
-metricspanel alerts save --id runtime-memory --file rule.json
 metricspanel alerts import-grafana --file grafana-rule.json
 ```
 
-`condition=presence` 使用 Prometheus 语义：返回的时序触发，包括值为 0 的时序。
-`condition=nonzero` 使用布尔值，网页默认使用这种方式：`up == bool 0`、`memory_bytes > bool 1073741824`。
-状态包括 Normal / Pending / Firing / Recovering / NoData / Error，无数据与错误策略可选择正常、触发、专用状态或保持上次状态。
-Prometheus 兼容 `/prometheus/api/v1/rules` 与 `/alerts` 可发现规则及活动实例。
-记录规则指定 `record` 指标名，将原生 PromQL 或 Grafana 图的有限数值结果写回当前指标数据库，可供模板查询。
+`condition=presence` follows Prometheus semantics: returned samples fire, including zero-valued samples.
+`condition=nonzero` evaluates booleans; the UI uses expressions such as `up == bool 0`.
+Rules support pending and keep-firing periods, no-data/error policies and durable per-instance history.
+Prometheus-compatible `/prometheus/api/v1/rules` and `/alerts` expose the rules and active instances.
+Set `record` to a metric name to store query results as a recording rule.
 
-Grafana provisioning 的规则 GET / POST / PUT / DELETE 及规则组 GET / PUT / DELETE 可用。
-新导入规则以 `execution=grafana` 持久化原始查询图，评估时复用服务端 expression 引擎。支持已配置的 Prometheus、内置 Grafana 和 Go SDK 后端数据源，Math 多引用与标签连接、Reduce 各模式、Resample、Threshold、复合 Classic conditions；每条查询按同一评估时刻计算自己的 `relativeTimeRange`，最多 31 天。插件接收 `FromAlert=true`、`X-Cache-Skip=true` 和组织标记，密钥仍通过既有加密设置传递。
+Grafana provisioning rule CRUD and group GET/PUT/DELETE persist new rules with `execution=grafana`. The backend runs the original query graph through the shared expression engine: configured Prometheus, built-in Grafana and SDK backend sources, multi-reference Math and label joins, all Reduce modes, Resample, Threshold and compound Classic conditions. Every query derives its own relative range from one scheduled timestamp, up to 31 days. Plugins receive FromAlert=true, X-Cache-Skip=true and organization headers through the existing encrypted instance settings.
 
-条件须返回按标签区分的单数值帧；null 应用对应实例的无数据策略，数据源整体 NoData 优先于健康条件。Grafana 的非零 NaN / Inf 仍触发告警，数值以 `value_text` 保存，避免 JSON 编码失败；记录规则拒绝非有限数值，避免部分写入。经典条件匹配详情持久化在 `runtime.instances[].matches`，每帧最多 1 MiB。计时、状态、匹配详情和原始图在重启后保留。
+Conditions return one numeric value per labelled frame. Nulls apply per-instance no-data policies; datasource NoData takes priority over a healthy condition. Nonzero NaN/Inf follow Grafana alert truth and persist safely as value_text. Recording rules reject nonfinite values before ingesting any partial batch. Classic match diagnostics persist in runtime.instances[].matches, limited to 1 MiB per frame. Timers, state, matches and graph definitions survive restart.
 
-网页告警编辑器提供中文 / 英文可视化查询图：数据源 SDK QueryEditor、全部六种表达式、条件选择、各查询时间范围、增删排序，以及高级 JSON；插件模型、未知字段和规则元数据在编辑后保留。`metricspanel alerts save --file examples/alerts/graph-memory.json` 可直接创建原生图规则；`alerts import-grafana` 接收标准 provisioning JSON。CLI 可直接读取并更新含 `runtime` 的 GET 结果，必须保留当前版本。切换为原生 PromQL 会清除旧图；已有未设置 `execution=grafana` 的规则继续原来的 PromQL 执行路径。
+The bilingual visual alert graph editor offers datasource SDK QueryEditor with UnifiedAlerting context, all six expression operations, condition selection, individual query windows, add/remove/reorder and advanced JSON. Edits preserve plugin models, opaque fields and rule metadata. Create a native graph with `metricspanel alerts save --file examples/alerts/graph-memory.json`, or import standard provisioning JSON with alerts import-grafana. GET output can be updated with alerts save using its current version. Switching to native PromQL discards the old graph; existing rules without execution=grafana keep their previous PromQL path.
 
-规则组 PUT 在一个 SQLite 控制面事务内替换全部规则、调度、状态、历史和注解；省略或传入 null 的 `rules` 仅更新间隔，显式 `rules: []` 清空规则组。URL 中的文件夹 / 组名覆盖请求体。完全相同的 PUT 或 GET / PUT 往返不增加版本、不重置状态；只调整间隔、顺序、来源标记或移动规则时保留计时。查询或判断语义变化才重置状态。请求数组顺序持久化，移动 UID 后整理来源组的顺序。涉及正在评估的规则时整组返回 409，避免记录规则在修改期间写入过期结果。规则组间隔为 5–86400 秒，总规则数最多 1000。
+Group PUT replaces rules, schedules, state, history and annotations in one SQLite control-plane transaction. Omitted/null rules update only the interval; an explicit empty array clears the group. URL folder/name override the body. Identical PUT and GET/PUT preserve versions and runtime. Interval, ordering, provenance and move changes retain timers; evaluation changes reset state. Array order survives restart and moved UIDs normalize their source group. Active affected evaluations return 409 before writing. Group intervals are 5–86400 seconds, with at most 1000 total rules.
 
 ```powershell
 metricspanel alerts group-save --folder-uid general --group infrastructure --file examples/alerts/grafana-group.json
@@ -608,21 +599,19 @@ metricspanel alerts group-save --folder-uid general --group infrastructure --fil
 metricspanel alerts group-delete --folder-uid general --group infrastructure
 ```
 
-`interval-only.json` 可只包含 `{"interval":60}`。使用返回的 UID 做幂等协调；未提供 UID 的新规则会生成 UID。`X-Disable-Provenance` 请求头或 CLI `--disable-provenance` 设置整组可编辑来源标记；本工具将其作为元数据，原生编辑仍可用。删除返回 HTTP 204，CLI 输出 JSON null。MySQL 示例需要先配置采集器，否则对应规则按无数据策略处理。
+An interval-only file can contain `{"interval":60}`. Reconcile with returned UIDs; new rules without UIDs receive generated IDs. X-Disable-Provenance or CLI --disable-provenance marks the whole group editable. Provenance is metadata here and does not restrict native editing. Deletion returns HTTP 204 and CLI JSON null. Configure a MySQL collector for the example; missing metrics follow its no-data policy.
 
-标签与注解支持 Grafana Go 文本模板。`$labels` 包含查询标签及固定版本提供的保留上下文，不包含已配置规则标签；`$values.A.Value` / `.Labels` 读取瞬时数值和表达式捕获，时间序列 range 帧不加入该表，需先 Reduce。捕获按实例标签精确 / 子集 / 超集匹配，精确匹配优先；经典条件只暴露按匹配索引命名的 `C0`、`C1` 等，同时移除查询实例标签。恰好一个数据源捕获时 `$value` 是浮点数，否则是稳定评估字符串。
+Labels and annotations support Grafana Go text templates. $labels contains query labels and the pinned reserved context, excluding configured rule labels. $values.A.Value / .Labels expose numeric instant and expression captures; range frames are excluded until reduced. Captures match exact/subset/superset instance labels, preferring exact matches. Classic conditions expose indexed matches C0/C1/etc and remove query instance labels. With exactly one datasource capture, $value is numeric; otherwise it is a stable evaluation string.
 
-复用上游 Prometheus 文本函数，另提供 Grafana 的 filterLabels / removeLabels、对应正则版本、mergeLabelValues、graphLink / tableLink；query() 按 Grafana 语义为空操作。`externalURL` / `pathPrefix` 使用既有 `--root-url` / `METRICSPANEL_ROOT_URL`。模板解析、执行或预算错误保留原文并返回 `template_errors`，不改变告警判断和 health。每个标签 / 注解最多输出 512 / 4096 字节，每字段最多 50000 执行步骤；无输出的嵌套循环也计入预算。
+The upstream Prometheus text functions are extended with Grafana filterLabels/removeLabels and regex variants, mergeLabelValues and graphLink/tableLink. query() is a Grafana-compatible no-op. externalURL/pathPrefix use --root-url or METRICSPANEL_ROOT_URL. Parse, runtime and budget failures retain original field text and report template_errors without changing alert truth or health. Outputs are capped at 512/4096 bytes per label/annotation and 50000 execution steps per field, including empty nested loops.
 
-网页实例详情显示渲染后的 summary / description 和可展开模板提示，内容按纯文本显示。原始模板、实例注解及状态历史均持久化，Prometheus alerts API 返回已渲染注解。CLI 示例：`metricspanel alerts save --file examples/alerts/template-memory.json`，再用 alerts get / evaluate / history 读取原定义与结果。契约参考 [模板文档](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) 和 [固定版本模板实现](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go)。
+Instance details show rendered summary/description and expandable warnings as plain text. Source templates, instance annotations and transition annotations persist, while Prometheus alerts returns rendered annotations. Use `metricspanel alerts save --file examples/alerts/template-memory.json` and alerts get/evaluate/history to inspect source and results. See the [template reference](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/) and [pinned implementation](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/state/template/template.go).
 
-恢复阈值支持 `threshold.conditions[0].unloadEvaluator`，且必须是告警条件节点。首次使用触发判断，Pending / Firing 且没有策略原因的查询维度使用恢复判断的反值；Recovering、Normal、NoData / Error 或带策略原因的实例使用触发判断。每个维度按原查询标签指纹独立处理，配置标签覆盖不会改变指纹。严格 / 含边界比较和范围判断保留各自语义；空值仍走 no-data 策略。原始查询指纹及等待 / 恢复计时持久化，重启后继续判断；GET / PUT 同组规则不会注入临时状态或重置计时。CLI 示例：`metricspanel alerts save --file examples/alerts/graph-recovery-memory.json`，再用 `alerts get / evaluate / history` 检查结果。
+Unavailable datasources, malformed nodes and cycles fail before save. Webhook delivery is implemented; full Alertmanager and remaining core datasource editors remain pending, along with folder/organization permissions, App Platform rule APIs and file-format exports. Real SDK, CLI, desktop editing and two MySQL/SQLite/ClickHouse restart rounds verify graph execution and persistence. See the [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/), [alert rules](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) and [pinned evaluator](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go).
 
-Recovery thresholds use `threshold.conditions[0].unloadEvaluator` on the alert condition. Persisted raw query fingerprints select the loading predicate for new dimensions and the inverse recovery predicate for genuine Pending / Firing dimensions. Configured labels do not replace query identity; timers and fingerprints survive restart. Recovering and policy-derived states use the loading predicate. Direct expression queries accept decimal `loadedFingerprints` and legacy v1 fingerprint frames; the new list takes precedence. Alert evaluations derive loaded dimensions from persisted state and preserve the provisioned model. See the [Grafana recovery documentation](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/queries-conditions/) and pinned [threshold](https://github.com/grafana/grafana/blob/v13.2.3/pkg/expr/threshold.go) / [state reader](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/schedule/loaded_metrics_reader.go) implementations.
+## Automated verification
 
-未知数据源、非法节点和循环依赖在保存前拒绝；Webhook 通知已支持，完整 Alertmanager 和其余核心数据源编辑器尚待实现。文件夹 / 组织权限、App Platform 规则 API、文件格式导出也待补齐。真实 SDK、CLI、桌面编辑和两轮 MySQL / SQLite / ClickHouse 重启验证覆盖图执行与持久化。契约参考 [provisioning API](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/)、[告警规则](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rules/) 和 [固定版本评估器](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/ngalert/eval/eval.go)。
-
-## 验证
+The alert editor's Preview action calls `/api/v1/alerts/preview` for real SDK frames, labelled condition values, truth and errors. It evaluates fresh recovery dimensions without saving rules, advancing timers or writing recordings. Preview and the scheduler share four slots and a 20-second deadline; stop, query edits and dialog close cancel work. Agents use `metricspanel alerts preview --file examples/alerts/graph-memory.json [--at UNIX_MS]`; omitted timestamps use server time. Native graph rules and provisioning graphs are accepted. Partial errors retain JSON frames and exit 1.
 
 ```sh
 go test ./... -count=1
@@ -631,45 +620,29 @@ CGO_ENABLED=1 go test -race ./... -count=1
 go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
 ```
 
-Windows：`pwsh -File scripts/test-docker.ps1 -Repeat 2`；race 测试需本机 C 编译器。
-集成测试使用固定 Compose 项目 `metricspanel233-tests`、随机宿主机端口、自动释放的并发锁；
-每轮只创建一个 `suite` 容器和一个数据卷，限制 2 CPU / 2 GiB 内存 / 512 PID。结束后删除该项目容器、网络、数据卷和测试镜像。
-不清理其他项目或公共基础镜像，BuildKit 缓存会复用。若进程被强制杀死，下次执行会清理旧项目。
+Or on Windows: `pwsh -File scripts/test-docker.ps1 -Repeat 2`.
+The testify integration suite verifies real Go push/scrape, real MySQL exporter collection, both storage backends, duplicate writes,
+application and ClickHouse restarts, Grafana queries/templates and resource cleanup.
+Four concurrent writers additionally ingest 100,000 SQLite samples and 1,000,000 ClickHouse samples; the suite reports batch p50/p95 and 24h aggregation time.
+These bounded workloads do not establish million-series or sustained production performance.
+The suite also stores 10,000 x 64-dimensional vectors, verifies HNSW use through EXPLAIN, measures recall@10 against exact search, and rechecks the index plan after database restart.
+It uses a fixed isolated Compose project, random mapped ports and an automatically released concurrency lock.
+Each run deletes its own containers, volumes, network and application image tags. Shared base images and BuildKit cache remain reusable.
 
-测试涵盖真实 Go 抓取 / 主动上报、MySQL 协议 / Redis / PostgreSQL / ClickHouse 直连和 MySQL exporter、大数据 API 协议、两种后端的重复写入、应用重启、ClickHouse 重启、整个测试容器重启、
-Grafana 查询 / 模板、官方签名插件、Linux Go SDK 插件查询 / 健康 / 资源 / Live、Agent NDJSON 订阅、重启及资源清理。
+After building the frontend and the CLI binary, run `cd web && npx playwright install chromium && npm run test:e2e`.
+Browser tests use a temporary database and clean it after verifying both languages, panels, collectors, PromQL, resource templates,
+official transforms, percentage units, repeated panels, pattern capture/search, special-character variables, text sanitization and desktop layout.
+GitHub Actions runs these checks plus two Docker integration runs.
+CI pulls test images by pinned digest from [Google Cloud's public cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images) to reduce Docker Hub rate-limit failures.
+The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2 GiB memory and 512 PIDs. It runs real MySQL-compatible MariaDB, Redis, PostgreSQL, ClickHouse, the official MySQL exporter and Go services. JVM/big-data endpoints use protocol fixtures, not real clusters. Full-container restarts verify durable samples and encrypted connections. Cleanup removes this project's container, network, volume and test image. Runtime images omit Node/Go toolchains; the real ClickHouse executable alone is approximately 762 MiB, and tests print actual image size. `compose.test.yml` accepts `METRICSPANEL_TEST_CLICKHOUSE_IMAGE` and `METRICSPANEL_TEST_EXPORTER_IMAGE` build-source overrides; production Compose has its own configuration.
 
-浏览器自动化：先构建网页和 `bin/metricspanel[.exe]`，再运行：
+## Project documentation
 
-```sh
-cd web
-npx playwright install chromium
-npm run test:e2e
-```
+- [Project goals](docs/project-goals.md) — product scope, first-party UI policy and performance evidence.
+- [Development guide](docs/development.md) — setup, fast development, validation and contribution workflow.
+- [Architecture overview](docs/architecture.md) — subsystem ownership and runtime data flow.
+- [Grafana compatibility matrix](docs/grafana-compatibility.md) and [product parity status](docs/grafana-product-parity.md) — implemented behavior and open gaps.
+- [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md).
+- [Chinese README](README.zh-CN.md) — translated project overview and user guide.
 
-每轮启动临时数据库，验证中英切换、面板保存、PromQL、采集器、资源模板、官方转换、百分比单位、重复面板、波形保存 / 检索、文本清理和移动布局，结束时删除临时数据。
-GitHub Actions 自动运行 race / API / 浏览器测试与两轮 Docker 集成测试。
-CI 从 [Google Cloud 官方缓存](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images)拉取按摘要固定的测试镜像，减少 Docker Hub 限流影响。
-`compose.test.yml` 的 `METRICSPANEL_TEST_CLICKHOUSE_IMAGE` 和 `METRICSPANEL_TEST_EXPORTER_IMAGE` 可覆盖构建来源。镜像不含 Node / Go 工具链；真实 ClickHouse 可执行文件约 762 MiB，是测试镜像体积的主要部分，测试会打印实际字节数。生产 Compose 使用独立配置。
-
-开发：后端 `go run ./cmd/metricspanel serve`；网页 `cd web && npm run dev`。
-
-## API 与结构
-
-`metricspanel schema` 返回机器可读 API 清单。原生 API `/api/v1`，Prometheus 兼容 API `/prometheus/api/v1`。
-所有 API 与自身 `/metrics` 使用同一 Bearer token；网页 token 仅保存在 sessionStorage。
-默认只监听 loopback。采集 URL 支持局域网 exporter，因此应将有权配置采集器的 token 视为管理权限。
-
-```text
-cmd/metricspanel       原生 CLI 与服务入口
-internal/collector    抓取、解析与调度
-internal/store        SQLite / ClickHouse 指标存储 + 配置持久化
-internal/promcompat   官方 PromQL 引擎适配与兼容 API
-internal/grafana       Grafana JSON 导入
-web/src               React 应用、双语、SVG 图表
-examples/go-service   可运行的 Go 业务接入示例
-tests/integration     真实 Docker 全链路验收
-```
-
-Apache-2.0。指标格式遵循 [Prometheus 文本协议](https://prometheus.io/docs/instrumenting/exposition_formats/)，
-分析存储使用 [ClickHouse MergeTree](https://clickhouse.com/docs/engines/table-engines/mergetree-family/mergetree)。
+Licensed under Apache-2.0. See [LICENSE](LICENSE).

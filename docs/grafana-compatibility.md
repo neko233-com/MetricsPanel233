@@ -2,6 +2,8 @@
 
 Baseline: Grafana **v13.2.3** source tag. This is a read-only source inspection of MetricsPanel233's current implementation, not a claim that all supported features were exercised in this audit. SQL real MariaDB/PostgreSQL checks and browser checks are tracked separately in docker logs.
 
+This is an interoperability reference, not the product roadmap or an all-features acceptance target. Implement compatibility entries when they support a selected migration workflow; see the [project goals](project-goals.md).
+
 Official baseline lists: [core data sources](https://github.com/grafana/grafana/blob/v13.2.3/docs/sources/datasources/_index.md#built-in-core-data-sources), [core visualizations](https://github.com/grafana/grafana/blob/v13.2.3/docs/sources/visualizations/panels-visualizations/visualizations/_index.md).
 
 ## Data sources
@@ -22,9 +24,9 @@ The SQL plugins moved to separate official repositories before this Grafana tag;
 | InfluxDB | influxdb | Missing builtin datasource | [manifest](https://github.com/grafana/grafana-influxdb-datasource/blob/main/src/plugin.json) |
 | OpenTSDB | opentsdb | Missing builtin datasource | [manifest](https://github.com/grafana/grafana-opentsdb-datasource/blob/main/src/plugin.json) |
 | Elasticsearch | elasticsearch | Missing builtin datasource; existing collector is not search/log query parity | [manifest](https://github.com/grafana/grafana-elasticsearch-datasource/blob/main/src/plugin.json) |
-| Loki | loki | Missing builtin log query datasource | [manifest](https://github.com/grafana/grafana-loki-datasource/blob/main/src/plugin.json) |
+| Loki | loki | Builtin LogQL range/instant search with logs frames and `/ready` health; dedicated editor and full logs Explore pending | [manifest](https://github.com/grafana/grafana-loki-datasource/blob/main/src/plugin.json) |
 | Jaeger | jaeger | Missing builtin tracing datasource | [manifest](https://github.com/grafana/grafana-jaeger-datasource/blob/main/src/plugin.json) |
-| Tempo | tempo | Missing builtin tracing datasource | [manifest](https://github.com/grafana/grafana-tempo-datasource/blob/main/src/plugin.json) |
+| Tempo | tempo | Builtin TraceQL search to table frames and `/ready` health; trace-ID detail and full trace views pending | [manifest](https://github.com/grafana/grafana-tempo-datasource/blob/main/src/plugin.json) |
 | Zipkin | zipkin | Missing builtin tracing datasource | [manifest](https://github.com/grafana/grafana-zipkin-datasource/blob/main/src/plugin.json) |
 | Parca | parca | Missing builtin profiling datasource | [manifest](https://github.com/grafana/grafana-parca-datasource/blob/main/src/plugin.json) |
 | Pyroscope | grafana-pyroscope-datasource; alias phlare | Missing builtin profiling datasource | [manifest](https://github.com/grafana/grafana-pyroscope-datasource/blob/main/src/plugin.json) |
@@ -45,15 +47,15 @@ SQL annotation mapping and editing are implemented in the builtin SDK datasource
 
 ## Visualizations
 
-The tagged documented list has 25 visualizations. Six have local renderers: table and time series now use pinned official SDK components, and stat/gauge/bar gauge/text retain their local implementations. The other 19 go through PluginPanel -> loadPlugin, which requires an installed package; no bundled official core renderer/import map was found. A community panel with a different ID does not make the original core ID compatible automatically.
+The tagged documented list has 25 visualizations. Six have local renderers: time series and table now use first-party implementations, and stat/gauge/bar gauge/text retain their local implementations. The other 19 go through PluginPanel -> loadPlugin, which requires an installed package; no bundled official core renderer/import map was found. A community panel with a different ID does not make the original core ID compatible automatically.
 
 | ID | Local renderer | Direct official manifest |
 |---|---|---|
-| timeseries | Pinned SDK TimeSeries; desktop 20-series, log axes, percent stacks, legend, tooltip, annotations, zoom and comparison checks passed | [manifest](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/timeseries/plugin.json), [SDK component](https://github.com/grafana/grafana/blob/v13.2.3/packages/grafana-ui/src/graveyard/TimeSeries/TimeSeries.tsx) |
+| timeseries | First-party uPlot lines, colors, visibility, current-value legend, hover tooltip, time-range selection and annotation overlay. Advanced Grafana log/multiple axes, stacking, bars, thresholds and option editing are not implemented by this renderer. The former SDK-only browser evidence does not verify the native renderer. | [manifest](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/timeseries/plugin.json), [SDK component](https://github.com/grafana/grafana/blob/v13.2.3/packages/grafana-ui/src/graveyard/TimeSeries/TimeSeries.tsx) |
 | stat | Present, numeric reduction only | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/stat/plugin.json) |
 | gauge | Present, simplified SVG | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/gauge/plugin.json) |
 | bargauge | Present, simplified progress element | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/bargauge/plugin.json) |
-| table | Pinned SDK Table; desktop 1,000-row pagination and sorting verified | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/table/plugin.json) |
+| table | First-party sortable HTML table with pages capped at 100 rows when pagination is enabled or a result exceeds 100 rows. SDK footer calculations and the full option editor are not implemented. Former SDK-only browser evidence does not verify the native table. | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/table/plugin.json) |
 | text | Present, sanitized Markdown/HTML/code | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/text/plugin.json) |
 | state-timeline | Missing builtin renderer | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/state-timeline/plugin.json) |
 | status-history | Missing builtin renderer | [source](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/status-history/plugin.json) |
@@ -77,14 +79,16 @@ The tagged documented list has 25 visualizations. Six have local renderers: tabl
 
 Additional tagged manifests outside the documented 25: debug, gettingstarted, live, logstable, welcome. A row is rendered as a heading/layout element; full row collapse/section editing is a separate dashboard behavior.
 
-Concrete scope and remaining limitations of the six existing renderers:
+The current native renderer scope is:
 
-- Time series: GrafanaTimeSeries.tsx passes every temporal numeric/enum series to the pinned SDK uPlot component. Saved fields support standard units/colors and the SDK's stacking, log/symlog distributions, multiple axes, bars/points/lines, null spacing and thresholds; legend placement/calculations/filtering and tooltip mode/sorting/zero filtering/dimensions are adapted. Mouse/keyboard range selection and annotation points/regions retain local dashboard integration. Eight helper tests cover cloning, series count, visibility, tooltip filtering, annotation geometry, integer range selection and official comparison alignment. Three desktop browser cases verify actual 20-color canvas pixels, 12-series log left/right axes and percent stacks, legend selection/restoration, tooltip bounds, clipped annotation points/regions, panel/dashboard zoom, and a time-aligned dashed comparison curve with untouched historical source timestamps. No page/console warnings or errors were recorded. The exported SDK component lives in Grafana's graveyard API and is not the complete current Time series PanelPlugin/editor. Full data-link/actions UI, persisted legend color editing, plugin migrations and cross-panel cursor forwarding remain gaps. The legacy native Chart.tsx path now renders all queried series, while retaining its simplified single linear SVG axis and native queryPanel aggregation semantics. [SDK graph configuration](https://github.com/grafana/grafana/blob/v13.2.3/packages/grafana-ui/src/graveyard/TimeSeries/utils.ts), [official option registration](https://github.com/grafana/grafana/blob/v13.2.3/public/app/plugins/panel/timeseries/module.tsx).
+- Time series: first-party uPlot rendering for temporal numeric/enum fields, default colors, visibility toggles, last-value legend, hover tooltip, x-range selection, time comparison alignment and annotation points/regions. It does not currently implement Grafana stacking, logarithmic or multiple axes, bars, thresholds, or the complete Grafana option editor.
+- Table: first-party HTML table with sorting, display formatting, frame selection and pages capped at 100 rows for large results. Grafana footer calculations, the complete cell/field option editor and SDK table behaviors are not implemented.
 - Stat: numeric fields only; no full string/boolean stat behavior or all sparkline/background/display modes.
 - Gauge/bar gauge: simple SVG/progress and thresholds; lacks complete official display modes, tick layout, sizing and orientation configuration.
-- Table: GrafanaTable.tsx renders complete frames with the pinned SDK Table, including saved field configuration, sorting, pagination, footer calculations, cell height and header/type-icon settings. Desktop verification establishes pagination through the complete 1,000-row frame, numeric sorting and footer calculations. Page size follows the available panel height. This is SDK rendering rather than the complete core Table PanelPlugin option editor; it does not establish every cell mode, action, migration or editor interaction.
-- Text: sanitization is deliberate and real; imported interactive actions/embedded iframe content does not execute.
-- These builtin visualization paths lack the complete official PanelPlugin option schemas/editors because they bypass loadPanelPlugin. The installed third-party PluginPanel host has a separate SDK option editing path.
+- Text: sanitization is deliberate; imported interactive actions/embedded iframe content does not execute.
+- The browser spec in web/e2e/time-series.spec.ts still describes the former SDK renderer and checks Grafana-only log/stack behavior. It must be reconciled before it can serve as native-renderer acceptance evidence. Existing SDK-specific results are historical, not current verification.
+
+These builtin visualization paths lack the complete official PanelPlugin option schemas/editors because they bypass loadPanelPlugin. The installed third-party PluginPanel host has a separate SDK option editing path.
 
 Audit evidence in repository: internal/server/plugins.go, internal/server/expressions.go, internal/server/sql_datasources.go, internal/server/grafana_source.go, internal/server/native_plugin_routes.go, web/src/grafana/plugin-runtime.ts, web/src/grafana/engine.ts, web/src/grafana/GrafanaPanel.tsx, web/src/grafana/GrafanaTable.tsx, web/src/grafana/GrafanaTimeSeries.tsx, web/test/time-series.test.cjs, web/e2e/time-series.spec.ts, web/src/components/Chart.tsx.
 
