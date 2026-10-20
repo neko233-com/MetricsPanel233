@@ -129,6 +129,24 @@ Non-loopback listeners require a token of at least 16 characters. Use an HTTPS r
 
 Push format: `{"samples":[{"name":"business_orders","labels":{"service":"api"},"value":233}]}`.
 
+### Prometheus remote write (push)
+
+Point Prometheus `remote_write` or any v1-compatible sender at `/api/v1/write`; `/prometheus/api/v1/write` is an
+alias. Bodies are snappy-compressed `prompb.WriteRequest`; raw protobuf without `Content-Encoding` is accepted for
+simple senders. Requests are limited to 32 MiB compressed, 64 MiB decoded and 100,000 samples. `__name__` selects the
+metric name and is removed from the stored labels. Writes share the metric store and Editor/Admin role policy with
+pull scraping.
+
+```yaml
+remote_write:
+  - url: http://127.0.0.1:7333/api/v1/write
+    authorization:
+      credentials: <workspace-token>
+```
+
+Both modes run at the same time: **pull** uses `targets add` scrape jobs and native SQL/Redis/service collectors;
+**push** accepts OTLP/HTTP, Prometheus remote write and the native JSON `POST /api/v1/ingest`.
+
 ### OpenTelemetry OTLP/HTTP
 
 Point an OTLP/HTTP metrics exporter at `/v1/metrics` (the alias `/otlp/v1/metrics` is also accepted):
@@ -642,6 +660,7 @@ The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2
 - [Project status](docs/status.md) — progress ledger, completion percentages and the reporting protocol.
 - [Development guide](docs/development.md) — setup, fast development, validation and contribution workflow.
 - [Architecture overview](docs/architecture.md) — subsystem ownership and runtime data flow.
+- [Collection modes](docs/collection-modes.md) — pull scrapes, Prometheus remote write, OTLP and native JSON push, limits and roles.
 - [Agent guide](docs/agent/README.md) — repo map, contracts, verification commands and decision log for coding agents.
 - [Grafana compatibility matrix](docs/grafana-compatibility.md) and [product parity status](docs/grafana-product-parity.md) — implemented behavior and open gaps.
 - [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md).

@@ -27,6 +27,13 @@ The first-party renderer framework is in `web/src/render`:
 The full validation job is expensive. It runs only for `v*` tags or manual dispatch. Local verification is the
 normal loop; tag releases run the full race/browser/Docker matrix.
 
+## 2026-10-20 — push and pull are both first-class
+
+Scrape pull and push receivers share one metric store and one ingest role policy. Push covers Prometheus remote
+write (`/api/v1/write`, snappy `prompb.WriteRequest`), OTLP/HTTP and native JSON; pull covers scrape jobs and native
+SQL/Redis/service collectors. Neither mode is a compatibility afterthought, and remote write v2 is explicitly not
+implemented until a sender requires it.
+
 ## 2026-10-20 — collector scope
 
 Prioritize the game-backend set: MySQL/MariaDB, Redis, Linux/Prometheus exporters and business-service exports.

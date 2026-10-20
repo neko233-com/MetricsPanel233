@@ -31,20 +31,27 @@
 | --- | ---: | ---: | --- |
 | 产品 Shell 与自有 UI | 15% | 85% | ReactBits 动效层（可选） |
 | 渲染器 | 20% | 70% | Heatmap、Vector；Trace 详情 |
-| 采集 | 15% | 80% | 更多 exporter 与协议边界 |
+| 采集 | 15% | 85% | 推 + 拉双模式已完成；更多 exporter 与协议边界 |
 | 存储与查询 | 15% | 75% | rollup、块级 min/max、大范围规划 |
 | 认证与安全 | 15% | 85% | 周期性安全复查 |
 | 运维与交付 | 10% | 80% | release checklist、升级说明 |
 | 文档与 agent 契约 | 10% | 85% | 随行为变更持续同步 |
 | 性能 | 10% | 40% | Worker 降采样、大范围基准 |
 
-**加权总进度：73%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
+**加权总进度：74%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
 
 ## 执行队列
 
 状态：`[ ]` 未开始，`[~]` 进行中，`[x]` 完成。按顺序执行；未完成当前项前不并行开启下一项，除非明确标注可并行。
 
 ### P0 产品闭环
+
+- [x] **C0 — 推 + 拉双模式**
+  - 范围：拉取抓取与推送接收同时可用，共享存储与角色策略。
+  - 验收：Prometheus remote write、OTLP/HTTP、原生 JSON 推送与 scrape 拉取均有测试；Viewer 推送 403。
+  - 证据：`POST /api/v1/write` 与 `/prometheus/api/v1/write`（snappy `prompb.WriteRequest`，32 MiB 压缩 /
+    64 MiB 解码 / 100,000 样本）；`remote_write_test.go` 覆盖 snappy、原始 protobuf、畸形输入、空 `__name__`；
+    角色测试覆盖 Viewer 403 / Editor 允许；文档 `docs/collection-modes.md`。
 
 - [x] **R0 — Table / TimeSeries / Stat / Gauge / BarGauge 自有渲染器**
   - 证据：`web/src/render`，完整套件 69 passed / 2 skipped，commit `404c0d1`。

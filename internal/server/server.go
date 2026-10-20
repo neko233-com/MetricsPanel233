@@ -157,6 +157,7 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 	prom := s.Prometheus
 	promRoutes := s.authorizationMux(http.NewServeMux(), RoutePrometheus, &manifest)
 	s.promAlertRoutes(promRoutes)
+	promRoutes.HandleFunc("POST /api/v1/write", s.remoteWrite)
 	promRoutes.Handle("/", prom.Handler())
 	s.grafanaRoutes(api, promRoutes)
 	s.dashboardCatalogRoutes(api)
@@ -213,6 +214,7 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 		}
 		writeJSON(w, 200, map[string]int{"accepted": len(v.Samples)})
 	})
+	api.HandleFunc("POST /api/v1/write", s.remoteWrite)
 	api.HandleFunc("GET /api/v1/targets", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.Targets(r.Context())
 		if err != nil {

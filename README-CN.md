@@ -11,6 +11,22 @@ Grafana 导入/导出只是可选的迁移适配，不是产品基础；不追�
 
 支持数据库直连、服务指标接口、Prometheus / OpenMetrics exporter、OpenTelemetry OTLP/HTTP 和业务指标上报。
 
+### Prometheus remote write（推送）
+
+将 Prometheus `remote_write` 或任意 v1 兼容发送端指向 `/api/v1/write`（别名 `/prometheus/api/v1/write`）。
+请求体为 snappy 压缩的 `prompb.WriteRequest`；无 `Content-Encoding` 时接受原始 protobuf。上限为 32 MiB 压缩 /
+64 MiB 解码后 / 100,000 样本；`__name__` 作为指标名并从标签中移除。写入与拉取共享同一存储和 Editor/Admin 角色策略。
+
+```yaml
+remote_write:
+  - url: http://127.0.0.1:7333/api/v1/write
+    authorization:
+      credentials: <workspace-token>
+```
+
+**推 + 拉同时可用**：拉取使用 `targets add` 抓取任务与 SQL/Redis/服务采集器；推送支持 OTLP/HTTP、
+Prometheus remote write 和原生 JSON `POST /api/v1/ingest`。
+
 ### OpenTelemetry OTLP/HTTP
 
 把 OTLP/HTTP metrics exporter 指向 `/v1/metrics`（也支持别名 `/otlp/v1/metrics`）：

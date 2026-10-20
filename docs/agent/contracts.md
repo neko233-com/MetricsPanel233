@@ -17,9 +17,13 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
 
 ## Collection
 
-- Prometheus/OpenMetrics scrape with 10,000 samples / 4 MiB per scrape, eight concurrent scrapes.
-- OTLP/HTTP `POST /v1/metrics` (alias `/otlp/v1/metrics`), protobuf or JSON, gzip, 16 MiB / 10,000 samples.
+- Pull: Prometheus/OpenMetrics scrape with 10,000 samples / 4 MiB per scrape, eight concurrent scrapes.
+- Push: OTLP/HTTP `POST /v1/metrics` (alias `/otlp/v1/metrics`), protobuf or JSON, gzip, 16 MiB / 10,000 samples.
   Resource attributes become labels; histograms expand to `_bucket`/`_count`/`_sum`.
+- Push: Prometheus remote write `POST /api/v1/write` (alias `/prometheus/api/v1/write`), snappy `prompb.WriteRequest`,
+  32 MiB compressed / 64 MiB decoded / 100,000 samples; `__name__` selects the metric name.
+- Push: native JSON `POST /api/v1/ingest` for scripts and the agent CLI.
+- Pull and push share the metric store and the Editor/Admin ingest role policy; Viewer writes return 403.
 - Native MySQL/MariaDB, Redis, PostgreSQL and supported service/database metrics APIs.
 - Collector secrets are encrypted; responses expose presence flags only.
 

@@ -68,6 +68,8 @@ var editorPrefixes = []string{
 	"/api/v1/provisioning/alert-rules",
 	"/api/v1/targets",
 	"/api/v1/ingest",
+	"/api/v1/write",
+	"/prometheus/api/v1/write",
 	"/v1/metrics",
 	"/otlp/v1/metrics",
 	"/api/v1/patterns",

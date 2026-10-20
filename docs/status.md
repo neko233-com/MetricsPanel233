@@ -28,14 +28,14 @@ Weights reflect product risk and user-visible value.
 | --- | --- | --- | --- |
 | Product shell and first-party UI | 15% | 85% | Collapsible left navigation, right content, persistence and keyboard path are covered; the optional ReactBits motion layer is not started |
 | Renderers | 20% | 70% | Table, TimeSeries, Stat, Gauge, BarGauge, Logs and Traces are first-party; Heatmap, Vector and trace detail remain; Worker decimation remains |
-| Collection | 15% | 80% | Prometheus/OpenMetrics, OTLP/HTTP, MySQL, Redis, PostgreSQL and service exports work; broader exporter coverage and edge-case conformance remain |
+| Collection | 15% | 85% | Pull scrapes and push receivers (OTLP, Prometheus remote write, native JSON) share the store and role policy; broader exporter coverage remains |
 | Storage and query | 15% | 75% | SQLite default, ClickHouse optional, retention and 64-dimension vectors; rollups, block min/max and large-range planning remain |
 | Auth and security | 15% | 85% | Local accounts, Setup token, sessions, roles, rate limiting, headers, public-deployment guide; periodic security review remains |
 | Ops and delivery | 10% | 80% | Single binary, Docker verification, cleanup scripts, tag-only CI with a green full run; release checklist and upgrade notes remain |
 | Docs and agent contract | 10% | 85% | Product goals, architecture, renderer matrix, agent guide and external skill references; keep in sync with each behavior change |
 | Performance | 10% | 40% | Frame budget and incremental model reuse exist; LTTB/min-max downsampling, Worker transfer and large-range benchmarks remain |
 
-**Weighted overall: 73%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
+**Weighted overall: 74%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
 downsampling land.
 
 ## Definition of done by workstream
@@ -76,6 +76,7 @@ downsampling land.
 | 2026-10-20 | Shell left navigation and right content | Collapsible desktop rail with localStorage, keyboard toggle, mobile drawer, 390/768/1280 no-overflow test |
 | 2026-10-20 | Logs renderer | Virtualized 10k rows, search, label key/value filters, empty/error states; browser contract asserts DOM row count and filter counts |
 | 2026-10-20 | Traces renderer | Tempo search table, search, duration/start sorting, optional status and `?traceId=` deep link; browser contract covers all paths |
+| 2026-10-20 | Push + pull collection modes | Prometheus remote write (`/api/v1/write`, snappy protobuf), OTLP/HTTP and native JSON push alongside scrape pull; receiver and role tests; `docs/collection-modes.md` |
 
 ## Next units (ordered)
 

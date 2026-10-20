@@ -9,6 +9,7 @@ This folder keeps cross-cutting architecture and product contracts. The root [RE
 ## Development and architecture
 
 - [Architecture overview](architecture.md) — runtime flow, source ownership and generated frontend assets.
+- [Collection modes](collection-modes.md) — pull scrapes, Prometheus remote write, OTLP and native JSON push, limits and roles.
 - [Development guide](development.md) — prerequisites, the one-command local loop, release builds and validation levels.
 - [SQLite baseline](performance-baseline.md) — reference hardware, reproducible commands, timings and sizing guidance.
 - [Public deployment](public-deployment.md) — TLS reverse proxy, trusted proxies, firewall, backups and leakage checks.

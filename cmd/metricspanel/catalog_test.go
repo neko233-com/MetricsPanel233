@@ -77,4 +77,7 @@ func TestCatalogCLIRejectsInvalidArgumentsBeforeHTTP(t *testing.T) {
 	assert.Contains(t, string(raw), "community_dashboards")
 	assert.Contains(t, string(raw), "plugins versions --id ID")
 	assert.Contains(t, string(raw), "dashboards preview-grafana --file")
+	assert.Contains(t, string(raw), "/api/v1/write")
+	assert.Contains(t, string(raw), "/prometheus/api/v1/write")
+	assert.Contains(t, string(raw), "ingest_modes")
 }
