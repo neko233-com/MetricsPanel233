@@ -40,6 +40,8 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
 - Stat, gauge and bar gauge are first-party registry entries sharing `StatRenderer`; text/Markdown remains a
   product-owned HTML path in the panel host.
 - Logs are first-party: virtualized rows, search and label key/value filters over Loki frames.
+- Traces are first-party for Tempo search: search, sorting, optional status and `?traceId=` deep links; span detail
+  remains pending.
 - The Grafana bridge is allowed only for imported resources and plugins under `web/src/grafana`.
 
 ## Deployment

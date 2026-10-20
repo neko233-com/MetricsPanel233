@@ -226,11 +226,11 @@ export default function GrafanaPanel({
         />
       );
   }
-  if (type === "logs") {
-    const Logs = getRenderer("logs")?.component;
-    if (Logs)
+  if (type === "logs" || type === "traces") {
+    const Component = getRenderer(type)?.component;
+    if (Component)
       return (
-        <Logs
+        <Component
           panel={panel}
           frames={frames}
           values={values}

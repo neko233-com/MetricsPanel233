@@ -66,7 +66,7 @@ requires it. Unknown kinds show a named error instead of silently rendering noth
 | Stat / Gauge / Bar gauge | Implemented (default) | Shared `StatRenderer`; reducer selection, field filtering, threshold colors, gauge meter ARIA and bar fraction. Text/Markdown remains in the panel host |
 | Text / Markdown | Planned | Sanitized HTML renderer |
 | Logs | Implemented (default) | Own virtualized log view; search and label key/value filters; 10k-row browser contract |
-| Traces | Planned | Tempo search table first, trace detail later |
+| Traces | Implemented (search) | Tempo search table; search, start/duration sorting, optional status, `?traceId=` deep link. Detail view pending |
 | Heatmap / Histogram | Planned | Bucket and density renderers |
 | Pie / Candlestick / Geomap / Node graph | Planned | Lower priority for SMB monitoring |
 | State timeline / Status history | Planned | Alert/state transitions |
@@ -106,5 +106,5 @@ configurable panel (`RENDER_BENCH_POINTS`, `RENDER_BENCH_SERIES`) and reports fi
 1. Own Table and TimeSeries are the product defaults; TimeSeries covers log axes, percent stacking and multiple axes.
    `?renderer=compat` or localStorage `metricspanel-renderer=compat` restores the Grafana bridge for compatibility
    resources, plugins and troubleshooting.
-2. Stat, gauge, bar gauge and logs are registry entries; next move Traces, Heatmap and Vector.
+2. Stat, gauge, bar gauge, logs and traces are registry entries; next move Heatmap and Vector, then trace detail.
 3. Remove `@grafana/ui` from the default bundle and leave it only in the optional import/plugin chunk.

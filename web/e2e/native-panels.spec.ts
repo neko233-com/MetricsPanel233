@@ -598,3 +598,95 @@ test("Logs renderer virtualizes ten thousand rows with search and label filters"
   ).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("Traces renderer searches, sorts and deep-links Tempo rows", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10, 12);
+  const traces = [
+    { id: "trace-a", service: "api", name: "GET /orders", at: start + 1000, duration: 120.5 },
+    { id: "trace-b", service: "checkout", name: "POST /checkout", at: start + 2000, duration: 45 },
+    { id: "trace-c", service: "worker", name: "job run", at: start + 3000, duration: 900 },
+  ];
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Traces dashboard",
+      panels: [{
+        id: "traces",
+        title: "Service traces",
+        metric: "",
+        unit: "",
+        aggregation: "last",
+        visualization: "traces",
+        config: {
+          id: 1,
+          type: "traces",
+          gridPos: { x: 0, y: 0, w: 24, h: 16 },
+          options: {},
+          targets: [{
+            refId: "Snapshot",
+            queryType: "snapshot",
+            datasource: { uid: "grafana", type: "grafana" },
+            snapshot: [{
+              schema: {
+                refId: "A",
+                name: "Traces",
+                fields: [
+                  { name: "traceID", type: "string", config: {} },
+                  { name: "rootServiceName", type: "string", config: {} },
+                  { name: "rootTraceName", type: "string", config: {} },
+                  { name: "startTime", type: "time", config: {} },
+                  { name: "durationMs", type: "number", config: { decimals: 1 } },
+                ],
+              },
+              data: {
+                values: [
+                  traces.map((trace) => trace.id),
+                  traces.map((trace) => trace.service),
+                  traces.map((trace) => trace.name),
+                  traces.map((trace) => trace.at),
+                  traces.map((trace) => trace.duration),
+                ],
+              },
+            }],
+          }],
+        },
+      }],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.goto(
+    endpoint + `/d/${saved.id}/traces-dashboard?from=${start}&to=${start + 600000}&timezone=utc`,
+  );
+  const panel = page.getByRole("region", { name: "Service traces", exact: true });
+  await expect(panel).toHaveAttribute("data-trace-count", "3");
+  const table = panel.getByRole("table", { name: "Service traces", exact: true });
+  await expect(table.locator("tbody tr")).toHaveCount(3);
+  const search = panel.getByRole("searchbox", { name: "Search traces", exact: true });
+  await search.fill("checkout");
+  await expect(panel).toHaveAttribute("data-trace-count", "1");
+  await expect(table.locator("tbody tr")).toContainText("trace-b");
+  await search.fill("");
+  await panel.getByRole("button", { name: "Sort by duration", exact: true }).click();
+  await expect(table.locator("tbody tr").first()).toContainText("trace-c");
+  await panel.getByRole("button", { name: "Sort by duration", exact: true }).click();
+  await expect(table.locator("tbody tr").first()).toContainText("trace-b");
+  await table.getByRole("link", { name: "trace-b", exact: true }).click();
+  await expect(page).toHaveURL(/traceId=trace-b/);
+  await expect(panel).toHaveAttribute("data-trace-count", "1");
+  await expect(search).toHaveValue("trace-b");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});

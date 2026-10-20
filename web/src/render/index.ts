@@ -3,6 +3,7 @@ import LogsRenderer from "./logs/LogsRenderer";
 import StatRenderer from "./stat/StatRenderer";
 import { TableRenderer } from "./table/TableRenderer";
 import TimeSeriesRenderer from "./timeseries/TimeSeriesRenderer";
+import TracesRenderer from "./traces/TracesRenderer";
 
 registerRenderer({
   kind: "table",
@@ -40,8 +41,20 @@ registerRenderer({
   capabilities: { streaming: true },
   component: LogsRenderer,
 });
+registerRenderer({
+  kind: "traces",
+  label: "Traces",
+  capabilities: {},
+  component: TracesRenderer,
+});
 
-export { LogsRenderer, StatRenderer, TableRenderer, TimeSeriesRenderer };
+export {
+  LogsRenderer,
+  StatRenderer,
+  TableRenderer,
+  TimeSeriesRenderer,
+  TracesRenderer,
+};
 export { getRenderer, registeredRenderers, registerRenderer } from "./registry";
 export { nextFrame, runInFrameSlices } from "./frame-budget";
 export { appendedRows, frameSignature, reuseIfSame } from "./incremental";

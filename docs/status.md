@@ -27,7 +27,7 @@ Weights reflect product risk and user-visible value.
 | Workstream | Weight | Progress | Basis and remaining work |
 | --- | --- | --- | --- |
 | Product shell and first-party UI | 15% | 85% | Collapsible left navigation, right content, persistence and keyboard path are covered; the optional ReactBits motion layer is not started |
-| Renderers | 20% | 60% | Table, TimeSeries, Stat, Gauge, BarGauge and Logs are first-party; Traces, Heatmap and Vector remain; Worker decimation remains |
+| Renderers | 20% | 70% | Table, TimeSeries, Stat, Gauge, BarGauge, Logs and Traces are first-party; Heatmap, Vector and trace detail remain; Worker decimation remains |
 | Collection | 15% | 80% | Prometheus/OpenMetrics, OTLP/HTTP, MySQL, Redis, PostgreSQL and service exports work; broader exporter coverage and edge-case conformance remain |
 | Storage and query | 15% | 75% | SQLite default, ClickHouse optional, retention and 64-dimension vectors; rollups, block min/max and large-range planning remain |
 | Auth and security | 15% | 85% | Local accounts, Setup token, sessions, roles, rate limiting, headers, public-deployment guide; periodic security review remains |
@@ -35,7 +35,7 @@ Weights reflect product risk and user-visible value.
 | Docs and agent contract | 10% | 85% | Product goals, architecture, renderer matrix, agent guide and external skill references; keep in sync with each behavior change |
 | Performance | 10% | 40% | Frame budget and incremental model reuse exist; LTTB/min-max downsampling, Worker transfer and large-range benchmarks remain |
 
-**Weighted overall: 71%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
+**Weighted overall: 73%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
 downsampling land.
 
 ## Definition of done by workstream
@@ -75,13 +75,16 @@ downsampling land.
 | 2026-10-20 | Stat/Gauge/BarGauge renderer registry entries | `StatRenderer` shared reducer/empty states; browser test asserts stat text, meter ARIA values, bar fraction and no page overflow |
 | 2026-10-20 | Shell left navigation and right content | Collapsible desktop rail with localStorage, keyboard toggle, mobile drawer, 390/768/1280 no-overflow test |
 | 2026-10-20 | Logs renderer | Virtualized 10k rows, search, label key/value filters, empty/error states; browser contract asserts DOM row count and filter counts |
+| 2026-10-20 | Traces renderer | Tempo search table, search, duration/start sorting, optional status and `?traceId=` deep link; browser contract covers all paths |
 
 ## Next units (ordered)
 
 Execution order and acceptance criteria are maintained in [PLAN.md](../PLAN.md); this table only tracks progress.
 
-1. **Traces renderer** — Tempo search table first, trace detail second. Acceptance: search, duration/status columns
-   and deep-link parameters.
+1. **Heatmap / Histogram / Vector renderers** — bucket, density and 64-dimension views. Acceptance: one browser
+   contract per kind and a large-frame budget.
+2. **Trace detail** — backend Tempo trace lookup plus span tree/timeline. Acceptance: real fixture, span hierarchy,
+   duration/error state and deep link.
 4. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
    peak preservation.
 5. **Vite+ evaluation** — isolated comparison of build, lint, test and CI cost. Acceptance: documented decision, no

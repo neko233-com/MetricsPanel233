@@ -30,7 +30,7 @@
 | 工作流 | 权重 | 完成度 | 主要缺口 |
 | --- | ---: | ---: | --- |
 | 产品 Shell 与自有 UI | 15% | 85% | ReactBits 动效层（可选） |
-| 渲染器 | 20% | 60% | Traces、Heatmap、Vector |
+| 渲染器 | 20% | 70% | Heatmap、Vector；Trace 详情 |
 | 采集 | 15% | 80% | 更多 exporter 与协议边界 |
 | 存储与查询 | 15% | 75% | rollup、块级 min/max、大范围规划 |
 | 认证与安全 | 15% | 85% | 周期性安全复查 |
@@ -38,7 +38,7 @@
 | 文档与 agent 契约 | 10% | 85% | 随行为变更持续同步 |
 | 性能 | 10% | 40% | Worker 降采样、大范围基准 |
 
-**加权总进度：71%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
+**加权总进度：73%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
 
 ## 执行队列
 
@@ -62,9 +62,16 @@
   - 证据：`LogsRenderer` 虚拟化 10k 行、搜索、标签键/值过滤；浏览器测试断言 `data-log-count`、
     实际 DOM 行数 < 60、滚动高度、过滤结果与 1280 无横向溢出；完整套件 70 passed / 2 skipped。
 
-- [ ] **R2 — Traces 渲染器**
+- [x] **R2 — Traces 渲染器**
   - 范围：Tempo 搜索表格优先，trace 详情随后；耗时、状态、深链参数。
   - 验收：搜索与详情浏览器测试；空态/错误态；与后端 frame 契约一致。
+  - 证据：`TracesRenderer` 读取 Tempo `traceID/rootServiceName/rootTraceName/startTime/durationMs`；支持搜索、
+    按开始时间/耗时排序、可选 status 列与 `?traceId=` 深链；浏览器测试覆盖搜索、双向排序、深链回填与无溢出。
+    完整套件 72 passed / 2 skipped。Trace 详情仍未实现，保持独立后续项。
+
+- [ ] **R2b — Trace 详情**
+  - 范围：按 traceId 获取 span 树/时间轴；先补后端 Tempo trace 查询，再做详情视图。
+  - 验收：真实 Tempo fixture；span 层级、耗时与错误状态；`?traceId=` 深链。
 
 - [ ] **R3 — Heatmap / Histogram / Vector 渲染器**
   - 范围：按渲染器矩阵补齐常用分析视图；向量视图读取 64 维字段。
