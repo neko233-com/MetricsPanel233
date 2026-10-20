@@ -397,7 +397,9 @@ func (s *Store) SaveDataSource(ctx context.Context, input model.DataSourceInput)
 	if err := input.Validate(); err != nil {
 		return model.DataSource{}, err
 	}
-	if input.Type != "prometheus" && input.Type != "mysql" && input.Type != "grafana-postgresql-datasource" {
+	builtinType := input.Type == "prometheus" || input.Type == "mysql" ||
+		input.Type == "grafana-postgresql-datasource" || input.Type == "loki" || input.Type == "tempo"
+	if !builtinType {
 		p, err := s.Plugin(ctx, input.Type)
 		if err != nil {
 			return model.DataSource{}, errors.New("datasource plugin is not installed")

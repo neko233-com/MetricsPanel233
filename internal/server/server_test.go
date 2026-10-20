@@ -66,6 +66,26 @@ func TestPatternCaptureSearchAndInputContracts(t *testing.T) {
 	assert.Equal(t, 404, call(h, "DELETE", "/api/v1/patterns/"+reference, "", token, "").Code)
 }
 
+func TestPublicHealthAndSecurityHeaders(t *testing.T) {
+	_, handler := setup(t, "")
+	health := call(handler, "GET", "/api/health", "", "", "")
+	require.Equal(t, 200, health.Code)
+	assert.Contains(t, health.Body.String(), `"database":"ok"`)
+	assert.Equal(t, "DENY", health.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "no-referrer", health.Header().Get("Referrer-Policy"))
+
+	static := call(handler, "GET", "/", "", "", "")
+	assert.Contains(t, static.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+	assert.Equal(t, "same-origin", static.Header().Get("Cross-Origin-Opener-Policy"))
+}
+
+func TestAuthStatusReportsTokenModeWithoutCredentials(t *testing.T) {
+	_, handler := setup(t, "")
+	response := call(handler, "GET", "/api/auth/status", "", "", "")
+	require.Equal(t, 200, response.Code)
+	assert.JSONEq(t, `{"mode":"token","setupRequired":false,"authenticated":false}`, response.Body.String())
+}
+
 func setup(t *testing.T, token string) (*store.Store, http.Handler) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "data.db"))

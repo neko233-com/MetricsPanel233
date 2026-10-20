@@ -143,6 +143,28 @@ func TestResourcesPersistAcrossRestart(t *testing.T) {
 	require.NoError(t, s.DeleteDashboard(ctx, d.ID))
 	require.Error(t, s.DeleteDashboard(ctx, d.ID))
 }
+func TestSystemDashboardIsSeededOnceAcrossRestarts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.db")
+	ctx := context.Background()
+	s, err := store.Open(path)
+	require.NoError(t, err)
+	first, err := s.Dashboard(ctx, "system")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.Panels)
+	require.NoError(t, s.DB.Close())
+
+	s, err = store.Open(path)
+	require.NoError(t, err)
+	defer s.DB.Close()
+	second, err := s.Dashboard(ctx, "system")
+	require.NoError(t, err)
+	assert.Equal(t, first.UpdatedAt, second.UpdatedAt)
+	assert.Len(t, second.Panels, len(first.Panels))
+	var count int
+	require.NoError(t, s.DB.QueryRow(`SELECT count(*) FROM dashboards WHERE id='system'`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 func BenchmarkSQLiteBatchIngest(b *testing.B) {
 	s, err := store.Open(filepath.Join(b.TempDir(), "bench.db"))
 	if err != nil {

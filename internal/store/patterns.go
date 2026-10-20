@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -95,6 +96,11 @@ func (s *Store) DeletePattern(ctx context.Context, id string) error {
 	}
 	return err
 }
+
+// sqlitePatternScanLimit bounds an exact in-process scan. It is a variable so
+// tests can exercise the boundary without inserting fifty thousand rows.
+var sqlitePatternScanLimit = 50000
+
 func ValidatePatternSearch(q model.PatternSearch) error {
 	if err := q.Reference.Validate(); err != nil {
 		return err
@@ -125,7 +131,7 @@ func (s *Store) SearchPatterns(ctx context.Context, q model.PatternSearch) ([]mo
 		query += ` AND id!=?`
 		args = append(args, q.Reference.ID)
 	}
-	rows, err := s.DB.QueryContext(ctx, query+` LIMIT 50001`, args...)
+	rows, err := s.DB.QueryContext(ctx, query+` LIMIT ?`, append(args, sqlitePatternScanLimit+1)...)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +141,8 @@ func (s *Store) SearchPatterns(ctx context.Context, q model.PatternSearch) ([]mo
 	count := 0
 	for rows.Next() {
 		count++
-		if count > 50000 {
-			return nil, errors.New("SQLite vector scan exceeds 50000 patterns; filter metric/labels or use ClickHouse")
+		if count > sqlitePatternScanLimit {
+			return nil, fmt.Errorf("SQLite vector scan exceeds %d patterns; filter metric/labels or use ClickHouse", sqlitePatternScanLimit)
 		}
 		var payload string
 		var p model.Pattern

@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS app_settings(id TEXT PRIMARY KEY,payload TEXT NOT NUL
 		{ID: "memory", Title: "Memory usage", Metric: "metricspanel_memory_bytes", Aggregation: "last", Unit: "bytes"},
 		{ID: "goroutines", Title: "Goroutines", Metric: "metricspanel_goroutines", Aggregation: "last", Unit: "count"},
 		{ID: "requests", Title: "HTTP requests", Metric: "metricspanel_http_requests_total", Aggregation: "rate", Unit: "ops"},
+		{ID: "uptime", Title: "Uptime", Metric: "metricspanel_uptime_seconds", Aggregation: "last", Unit: "seconds"},
 	}}
 	panels, _ := json.Marshal(d.Panels)
 	_, err = db.Exec(`INSERT OR IGNORE INTO dashboards(id,name,panels,updated_at) VALUES(?,?,?,?)`, d.ID, d.Name, string(panels), time.Now().UnixMilli())

@@ -34,6 +34,9 @@ import (
 	webassets "github.com/neko233-com/MetricsPanel233/web"
 )
 
+// BuildVersion is set by the CLI so health responses match the released binary.
+var BuildVersion = "0.1.1"
+
 type Server struct {
 	Store         *store.Store
 	Collector     *collector.Collector
@@ -45,6 +48,8 @@ type Server struct {
 	Token         string
 	RetentionDays int
 	Started       time.Time
+	// PublicHTTPS adds HSTS when TLS terminates at a trusted reverse proxy.
+	PublicHTTPS bool
 	// Authorizer is immutable after Handler construction. Nil preserves the
 	// existing single-workspace deployment; it does not enable multi-user access.
 	Authorizer        RequestAuthorizer
@@ -88,9 +93,21 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	}
 	return nil
 }
+func (s *Server) secureHeaders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	if r.TLS != nil || s.PublicHTTPS {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	}
+}
+
 func (s *Server) protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		s.secureHeaders(w, r)
 		w.Header().Set("Cache-Control", "no-store")
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
@@ -160,12 +177,17 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 	s.chunkedRoutes(api)
 	s.liveRoutes(api, endpoints)
 	mux.Handle("/prometheus/", s.protect(http.StripPrefix("/prometheus", promRoutes)))
+	api.HandleFunc("GET /api/auth/status", func(w http.ResponseWriter, r *http.Request) {
+		// Local-account mode answers this before reaching the server. The token
+		// mode response keeps the browser from probing a missing route.
+		writeJSON(w, 200, map[string]any{"mode": "token", "setupRequired": false, "authenticated": false})
+	})
 	api.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Health(r.Context()); err != nil {
 			fail(w, 503, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"status": "ok", "version": "0.1.1", "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
+		writeJSON(w, 200, map[string]any{"status": "ok", "version": BuildVersion, "storage": s.Store.Kind(), "started_at": s.Started.UnixMilli()})
 	})
 	api.HandleFunc("GET /api/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.Metrics(r.Context())
@@ -298,6 +320,13 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 		}
 		writeJSON(w, 200, map[string]bool{"deleted": true})
 	})
+	// Grafana ecosystem health probes do not carry credentials.
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		s.secureHeaders(w, r)
+		writeJSON(w, 200, map[string]string{"commit": "metricspanel", "database": "ok", "version": BuildVersion})
+	})
+	mux.Handle("POST /v1/metrics", s.protect(http.HandlerFunc(s.otlpMetrics)))
+	mux.Handle("POST /otlp/v1/metrics", s.protect(http.HandlerFunc(s.otlpMetrics)))
 	mux.Handle("/api/", s.protect(api))
 	mux.Handle("/apis/", s.protect(api))
 	endpoints.Handle("GET /metrics", s.protect(http.HandlerFunc(s.prometheus)))
@@ -309,8 +338,8 @@ func (s *Server) handlerWithRouteManifest() (http.Handler, []ProtectedRoute) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
+		s.secureHeaders(w, r)
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; frame-ancestors 'none'")
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
 			path = "index.html"

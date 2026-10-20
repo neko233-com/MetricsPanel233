@@ -153,8 +153,8 @@ func TestNativeLibraryInsertAllocatesUniquePanelsAndRejectsStaleClassicSave(t *t
 			seen[p.ID] = true
 		}
 		if id == "system" {
-			require.Len(t, classic.Dashboard.Panels, 4)
-			require.GreaterOrEqual(t, classic.Dashboard.Panels[3].Grid.Y, int64(16))
+			require.Len(t, classic.Dashboard.Panels, 5)
+			require.GreaterOrEqual(t, classic.Dashboard.Panels[4].Grid.Y, int64(16))
 		}
 	}
 	w = call(h, "POST", "/api/dashboards/db", `{"dashboard":{"uid":"versioned","title":"Versioned","panels":[{"id":1,"type":"text","title":"Original","options":{"content":"original"}}]}}`, "", "")

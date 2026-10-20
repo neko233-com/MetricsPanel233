@@ -199,7 +199,7 @@ func TestCLIJSONContractsAndCommands(t *testing.T) {
 	assert.Contains(t, string(data), "ingest_example")
 	data, err = capture(t, "version")
 	require.NoError(t, err)
-        assert.Contains(t, string(data), version)
+	assert.Contains(t, string(data), version)
 	file := filepath.Join(t.TempDir(), "samples.json")
 	require.NoError(t, os.WriteFile(file, []byte(`{"samples":[{"name":"cli_orders","value":233}]}`), 0600))
 	data, err = capture(t, "ingest", "--file", file, "--server", httpServer.URL)
@@ -240,7 +240,7 @@ func TestCLIJSONContractsAndCommands(t *testing.T) {
 }
 func TestServeRejectsUnsafeAndInvalidSettingsBeforeBinding(t *testing.T) {
 	t.Setenv("METRICSPANEL_TOKEN", "")
-	for _, args := range [][]string{{"--listen", "0.0.0.0:7333"}, {"--retention-days", "0"}, {"--listen", "bad-address"}, {"--storage", "wrong", "--db", filepath.Join(t.TempDir(), "db")}} {
+	for _, args := range [][]string{{"--listen", "0.0.0.0:7333"}, {"--retention-days", "0"}, {"--listen", "bad-address"}, {"--auth", "wrong"}, {"--storage", "wrong", "--db", filepath.Join(t.TempDir(), "db")}} {
 		require.Error(t, serve(args))
 	}
 }

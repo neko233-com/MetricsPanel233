@@ -21,8 +21,9 @@ const sessionExpiryCookieName = "grafana_session_expiry"
 var internalSessionPath = regexp.MustCompile(`^/[a-zA-Z0-9_./-]*$`)
 
 // SessionHTTPConfig is trusted application configuration, never request data.
-// This local-password adapter does not install a login page, bootstrap an
-// account, authorize organization resources, or activate the CLI HTTP server.
+// This adapter implements password login, cookie rotation and logout. The
+// first-run setup page, account bootstrap and the route role matrix are owned
+// by internal/localauth.
 type SessionHTTPConfig struct {
 	AppSubURL              string
 	CookieSecure           bool

@@ -414,7 +414,7 @@ func TestNativeGrafanaReadsAndSavesNativePrometheusPanels(t *testing.T) {
 		} `json:"panels"`
 	}
 	require.NoError(t, json.Unmarshal(response.Dashboard, &classic))
-	require.Len(t, classic.Panels, 3)
+	require.Len(t, classic.Panels, 4)
 	assert.Positive(t, classic.ID)
 	assert.Equal(t, "metricspanel_memory_bytes", classic.Panels[0].Targets[0].Expr)
 	assert.Equal(t, "bytes", classic.Panels[0].FieldConfig.Defaults.Unit)

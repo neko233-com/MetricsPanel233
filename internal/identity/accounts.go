@@ -187,6 +187,15 @@ func (s *Store) Users(ctx context.Context, limit, offset int) ([]User, error) {
 	return users, rows.Err()
 }
 
+// HasUsers reports whether the instance has at least one local account.
+func (s *Store) HasUsers(ctx context.Context) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (s *Store) BootstrapAdmin(ctx context.Context, input UserInput) (User, error) {
 	input.OrgID, input.Role, input.IsServerAdmin = 1, RoleAdmin, true
 	return s.createUser(ctx, input, true)

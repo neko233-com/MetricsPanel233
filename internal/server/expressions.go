@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 )
@@ -28,17 +27,9 @@ func (s *Server) expressionSourceQuery(ctx context.Context, uid string, queries 
 		return nil, "", err
 	}
 	response := backend.Responses{}
-	if ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
+	if isBuiltinSource(ds.Type) {
 		for _, q := range queries {
-			var frames data.Frames
-			var err error
-			if isSQLSource(ds.Type) {
-				frames, err = s.querySQLSource(ctx, ds, q)
-			} else if ds.Type == "prometheus" {
-				frames, err = s.queryPrometheusSource(ctx, ds, q)
-			} else {
-				frames, err = s.queryGrafanaSource(ctx, q)
-			}
+			frames, err := s.queryBuiltinSource(ctx, ds, q)
 			response[q.RefID] = backend.DataResponse{Frames: frames, Error: err}
 			if err != nil {
 				r := response[q.RefID]

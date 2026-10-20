@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,14 +25,18 @@ import (
 
 	"github.com/neko233-com/MetricsPanel233/internal/collector"
 	"github.com/neko233-com/MetricsPanel233/internal/grafana"
+	"github.com/neko233-com/MetricsPanel233/internal/identity"
+	"github.com/neko233-com/MetricsPanel233/internal/instance"
 	"github.com/neko233-com/MetricsPanel233/internal/live"
+	"github.com/neko233-com/MetricsPanel233/internal/localauth"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
 	"github.com/neko233-com/MetricsPanel233/internal/server"
 	"github.com/neko233-com/MetricsPanel233/internal/store"
 )
 
-const version = "0.1.1"
+// version is overridable at link time for release binaries.
+var version = "0.1.1"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
@@ -113,7 +118,7 @@ func run(args []string) error {
 	command := args[0]
 	rest := args[1:]
 	action := ""
-	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "contacts" || command == "notifications" || command == "silences" || command == "mute-timings" || command == "notification-templates" || command == "inhibition-rules" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" {
+	if command == "targets" || command == "dashboards" || command == "patterns" || command == "alerts" || command == "contacts" || command == "notifications" || command == "silences" || command == "mute-timings" || command == "notification-templates" || command == "inhibition-rules" || command == "plugins" || command == "datasources" || command == "live" || command == "annotations" || command == "folders" || command == "library" || command == "users" {
 		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("%s requires an action (see --help)", command)
 		}
@@ -125,6 +130,9 @@ func run(args []string) error {
 	apiPath := f.String("path", "", "API path including optional query string")
 	endpoint := f.String("server", env("METRICSPANEL_URL", "http://127.0.0.1:7333"), "server URL")
 	token := f.String("token", env("METRICSPANEL_TOKEN", ""), "API Bearer token; prefer environment variable")
+	apiUsername := f.String("api-username", env("METRICSPANEL_USERNAME", ""), "HTTP Basic user for local accounts; prefer METRICSPANEL_USERNAME")
+	apiPassword := f.String("api-password", env("METRICSPANEL_PASSWORD", ""), "HTTP Basic password; prefer METRICSPANEL_PASSWORD or --api-password-file")
+	apiPasswordFile := f.String("api-password-file", "", "read the HTTP Basic password from a file")
 	f.Bool("json", true, "JSON output (always enabled)")
 	metric := f.String("metric", "", "metric name")
 	expression := f.String("expr", "", "PromQL expression; uses the upstream Prometheus engine")
@@ -210,7 +218,18 @@ func run(args []string) error {
 	if *alertPreviewAt < 0 || *alertPreviewAt > 253402300799999 || (*alertPreviewAt != 0 && (command != "alerts" || action != "preview")) {
 		return errors.New("--at must be 0 to 253402300799999 and is only supported by alerts preview")
 	}
-	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision, dashboardMessage: *dashboardMessage}
+	clientPassword := *apiPassword
+	if *apiPasswordFile != "" {
+		data, err := os.ReadFile(*apiPasswordFile)
+		if err != nil {
+			return err
+		}
+		clientPassword = strings.TrimSpace(string(data))
+	}
+	if *apiUsername != "" && clientPassword == "" {
+		return errors.New("--api-username requires --api-password or --api-password-file")
+	}
+	client := apiClient{endpoint: strings.TrimRight(*endpoint, "/"), token: *token, username: *apiUsername, password: clientPassword, disableProvenance: *disableProvenance, dashboardRevision: *dashboardRevision, dashboardMessage: *dashboardMessage}
 	request := func(method, path string, payload any) error {
 		result, err := client.call(method, path, payload)
 		if err != nil {
@@ -223,6 +242,32 @@ func run(args []string) error {
 		return fmt.Errorf("invalid --labels: %w", err)
 	}
 	switch command {
+	case "users":
+		switch action {
+		case "list":
+			return request("GET", "/api/admin/users", nil)
+		case "me":
+			return request("GET", "/api/auth/me", nil)
+		case "create", "update":
+			if !fileProvided {
+				return errors.New("--file is required; use --file - to read JSON from stdin")
+			}
+			if action == "update" && *id == "" {
+				return errors.New("--id is required")
+			}
+			data, err := readFile(*file)
+			if err != nil {
+				return err
+			}
+			if !json.Valid(data) {
+				return errors.New("user file must contain one JSON object")
+			}
+			if action == "create" {
+				return request("POST", "/api/admin/users", json.RawMessage(data))
+			}
+			return request("PUT", "/api/admin/users/"+url.PathEscape(*id), json.RawMessage(data))
+		}
+		return errors.New("users requires action list, me, create or update")
 	case "api":
 		parsed, err := url.Parse(*apiPath)
 		if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" || (!strings.HasPrefix(parsed.Path, "/api/") && !strings.HasPrefix(parsed.Path, "/apis/") && !strings.HasPrefix(parsed.Path, "/prometheus/api/")) {
@@ -1222,11 +1267,21 @@ func readFile(path string) ([]byte, error) {
 }
 
 type apiClient struct {
-	endpoint, token   string
-	disableProvenance bool
-	dashboardRevision int64
-	dashboardMessage  string
-	rawResponse       bool
+	endpoint, token, username, password string
+	disableProvenance                   bool
+	dashboardRevision                   int64
+	dashboardMessage                    string
+	rawResponse                         bool
+}
+
+func (c apiClient) authorize(req *http.Request) {
+	if c.username != "" {
+		req.SetBasicAuth(c.username, c.password)
+		return
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 }
 
 func (c apiClient) uploadPlugin(data []byte) (json.RawMessage, error) {
@@ -1237,9 +1292,7 @@ func (c apiClient) uploadPlugin(data []byte) (json.RawMessage, error) {
 	sum := sha256.Sum256(data)
 	req.Header.Set("Content-Type", "application/zip")
 	req.Header.Set("X-Archive-SHA256", hex.EncodeToString(sum[:]))
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	c.authorize(req)
 	response, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
@@ -1274,9 +1327,7 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	c.authorize(req)
 	if c.disableProvenance {
 		req.Header.Set("X-Disable-Provenance", "true")
 	}
@@ -1330,6 +1381,7 @@ func (c apiClient) call(method, path string, payload any) (json.RawMessage, erro
 }
 
 func serve(args []string) error {
+	server.BuildVersion = version
 	f := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := f.String("listen", "127.0.0.1:7333", "HTTP listen address")
 	dbPath := f.String("db", "data/metrics.db", "SQLite database path")
@@ -1337,9 +1389,13 @@ func serve(args []string) error {
 	backend := f.String("storage", env("METRICSPANEL_STORAGE", "sqlite"), "metrics backend: sqlite or clickhouse")
 	clickhouseURL := f.String("clickhouse-url", env("CLICKHOUSE_URL", "http://127.0.0.1:8123"), "ClickHouse HTTP endpoint")
 	token := f.String("token", env("METRICSPANEL_TOKEN", ""), "API token; mandatory on non-loopback interfaces")
+	authMode := f.String("auth", env("METRICSPANEL_AUTH", "token"), "authentication mode: token (single workspace Bearer) or local (users, passwords and browser sessions)")
+	identityDB := f.String("identity-db", env("METRICSPANEL_IDENTITY_DB", ""), "identity catalog path for --auth=local; default beside the control database")
+	trustedProxies := f.String("trusted-proxies", env("METRICSPANEL_TRUSTED_PROXIES", ""), "comma-separated CIDRs allowed to supply X-Forwarded-For for login rate limiting")
 	pluginDir := f.String("plugins-dir", env("METRICSPANEL_PLUGINS_DIR", ""), "plugin packages directory; default beside the control database")
 	allowUnsigned := f.String("allow-unsigned-plugin", env("METRICSPANEL_ALLOW_UNSIGNED_PLUGINS", ""), "comma-separated development plugin IDs explicitly allowed without signatures")
 	rootURL := f.String("root-url", env("METRICSPANEL_ROOT_URL", "http://127.0.0.1:7333"), "public application URL; used for private plugin signatures")
+	openWorkspace := f.Bool("open", false, "open the workspace in the default browser after start")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -1348,6 +1404,9 @@ func serve(args []string) error {
 	}
 	if *retention < 1 || *retention > 3650 {
 		return errors.New("retention-days must be between 1 and 3650")
+	}
+	if *authMode != "token" && *authMode != "local" {
+		return errors.New("--auth must be token or local")
 	}
 	host, port, err := net.SplitHostPort(*listen)
 	if err != nil {
@@ -1364,6 +1423,8 @@ func serve(args []string) error {
 	if err != nil || (parsedRoot.Scheme != "http" && parsedRoot.Scheme != "https") || parsedRoot.Host == "" || parsedRoot.User != nil || parsedRoot.RawQuery != "" || parsedRoot.Fragment != "" {
 		return errors.New("root-url must be an absolute HTTP(S) URL without credentials, query or fragment")
 	}
+	_, statErr := os.Stat(*dbPath)
+	firstRun := errors.Is(statErr, os.ErrNotExist)
 	storage, err := store.Open(*dbPath)
 	if err != nil {
 		return err
@@ -1380,6 +1441,66 @@ func serve(args []string) error {
 	} else if *backend != "sqlite" {
 		return errors.New("--storage must be sqlite or clickhouse")
 	}
+	var authHandler *localauth.Handler
+	var setupRequired bool
+	if *authMode == "local" {
+		identityPath := *identityDB
+		if identityPath == "" {
+			identityPath = filepath.Join(filepath.Dir(*dbPath), "identity.db")
+		}
+		identityStore, err := identity.Open(identityPath)
+		if err != nil {
+			return err
+		}
+		defer identityStore.Close()
+		hasUsers, err := identityStore.HasUsers(context.Background())
+		if err != nil {
+			return err
+		}
+		adminUser := strings.TrimSpace(env("METRICSPANEL_ADMIN_USER", ""))
+		adminPassword := env("METRICSPANEL_ADMIN_PASSWORD", "")
+		adminEmail := strings.TrimSpace(env("METRICSPANEL_ADMIN_EMAIL", ""))
+		if !hasUsers && (adminUser != "" || adminPassword != "") {
+			if adminUser == "" || adminPassword == "" {
+				return errors.New("METRICSPANEL_ADMIN_USER and METRICSPANEL_ADMIN_PASSWORD must be set together")
+			}
+			if len(adminPassword) < 12 || len(adminPassword) > 1024 {
+				return errors.New("METRICSPANEL_ADMIN_PASSWORD must contain 12 to 1024 characters")
+			}
+			if _, err := identityStore.BootstrapAdmin(context.Background(), identity.UserInput{
+				Login: adminUser, Name: adminUser, Email: adminEmail, Password: adminPassword, OrgID: 1, Role: identity.RoleAdmin, IsServerAdmin: true,
+			}); err != nil {
+				return err
+			}
+			hasUsers = true
+			slog.Info("local administrator created from environment", "login", adminUser)
+		}
+		authenticator, err := instance.NewHTTPAuthenticator(identityStore, instance.HTTPAuthenticationConfig{
+			CookieName:       identity.SessionCookieName,
+			RotationInterval: 24 * time.Hour,
+		})
+		if err != nil {
+			return err
+		}
+		var proxies []string
+		for _, cidr := range strings.Split(*trustedProxies, ",") {
+			if cidr = strings.TrimSpace(cidr); cidr != "" {
+				proxies = append(proxies, cidr)
+			}
+		}
+		authHandler, err = localauth.New(localauth.Config{
+			Catalog:        identityStore,
+			Authenticator:  authenticator,
+			CookieName:     identity.SessionCookieName,
+			LegacyToken:    *token,
+			SecureCookie:   parsedRoot.Scheme == "https",
+			TrustedProxies: proxies,
+		})
+		if err != nil {
+			return err
+		}
+		setupRequired = !hasUsers && authHandler.SetupRequired()
+	}
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -1388,6 +1509,7 @@ func serve(args []string) error {
 	defer cancel()
 	srv := server.New(storage, *token, *retention)
 	srv.Alerts.TemplateURL = parsedRoot
+	srv.PublicHTTPS = parsedRoot.Scheme == "https"
 	allowed := []string{}
 	for _, id := range strings.Split(*allowUnsigned, ",") {
 		if id = strings.TrimSpace(id); id != "" {
@@ -1402,10 +1524,29 @@ func serve(args []string) error {
 	srv.Plugins.RootURL = *rootURL
 	backgroundDone := make(chan struct{})
 	go func() { srv.RunBackground(ctx); close(backgroundDone) }()
-	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 75 * time.Second, IdleTimeout: 60 * time.Second}
+	handler := srv.Handler()
+	if authHandler != nil {
+		handler = authHandler.Wrap(handler)
+	}
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 75 * time.Second, IdleTimeout: 60 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
-	slog.Info("MetricsPanel233 started", "address", listener.Addr().String(), "database", *dbPath, "retention_days", *retention, "auth", *token != "")
+	address := listener.Addr().String()
+	slog.Info("MetricsPanel233 started", "address", address, "database", *dbPath, "retention_days", *retention, "auth_mode", *authMode, "setup_required", setupRequired)
+	workspace := workspaceURL(*rootURL, address)
+	fmt.Fprintf(os.Stdout, "MetricsPanel233 %s\n  UI:        %s\n  Database:  %s\n  Storage:   %s\n  Retention: %d days\n  Auth:      %s\n", version, workspace, *dbPath, *backend, *retention, authDescription(*authMode, *token, *listen))
+	if firstRun {
+		fmt.Fprintf(os.Stdout, "First run: created %s. Open the UI above to start collecting metrics.\n", *dbPath)
+	}
+	if setupRequired {
+		fmt.Fprintf(os.Stdout, "Setup token: %s\n  Open the UI, create the administrator and keep this token private. It is shown only while no account exists.\n", authHandler.SetupToken())
+	}
+	fmt.Fprintln(os.Stdout, "Press Ctrl+C to stop.")
+	if *openWorkspace {
+		if err := openBrowser(workspace); err != nil {
+			slog.Warn("could not open the default browser", "error", err)
+		}
+	}
 	select {
 	case <-ctx.Done():
 	case err = <-serveErr:
@@ -1428,20 +1569,21 @@ func serve(args []string) error {
 func schema() any {
 	result := map[string]any{
 		"name": "metricspanel", "version": version, "output": "JSON stdout; JSON errors stderr; exit 0 success / 1 failure",
-		"environment":    map[string]string{"METRICSPANEL_URL": "http://127.0.0.1:7333", "METRICSPANEL_TOKEN": "Bearer token (optional on loopback)"},
+		"environment":    map[string]string{"METRICSPANEL_URL": "http://127.0.0.1:7333", "METRICSPANEL_TOKEN": "Bearer token (optional on loopback)", "METRICSPANEL_USERNAME": "HTTP Basic user for local accounts", "METRICSPANEL_PASSWORD": "HTTP Basic password for local accounts"},
 		"commands":       []string{"serve [--listen --db --retention-days]", "health", "stats", "metrics", "query --metric NAME [--range 30m --step 15s --aggregation last --labels '{}']", "ingest --file FILE|-", "targets list", "targets add --name NAME --url URL [--interval 15s --labels '{}']", "targets set --id ID --name NAME --url URL [--enabled=false]", "targets scrape --id ID", "targets delete --id ID", "dashboards list", "dashboards save --file FILE|- [--id ID]", "dashboards export --id ID", "dashboards delete --id ID", "schema", "version"},
-		"api":            map[string][]string{"GET": {"/api/v1/health", "/api/v1/stats", "/api/v1/metrics", "/api/v1/query", "/api/v1/targets", "/api/v1/dashboards", "/metrics"}, "POST": {"/api/v1/ingest", "/api/v1/targets", "/api/v1/targets/{id}/scrape", "/api/v1/dashboards"}, "PUT": {"/api/v1/targets/{id}", "/api/v1/dashboards/{id}"}, "DELETE": {"/api/v1/targets/{id}", "/api/v1/dashboards/{id}"}},
+		"api":            map[string][]string{"GET": {"/api/health", "/api/login/ping", "/api/user", "/api/user/orgs", "/api/v1/health", "/api/v1/stats", "/api/v1/metrics", "/api/v1/query", "/api/v1/targets", "/api/v1/dashboards", "/api/auth/status", "/api/auth/me", "/api/admin/users", "/metrics"}, "POST": {"/api/v1/ingest", "/api/v1/targets", "/api/v1/targets/{id}/scrape", "/api/v1/dashboards", "/api/admin/users", "/api/logout"}, "PUT": {"/api/v1/targets/{id}", "/api/v1/dashboards/{id}", "/api/admin/users/{id}"}, "DELETE": {"/api/v1/targets/{id}", "/api/v1/dashboards/{id}"}},
 		"ingest_example": map[string]any{"samples": []model.Sample{{Name: "app_requests_total", Labels: map[string]string{"service": "api"}, Value: 42}}},
 		"timestamps":     "Unix milliseconds; ingest timestamp=0 uses server time",
 		"aggregations":   []string{"last", "avg", "sum", "min", "max", "rate"},
 		"query_limits":   map[string]int{"max_range_days": 31, "max_series": 200, "max_samples": 250000, "max_buckets": 2000},
 	}
-	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID")
+	result["commands"] = append(result["commands"].([]string), "patterns capture --metric NAME [--range 30m --start MS --end MS --normalization shape|raw --aggregation last|rate --labels '{}']", "patterns list [--limit 1000]", "patterns get --id ID", "patterns search --id ID [--metric NAME --labels '{}' --limit 10 --exact --include-self]", "patterns delete --id ID", "users list", "users me", "users create --file FILE|-", "users update --id ID --file FILE|-")
 	routes := result["api"].(map[string][]string)
 	addDashboardResourceSchema(result, routes)
 	addDashboardHistorySchema(result, routes)
 	routes["GET"] = append(routes["GET"], "/api/v1/dashboard-exports/{id}?format=native|grafana")
 	routes["GET"] = append(routes["GET"], "/api/v1/collectors/catalog", "/api/v1/collectors/exporters")
+	result["datasource_types"] = []string{"metricspanel", "prometheus", "grafana", "loki", "tempo", "mysql", "grafana-postgresql-datasource", "__expr__"}
 	result["commands"] = append(result["commands"].([]string), "targets exporters")
 	result["prometheus_exporters"] = collector.Exporters()
 	result["commands"] = append(result["commands"].([]string), "targets catalog", "targets add --kind KIND --url URL --name NAME [--username USER --database DB --tls-mode verify-full]", "targets add|set --file FILE|- [--id ID]")

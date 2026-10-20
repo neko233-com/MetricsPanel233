@@ -31,7 +31,7 @@ func TestAgentLayoutAndNotificationWorkflows(t *testing.T) {
 	}
 	d, err := db.Dashboard(context.Background(), "system")
 	require.NoError(t, err)
-	layout := file("layout.json", `{"panels":[{"id":"memory","x":0,"y":0,"w":24,"h":8},{"id":"goroutines","x":0,"y":8,"w":12,"h":8},{"id":"requests","x":12,"y":8,"w":12,"h":8}]}`)
+	layout := file("layout.json", `{"panels":[{"id":"memory","x":0,"y":0,"w":24,"h":8},{"id":"goroutines","x":0,"y":8,"w":12,"h":8},{"id":"requests","x":12,"y":8,"w":12,"h":8},{"id":"uptime","x":0,"y":16,"w":24,"h":8}]}`)
 	args := []string{"dashboards", "layout", "--id", "system", "--file", layout, "--revision", strconv.FormatInt(d.UpdatedAt, 10), "--message", "Agent layout", "--server", host.URL}
 	raw, err := capture(t, args...)
 	require.NoError(t, err)

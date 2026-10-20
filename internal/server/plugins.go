@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -20,7 +21,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/neko233-com/MetricsPanel233/internal/expressions"
 	"github.com/neko233-com/MetricsPanel233/internal/model"
 	"github.com/neko233-com/MetricsPanel233/internal/plugins"
@@ -340,6 +340,14 @@ func (s *Server) datasourceRoutes(api routeRegistrar, prometheus http.Handler) {
 			writeJSON(w, 200, map[string]string{"status": "OK", "message": "Data source is working"})
 			return
 		}
+		if ds.Type == "loki" || ds.Type == "tempo" {
+			if err := s.checkHTTPDataSource(ctx, ds); err != nil {
+				fail(w, 502, err)
+				return
+			}
+			writeJSON(w, 200, map[string]string{"status": "OK", "message": "Data source is working"})
+			return
+		}
 		if ds.Type == "prometheus" {
 			now := time.Now()
 			_, err := s.queryPrometheusSource(ctx, ds, backend.DataQuery{RefID: "health", JSON: json.RawMessage(`{"expr":"vector(1)","instant":true}`), TimeRange: backend.TimeRange{From: now, To: now}, MaxDataPoints: 1})
@@ -456,6 +464,9 @@ func (s *Server) proxyDataSource(w http.ResponseWriter, r *http.Request, ds mode
 	if ds.BasicAuth {
 		request.SetBasicAuth(ds.BasicAuthUser, secrets["basicAuthPassword"])
 	}
+	if token := secrets["bearerToken"]; token != "" && request.Header.Get("Authorization") == "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 	var settings map[string]any
 	_ = json.Unmarshal(ds.JSONData, &settings)
 	for i := 1; i <= 32; i++ {
@@ -464,7 +475,11 @@ func (s *Server) proxyDataSource(w http.ResponseWriter, r *http.Request, ds mode
 			request.Header.Set(name, secrets[fmt.Sprintf("httpHeaderValue%d", i)])
 		}
 	}
-	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if skip, _ := settings["tlsSkipVerify"].(bool); skip {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // Explicit per-datasource setting.
+	}
+	client := &http.Client{Transport: transport, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
 		fail(w, 502, err)
@@ -613,17 +628,9 @@ func (s *Server) writeQueryGroups(w http.ResponseWriter, r *http.Request, groups
 			resourceError(w, err)
 			return
 		}
-		if ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
+		if isBuiltinSource(ds.Type) {
 			for _, q := range queries {
-				var frames data.Frames
-				var err error
-				if isSQLSource(ds.Type) {
-					frames, err = s.querySQLSource(ctx, ds, q)
-				} else if ds.Type == "grafana" {
-					frames, err = s.queryGrafanaSource(ctx, q)
-				} else {
-					frames, err = s.queryPrometheusSource(ctx, ds, q)
-				}
+				frames, err := s.queryBuiltinSource(ctx, ds, q)
 				results.Responses[q.RefID] = backend.DataResponse{Frames: frames, Error: err}
 				if err != nil {
 					value := results.Responses[q.RefID]

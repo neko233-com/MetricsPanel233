@@ -419,18 +419,10 @@ func (s *Server) streamQueryGroups(w http.ResponseWriter, r *http.Request, group
 			}
 			queries := groups[uid]
 			var err error
-			if ds := sources[uid]; ds.Type == "prometheus" || ds.Type == "grafana" || isSQLSource(ds.Type) {
+			if ds := sources[uid]; isBuiltinSource(ds.Type) {
 				producer := backend.NewChunkedDataWriter(backend.DataFrameFormat_JSON, writer.onChunk)
 				for _, query := range queries {
-					var frames data.Frames
-					var queryErr error
-					if isSQLSource(ds.Type) {
-						frames, queryErr = s.querySQLSource(ctx, ds, query)
-					} else if ds.Type == "grafana" {
-						frames, queryErr = s.queryGrafanaSource(ctx, query)
-					} else {
-						frames, queryErr = s.queryPrometheusSource(ctx, ds, query)
-					}
+					frames, queryErr := s.queryBuiltinSource(ctx, ds, query)
 					if queryErr != nil {
 						err = producer.WriteError(ctx, query.RefID, backend.StatusBadRequest, queryErr)
 					} else {

@@ -14,3 +14,21 @@
 /web/test-results/
 /web/playwright-report/
 *.tsbuildinfo
+
+# Self-contained release archives
+/dist/
+*.zip
+*.tar.gz
+
+# Local agent state
+/.codely-cli/
+
+# Coverage and tool caches
+/coverage/
+/web/coverage/
+/web/.vite/
+/web/node_modules/.vite/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
