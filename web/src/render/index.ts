@@ -1,9 +1,12 @@
 import { registerRenderer } from "./registry";
+import HeatmapRenderer from "./heatmap/HeatmapRenderer";
+import HistogramRenderer from "./histogram/HistogramRenderer";
 import LogsRenderer from "./logs/LogsRenderer";
 import StatRenderer from "./stat/StatRenderer";
 import { TableRenderer } from "./table/TableRenderer";
 import TimeSeriesRenderer from "./timeseries/TimeSeriesRenderer";
 import TracesRenderer from "./traces/TracesRenderer";
+import VectorRenderer from "./vector/VectorRenderer";
 
 registerRenderer({
   kind: "table",
@@ -47,13 +50,34 @@ registerRenderer({
   capabilities: {},
   component: TracesRenderer,
 });
+registerRenderer({
+  kind: "heatmap",
+  label: "Heatmap",
+  capabilities: {},
+  component: HeatmapRenderer,
+});
+registerRenderer({
+  kind: "histogram",
+  label: "Histogram",
+  capabilities: {},
+  component: HistogramRenderer,
+});
+registerRenderer({
+  kind: "vector",
+  label: "Vector",
+  capabilities: { vector: true },
+  component: VectorRenderer,
+});
 
 export {
+  HeatmapRenderer,
+  HistogramRenderer,
   LogsRenderer,
   StatRenderer,
   TableRenderer,
   TimeSeriesRenderer,
   TracesRenderer,
+  VectorRenderer,
 };
 export { getRenderer, registeredRenderers, registerRenderer } from "./registry";
 export { nextFrame, runInFrameSlices } from "./frame-budget";

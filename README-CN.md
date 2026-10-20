@@ -280,7 +280,7 @@ metricspanel api --path /api/library-elements --method GET
 `folders get` 和 `library get` 的 JSON 可由对应 `save --id` 读回；版本冲突需重新读取。`library model` 返回原始模型 JSON。`api --path` 支持所有已公开的本地 API 路径，使用相同认证，非 JSON 文本包装为 `content` / `contentType`。契约参考固定版本 [folder model](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/folder/model.go) 和 [library elements](https://github.com/grafana/grafana/blob/v13.2.3/pkg/services/libraryelements/model/model.go)。
 
 - 保留原始 JSON、targets、refId、instant / range、legendFormat、24 列 gridPos、fieldConfig 和 transformations；最多 500 面板，每面板 32 查询。
-- timeseries / graph、stat / singlestat、table、gauge、bargauge、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
+- timeseries / graph、stat / singlestat、table、gauge、bargauge、logs、traces、heatmap、histogram、vector、text 和 row。HTML / Markdown 文本经过 DOMPurify 清理。
 - 使用 **Grafana 官方 `@grafana/data`** 的标准转换算子、reducer、单位、阈值颜色和 value mapping；未知转换会明确报错。
 - query / custom / constant / textbox / interval 变量；`label_values`、`label_names`、`metrics`、`query_result`、regex / sort、多选 / All、重复面板。
 - `$__interval`、`$__rate_interval`、`$__range` 等宏，以及 regex / raw / pipe / csv / json 等变量格式；支持 `var-NAME` URL 参数。

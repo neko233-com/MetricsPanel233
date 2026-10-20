@@ -650,6 +650,8 @@ const zh: Record<string, string> = {
   "Log lines": "日志行",
   "Loading logs…": "正在加载日志…",
   "No logs match the current filters": "没有匹配当前筛选的日志",
+  Dimension: "维度",
+  "No vector samples in this time range": "该时间范围内没有向量样本",
   "No logs in this time range": "该时间范围内没有日志",
   "Search traces": "搜索 Trace",
   "Trace ID": "Trace ID",

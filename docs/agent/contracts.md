@@ -46,6 +46,8 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
 - Logs are first-party: virtualized rows, search and label key/value filters over Loki frames.
 - Traces are first-party for Tempo search: search, sorting, optional status and `?traceId=` deep links; span detail
   remains pending.
+- Heatmap, histogram and vector are first-party: canvas time-bucket heatmap, normalized bars and 64-dimension heat
+  strips. Optional Grafana-only kinds (pie, candlestick, geomap, node graph, state timeline) are out of scope.
 - The Grafana bridge is allowed only for imported resources and plugins under `web/src/grafana`.
 
 ## Deployment

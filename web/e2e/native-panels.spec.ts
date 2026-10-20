@@ -690,3 +690,243 @@ test("Traces renderer searches, sorts and deep-links Tempo rows", async ({
   ).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("Heatmap renderer draws time buckets, legend and hover values", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10, 12);
+  const times = Array.from({ length: 20 }, (_, index) => start + index * 1000);
+  const buckets = ["0.1", "0.5", "1", "5", "10"];
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Heatmap dashboard",
+      panels: [{
+        id: "heatmap",
+        title: "Request latency",
+        metric: "",
+        unit: "",
+        aggregation: "last",
+        visualization: "heatmap",
+        config: {
+          id: 1,
+          type: "heatmap",
+          gridPos: { x: 0, y: 0, w: 24, h: 16 },
+          options: {},
+          targets: [{
+            refId: "Snapshot",
+            queryType: "snapshot",
+            datasource: { uid: "grafana", type: "grafana" },
+            snapshot: [{
+              schema: {
+                refId: "A",
+                name: "Latency buckets",
+                fields: [
+                  { name: "Time", type: "time", config: {} },
+                  ...buckets.map((bucket) => ({
+                    name: `le ${bucket}`,
+                    type: "number",
+                    config: {},
+                    labels: { le: bucket },
+                  })),
+                ],
+              },
+              data: {
+                values: [
+                  times,
+                  ...buckets.map((_, index) => times.map(() => (index + 1) * 10)),
+                ],
+              },
+            }],
+          }],
+        },
+      }],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    endpoint + `/d/${saved.id}/heatmap-dashboard?from=${start}&to=${start + 60000}&timezone=utc`,
+  );
+  const panel = page.getByRole("region", { name: "Request latency", exact: true });
+  await expect(panel).toHaveAttribute("data-cell-count", "100");
+  await expect(panel.locator("canvas")).toBeVisible();
+  await expect(panel.locator(".native-heatmap-legend")).toContainText("50");
+  const box = (await panel.locator("canvas").boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.6);
+  const tooltip = panel.locator(".native-heatmap-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("40");
+  await expect(tooltip).not.toContainText("NaN");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("Histogram renderer normalizes bucket bars", async ({ page, endpoint }) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10, 12);
+  const times = Array.from({ length: 20 }, (_, index) => start + index * 1000);
+  const buckets = ["0.1", "0.5", "1", "5", "10"];
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Histogram dashboard",
+      panels: [{
+        id: "histogram",
+        title: "Latency distribution",
+        metric: "",
+        unit: "",
+        aggregation: "last",
+        visualization: "histogram",
+        config: {
+          id: 1,
+          type: "histogram",
+          gridPos: { x: 0, y: 0, w: 24, h: 16 },
+          options: {},
+          targets: [{
+            refId: "Snapshot",
+            queryType: "snapshot",
+            datasource: { uid: "grafana", type: "grafana" },
+            snapshot: [{
+              schema: {
+                refId: "A",
+                name: "Latency buckets",
+                fields: [
+                  { name: "Time", type: "time", config: {} },
+                  ...buckets.map((bucket) => ({
+                    name: `le ${bucket}`,
+                    type: "number",
+                    config: {},
+                    labels: { le: bucket },
+                  })),
+                ],
+              },
+              data: {
+                values: [
+                  times,
+                  ...buckets.map((_, index) => times.map(() => (index + 1) * 10)),
+                ],
+              },
+            }],
+          }],
+        },
+      }],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.goto(
+    endpoint + `/d/${saved.id}/histogram-dashboard?from=${start}&to=${start + 60000}&timezone=utc`,
+  );
+  const panel = page.getByRole("region", { name: "Latency distribution", exact: true });
+  await expect(panel).toHaveAttribute("data-bar-count", "5");
+  await expect(panel.locator(".native-histogram-bar")).toHaveCount(5);
+  await expect(panel.locator(".native-histogram-bar").last()).toContainText("50");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("Vector renderer draws 64-dimensional rows and hover values", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10, 12);
+  const dimensions = 64;
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Vector dashboard",
+      panels: [{
+        id: "vector",
+        title: "Pattern vectors",
+        metric: "",
+        unit: "",
+        aggregation: "last",
+        visualization: "vector",
+        config: {
+          id: 1,
+          type: "vector",
+          gridPos: { x: 0, y: 0, w: 24, h: 16 },
+          options: {},
+          targets: [{
+            refId: "Snapshot",
+            queryType: "snapshot",
+            datasource: { uid: "grafana", type: "grafana" },
+            snapshot: [{
+              schema: {
+                refId: "A",
+                name: "Vectors",
+                fields: [
+                  { name: "Time", type: "time", config: {} },
+                  { name: "Name", type: "string", config: {} },
+                  ...Array.from({ length: dimensions }, (_, index) => ({
+                    name: `Dimension ${index}`,
+                    type: "number",
+                    config: {},
+                  })),
+                ],
+              },
+              data: {
+                values: [
+                  [start, start + 1000, start + 2000],
+                  ["alpha", "beta", "gamma"],
+                  ...Array.from({ length: dimensions }, (_, index) => [
+                    index,
+                    index * 2,
+                    index * 3,
+                  ]),
+                ],
+              },
+            }],
+          }],
+        },
+      }],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.goto(
+    endpoint + `/d/${saved.id}/vector-dashboard?from=${start}&to=${start + 60000}&timezone=utc`,
+  );
+  const panel = page.getByRole("region", { name: "Pattern vectors", exact: true });
+  await expect(panel).toHaveAttribute("data-vector-count", "3");
+  await expect(panel).toHaveAttribute("data-vector-dimensions", "64");
+  const canvas = panel.locator("canvas");
+  await expect(canvas).toBeVisible();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 160, box.y + 38);
+  const tooltip = panel.locator(".native-vector-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("beta");
+  await expect(tooltip).toContainText("Dimension");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});

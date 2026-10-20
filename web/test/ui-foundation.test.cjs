@@ -41,16 +41,22 @@ test("product dialogs use the first-party modal instead of a native dialog eleme
   assert.doesNotMatch(dialog, /showModal\(/);
 });
 
-test("stat, gauge, bar gauge, logs and traces are first-party renderer registrations", () => {
+test("stat, gauge, bar gauge, logs, traces, heatmap, histogram and vector are first-party renderers", () => {
   const index = read("src/render/index.ts");
-  for (const kind of ["stat", "gauge", "bargauge", "logs", "traces"]) {
+  for (const kind of ["stat", "gauge", "bargauge", "logs", "traces", "heatmap", "histogram", "vector"]) {
     assert.match(index, new RegExp(`kind: "${kind}"`));
   }
   assert.match(index, /StatRenderer/);
   assert.match(index, /LogsRenderer/);
   assert.match(index, /TracesRenderer/);
+  assert.match(index, /HeatmapRenderer/);
+  assert.match(index, /HistogramRenderer/);
+  assert.match(index, /VectorRenderer/);
   assert.match(read("src/render/stat/StatRenderer.tsx"), /role="meter"/);
   assert.match(read("src/render/logs/LogsRenderer.tsx"), /role="log"/);
   assert.match(read("src/render/traces/TracesRenderer.tsx"), /Sort by duration/);
+  assert.match(read("src/render/heatmap/HeatmapRenderer.tsx"), /data-cell-count/);
+  assert.match(read("src/render/histogram/HistogramRenderer.tsx"), /data-bar-count/);
+  assert.match(read("src/render/vector/VectorRenderer.tsx"), /data-vector-count/);
   assert.match(read("src/grafana/GrafanaPanel.tsx"), /getRenderer\(type\)/);
 });

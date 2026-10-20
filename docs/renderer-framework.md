@@ -64,13 +64,13 @@ requires it. Unknown kinds show a named error instead of silently rendering noth
 | Time series | Implemented (default) | Own uPlot renderer; lines, comparison, legend, tooltip, zoom, annotations, log axes, percent stacking and multiple axes. `?renderer=compat` or localStorage restores the bridge |
 | Table | Implemented (core) | Own HTML table; sorting, pagination, page numbers, footer reducers, display formatting |
 | Stat / Gauge / Bar gauge | Implemented (default) | Shared `StatRenderer`; reducer selection, field filtering, threshold colors, gauge meter ARIA and bar fraction. Text/Markdown remains in the panel host |
-| Text / Markdown | Planned | Sanitized HTML renderer |
+| Text / Markdown | Implemented (panel host) | Sanitized HTML/Markdown rendered by the panel host |
 | Logs | Implemented (default) | Own virtualized log view; search and label key/value filters; 10k-row browser contract |
 | Traces | Implemented (search) | Tempo search table; search, start/duration sorting, optional status, `?traceId=` deep link. Detail view pending |
-| Heatmap / Histogram | Planned | Bucket and density renderers |
-| Pie / Candlestick / Geomap / Node graph | Planned | Lower priority for SMB monitoring |
-| State timeline / Status history | Planned | Alert/state transitions |
-| Vector | Planned | 64-dim sparkline, similarity scatter and neighbor list |
+| Heatmap / Histogram | Implemented (default) | Canvas time-bucket heatmap with legend/hover; normalized HTML histogram bars |
+| Pie / Candlestick / Geomap / Node graph | Out of scope | Not required for the SMB/game-backend monitoring target |
+| State timeline / Status history | Out of scope | Alert state history is covered by alert views |
+| Vector | Implemented (default) | 64-dimension heat strip with hover values, up to 200 rows |
 
 Compatibility-only renderers for imported Grafana dashboards are tracked separately; they do not count as
 first-party coverage.
@@ -106,5 +106,5 @@ configurable panel (`RENDER_BENCH_POINTS`, `RENDER_BENCH_SERIES`) and reports fi
 1. Own Table and TimeSeries are the product defaults; TimeSeries covers log axes, percent stacking and multiple axes.
    `?renderer=compat` or localStorage `metricspanel-renderer=compat` restores the Grafana bridge for compatibility
    resources, plugins and troubleshooting.
-2. Stat, gauge, bar gauge, logs and traces are registry entries; next move Heatmap and Vector, then trace detail.
+2. Heatmap, histogram and vector are registry entries; the remaining renderer work is Tempo trace detail.
 3. Remove `@grafana/ui` from the default bundle and leave it only in the optional import/plugin chunk.

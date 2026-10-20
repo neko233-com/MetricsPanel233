@@ -253,7 +253,7 @@ Local imports submit the original JSON text. Browser and CLI exports read the sa
 Panel targets, refIds, instant/range queries, legends, gridPos, fieldConfig and transformation contracts are retained.
 Limits are 500 panels and 32 queries per panel. Panels query only near the visible viewport; the official renderer dependency loads only for templates.
 Import tests include a pinned community Node Exporter Full dashboard.
-Supported renderers include graph / timeseries, stat / singlestat, table, gauge, bargauge, sanitized HTML / Markdown text and rows.
+Supported renderers include graph / timeseries, stat / singlestat, table, gauge, bargauge, logs, traces, heatmap, histogram, vector, sanitized HTML / Markdown text and rows.
 The official `@grafana/data` package executes standard transformations, reducers, units, threshold colors and value mappings.
 Variables support label_values, label_names, metrics, query_result, regex/sort, custom/constant/textbox/interval, multi-select, All,
 repeated panels, common interval/range macros, variable formats and var-NAME URL parameters.

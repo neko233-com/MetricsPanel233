@@ -226,7 +226,7 @@ export default function GrafanaPanel({
         />
       );
   }
-  if (type === "logs" || type === "traces") {
+  if (["logs", "traces", "heatmap", "histogram", "vector"].includes(type)) {
     const Component = getRenderer(type)?.component;
     if (Component)
       return (
