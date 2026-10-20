@@ -63,7 +63,7 @@ requires it. Unknown kinds show a named error instead of silently rendering noth
 | --- | --- | --- |
 | Time series | Implemented (default) | Own uPlot renderer; lines, comparison, legend, tooltip, zoom, annotations, log axes, percent stacking and multiple axes. `?renderer=compat` or localStorage restores the bridge |
 | Table | Implemented (core) | Own HTML table; sorting, pagination, page numbers, footer reducers, display formatting |
-| Stat / Gauge / Bar gauge | Planned | Reuse normalized field stats and threshold colors |
+| Stat / Gauge / Bar gauge | Implemented (default) | Shared `StatRenderer`; reducer selection, field filtering, threshold colors, gauge meter ARIA and bar fraction. Text/Markdown remains in the panel host |
 | Text / Markdown | Planned | Sanitized HTML renderer |
 | Logs | Planned | Loki frames; virtualized rows, labels, search |
 | Traces | Planned | Tempo search table first, trace detail later |
@@ -106,5 +106,5 @@ configurable panel (`RENDER_BENCH_POINTS`, `RENDER_BENCH_SERIES`) and reports fi
 1. Own Table and TimeSeries are the product defaults; TimeSeries covers log axes, percent stacking and multiple axes.
    `?renderer=compat` or localStorage `metricspanel-renderer=compat` restores the Grafana bridge for compatibility
    resources, plugins and troubleshooting.
-2. Finish TimeSeries parity, then move Stat/Gauge/Logs/Traces/Vector.
+2. Stat, gauge and bar gauge are registry entries; next move Logs, Traces, Heatmap and Vector.
 3. Remove `@grafana/ui` from the default bundle and leave it only in the optional import/plugin chunk.

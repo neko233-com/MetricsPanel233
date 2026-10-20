@@ -27,7 +27,7 @@ Weights reflect product risk and user-visible value.
 | Workstream | Weight | Progress | Basis and remaining work |
 | --- | --- | --- | --- |
 | Product shell and first-party UI | 15% | 70% | `web/src/ui` primitives, bilingual pages and forms exist; the left-navigation + right-content shell redesign and ReactBits motion layer are not started |
-| Renderers | 20% | 45% | Table and TimeSeries are first-party defaults; Stat/Gauge/BarGauge are product-owned HTML paths but not registry entries; Logs, Traces, Heatmap and Vector remain; Worker decimation remains |
+| Renderers | 20% | 50% | Table, TimeSeries, Stat, Gauge and BarGauge are first-party registry entries; Logs, Traces, Heatmap and Vector remain; Worker decimation remains |
 | Collection | 15% | 80% | Prometheus/OpenMetrics, OTLP/HTTP, MySQL, Redis, PostgreSQL and service exports work; broader exporter coverage and edge-case conformance remain |
 | Storage and query | 15% | 75% | SQLite default, ClickHouse optional, retention and 64-dimension vectors; rollups, block min/max and large-range planning remain |
 | Auth and security | 15% | 85% | Local accounts, Setup token, sessions, roles, rate limiting, headers, public-deployment guide; periodic security review remains |
@@ -35,7 +35,7 @@ Weights reflect product risk and user-visible value.
 | Docs and agent contract | 10% | 85% | Product goals, architecture, renderer matrix, agent guide and external skill references; keep in sync with each behavior change |
 | Performance | 10% | 40% | Frame budget and incremental model reuse exist; LTTB/min-max downsampling, Worker transfer and large-range benchmarks remain |
 
-**Weighted overall: 66%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
+**Weighted overall: 67%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
 downsampling land.
 
 ## Definition of done by workstream
@@ -72,19 +72,17 @@ downsampling land.
 | 2026-10-20 | Agent contract, tag-only CI, external skill reference | `docs/agent/*`; CI run 39436800402 green for `a51c275` |
 | 2026-10-20 | First-party TimeSeries default with compat fallback | Full browser suite 68 passed / 2 skipped; `?renderer=compat` fallback |
 | 2026-10-20 | Responsive acceptance for charts and tables | 390/768/1280 width tests, dynamic panel height, narrow table containment |
+| 2026-10-20 | Stat/Gauge/BarGauge renderer registry entries | `StatRenderer` shared reducer/empty states; browser test asserts stat text, meter ARIA values, bar fraction and no page overflow |
 
 ## Next units (ordered)
 
-1. **Stat/Gauge/BarGauge registry entries** — move the existing product-owned HTML paths behind `web/src/render`
-   definitions; add one browser contract per kind. Acceptance: registry resolution, responsive containment, no
-   `@grafana/ui` imports.
-2. **Logs renderer** — virtualized Loki frames with label filtering and search. Acceptance: 10k-row frame stays
+1. **Logs renderer** — virtualized Loki frames with label filtering and search. Acceptance: 10k-row frame stays
    interactive, empty/error states covered.
-3. **Traces renderer** — Tempo search table first, trace detail second. Acceptance: search, duration/status columns
+2. **Traces renderer** — Tempo search table first, trace detail second. Acceptance: search, duration/status columns
    and deep-link parameters.
-4. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
+3. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
    peak preservation.
-5. **Shell redesign** — collapsible left navigation and right content, preserving routing, permissions and the
+4. **Shell redesign** — collapsible left navigation and right content, preserving routing, permissions and the
    responsive suite. Acceptance: 390/768/1280, keyboard-only navigation, no layout overflow.
-6. **Vite+ evaluation** — isolated comparison of build, lint, test and CI cost. Acceptance: documented decision, no
+5. **Vite+ evaluation** — isolated comparison of build, lint, test and CI cost. Acceptance: documented decision, no
    migration until parity is proven.

@@ -37,7 +37,8 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
 - TimeSeries covers lines, comparison, legend, tooltip, zoom, log axes, percent stacking, multiple axes and
   annotations. Use `?renderer=compat` or localStorage `metricspanel-renderer=compat` to restore the compatibility
   bridge for imported-resource edge cases and troubleshooting.
-- Stat/gauge/bar-gauge/text are product-owned HTML paths in the panel host.
+- Stat, gauge and bar gauge are first-party registry entries sharing `StatRenderer`; text/Markdown remains a
+  product-owned HTML path in the panel host.
 - The Grafana bridge is allowed only for imported resources and plugins under `web/src/grafana`.
 
 ## Deployment

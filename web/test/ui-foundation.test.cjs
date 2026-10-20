@@ -40,3 +40,13 @@ test("product dialogs use the first-party modal instead of a native dialog eleme
   assert.doesNotMatch(dialog, /<dialog/);
   assert.doesNotMatch(dialog, /showModal\(/);
 });
+
+test("stat, gauge and bar gauge are first-party renderer registrations", () => {
+  const index = read("src/render/index.ts");
+  for (const kind of ["stat", "gauge", "bargauge"]) {
+    assert.match(index, new RegExp(`kind: "${kind}"`));
+  }
+  assert.match(index, /StatRenderer/);
+  assert.match(read("src/render/stat/StatRenderer.tsx"), /role="meter"/);
+  assert.match(read("src/grafana/GrafanaPanel.tsx"), /getRenderer\(type\)/);
+});

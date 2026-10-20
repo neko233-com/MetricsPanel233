@@ -1,12 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import {
-  FieldType,
-  getFieldDisplayName,
-  reduceField,
-  fieldReducers,
-  type DataFrame,
-  type Field,
-} from "@grafana/data";
+import type { DataFrame } from "@grafana/data";
 import DOMPurify from "dompurify";
 import { Pencil, Trash2 } from "lucide-react";
 import { marked } from "marked";
@@ -29,7 +22,7 @@ import {
   type PanelTimeRange,
   type TimeSelection,
 } from "./time-range";
-import { TableRenderer, TimeSeriesRenderer } from "../render";
+import { TableRenderer, TimeSeriesRenderer, getRenderer } from "../render";
 const PluginPanel = lazy(() => import("./PluginPanel"));
 const GrafanaTimeSeries = lazy(() => import("./GrafanaTimeSeries"));
 
@@ -43,21 +36,6 @@ function ownTimeSeriesPreferred() {
   } catch {
     return true;
   }
-}
-
-function display(
-  field: Field,
-  value: unknown,
-): { text: string; color?: string } {
-  const formatted = field.display?.(value);
-  return {
-    text: formatted
-      ? `${formatted.prefix || ""}${formatted.text}${formatted.suffix || ""}`
-      : value == null
-        ? "—"
-        : String(value),
-    color: formatted?.color,
-  };
 }
 
 export default function GrafanaPanel({
@@ -230,9 +208,25 @@ export default function GrafanaPanel({
         <h2>{panel.title}</h2>
       </div>
     );
-  const supported = ["stat", "gauge", "bargauge", "table", "text"].includes(
-    type,
-  );
+  if (["stat", "gauge", "bargauge"].includes(type)) {
+    const Stat = getRenderer(type)?.component;
+    if (Stat)
+      return (
+        <Stat
+          panel={panel}
+          frames={frames}
+          values={values}
+          range={effective}
+          timeInfo={timeInfo}
+          loading={loading}
+          streaming={streaming}
+          queryError={error}
+          onEdit={onEdit}
+          onRemove={onRemove}
+        />
+      );
+  }
+  const supported = ["table", "text"].includes(type);
   if (!supported)
     return (
       <Suspense
@@ -273,40 +267,6 @@ export default function GrafanaPanel({
         />
       </Suspense>
     );
-  const reduce = config?.options?.reduceOptions || {},
-    reducer = reduce.calcs?.[0] || "lastNotNull";
-  let fields = frames.flatMap((frame) =>
-    frame.fields
-      .filter((field) => field.type === FieldType.number)
-      .map((field) => ({ field, frame })),
-  );
-  if (reduce.fields) {
-    try {
-      const regex = new RegExp(reduce.fields);
-      fields = fields.filter(({ field, frame }) =>
-        regex.test(getFieldDisplayName(field, frame, frames)),
-      );
-    } catch {
-      /* invalid field expression is surfaced by the template author */
-    }
-  }
-  const stats = fields.flatMap(({ field, frame }) => {
-    const values = reduce.values
-      ? field.values.slice(0, Math.min(reduce.limit || 25, 500))
-      : [
-          fieldReducers.getIfExists(reducer)
-            ? reduceField({ field, reducers: [reducer] })[reducer]
-            : undefined,
-        ];
-    return values.map((value, i) => ({
-      field,
-      name:
-        getFieldDisplayName(field, frame, frames) +
-        (values.length > 1 ? ` ${i + 1}` : ""),
-      value,
-      formatted: display(field, value),
-    }));
-  });
   const content = config?.options?.content || "";
   const html =
     type === "text"
@@ -363,79 +323,11 @@ export default function GrafanaPanel({
           range={effective}
         />
       )}
-      {["stat", "gauge", "bargauge"].includes(type) && (
-        <div
-          className={`grafana-values ${config?.options?.orientation || "auto"}`}
-        >
-          {stats.map((stat, i) => {
-            const min = stat.field.config.min ?? 0,
-              max =
-                stat.field.config.max ??
-                (stat.field.config.unit === "percentunit" ? 1 : 100);
-            const fraction = Math.max(
-              0,
-              Math.min(
-                1,
-                (Number(stat.value) - min) /
-                  Math.max(Number.EPSILON, max - min),
-              ),
-            );
-            return (
-              <div className="grafana-value" key={i}>
-                <span className="subtle">{stat.name}</span>
-                {type === "gauge" && (
-                  <svg
-                    viewBox="0 0 160 90"
-                    role="meter"
-                    aria-label={stat.name}
-                    aria-valuenow={Number(stat.value)}
-                    aria-valuemin={min}
-                    aria-valuemax={max}
-                  >
-                    <path
-                      d="M 15 78 A 65 65 0 0 1 145 78"
-                      fill="none"
-                      stroke="#283044"
-                      strokeWidth="12"
-                    />
-                    <path
-                      d="M 15 78 A 65 65 0 0 1 145 78"
-                      fill="none"
-                      stroke={stat.formatted.color || "#ff9457"}
-                      strokeWidth="12"
-                      pathLength="100"
-                      strokeDasharray={`${fraction * 100} 100`}
-                    />
-                  </svg>
-                )}
-                <strong style={{ color: stat.formatted.color }}>
-                  {stat.formatted.text}
-                </strong>
-                {type === "bargauge" && (
-                  <progress
-                    max="1"
-                    value={fraction}
-                    aria-label={stat.name}
-                    style={{ accentColor: stat.formatted.color || "#ff9457" }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
       {!["text", "row"].includes(type) && !error && !frames.length && (
         <p className="subtle">
           {t(loading ? "Loading metrics…" : "No samples in this time range")}
         </p>
       )}
-      {supported &&
-        ["stat", "gauge", "bargauge"].includes(type) &&
-        !fieldReducers.getIfExists(reducer) && (
-          <p className="form-error" role="alert">
-            {t("Unsupported reducer")}: {reducer}
-          </p>
-        )}
     </section>
   );
 }

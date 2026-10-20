@@ -430,3 +430,73 @@ test("Annotation query edits preserve precise raw models in every dashboard form
   }
   expect(errors).toEqual([]);
 });
+
+test("Stat, gauge and bar gauge render through first-party registry paths", async ({ page, endpoint }) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10);
+  const snapshot = (title: string, value: number) => [{
+    schema: {
+      refId: "A",
+      name: title,
+      fields: [
+        { name: "Time", type: "time", config: {} },
+        { name: "Number", type: "number", config: { decimals: 0, min: 0, max: 200 } },
+      ],
+    },
+    data: { values: [[start], [value]] },
+  }];
+  const panel = (id: number, title: string, type: "stat" | "gauge" | "bargauge", value: number) => ({
+    id: String(id),
+    title,
+    metric: "",
+    unit: "",
+    aggregation: "last",
+    visualization: type,
+    config: {
+      id,
+      type,
+      gridPos: { x: (id - 1) * 8, y: 0, w: 8, h: 8 },
+      options: { reduceOptions: { calcs: ["lastNotNull"] }, orientation: "auto" },
+      targets: [{
+        refId: "Snapshot",
+        queryType: "snapshot",
+        datasource: { uid: "grafana", type: "grafana" },
+        snapshot: snapshot(title, value),
+      }],
+    },
+  });
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Value panels",
+      panels: [
+        panel(1, "Stat value", "stat", 75),
+        panel(2, "Gauge value", "gauge", 75),
+        panel(3, "Bar gauge value", "bargauge", 50),
+      ],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.goto(endpoint + `/d/${saved.id}/value-panels?from=${start}&to=${start + 60000}&timezone=utc`);
+  const stat = page.getByRole("region", { name: "Stat value", exact: true });
+  await expect(stat).toHaveClass(/grafana-stat/);
+  await expect(stat.locator(".grafana-value strong")).toHaveText("75");
+  const gauge = page.getByRole("region", { name: "Gauge value", exact: true });
+  const meter = gauge.getByRole("meter");
+  await expect(meter).toHaveAttribute("aria-valuenow", "75");
+  await expect(meter).toHaveAttribute("aria-valuemin", "0");
+  await expect(meter).toHaveAttribute("aria-valuemax", "200");
+  await expect(gauge.locator(".grafana-value strong")).toHaveText("75");
+  const bar = page.getByRole("region", { name: "Bar gauge value", exact: true });
+  const progress = bar.locator("progress");
+  await expect(progress).toHaveAttribute("max", "1");
+  expect(await progress.evaluate((element) => (element as HTMLProgressElement).value)).toBeCloseTo(0.25, 5);
+  await expect(bar.locator(".grafana-value strong")).toHaveText("50");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
