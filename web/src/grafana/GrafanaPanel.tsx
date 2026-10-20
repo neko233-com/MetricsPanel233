@@ -226,6 +226,24 @@ export default function GrafanaPanel({
         />
       );
   }
+  if (type === "logs") {
+    const Logs = getRenderer("logs")?.component;
+    if (Logs)
+      return (
+        <Logs
+          panel={panel}
+          frames={frames}
+          values={values}
+          range={effective}
+          timeInfo={timeInfo}
+          loading={loading}
+          streaming={streaming}
+          queryError={error}
+          onEdit={onEdit}
+          onRemove={onRemove}
+        />
+      );
+  }
   const supported = ["table", "text"].includes(type);
   if (!supported)
     return (

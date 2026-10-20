@@ -39,6 +39,7 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
   bridge for imported-resource edge cases and troubleshooting.
 - Stat, gauge and bar gauge are first-party registry entries sharing `StatRenderer`; text/Markdown remains a
   product-owned HTML path in the panel host.
+- Logs are first-party: virtualized rows, search and label key/value filters over Loki frames.
 - The Grafana bridge is allowed only for imported resources and plugins under `web/src/grafana`.
 
 ## Deployment

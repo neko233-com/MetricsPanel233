@@ -500,3 +500,101 @@ test("Stat, gauge and bar gauge render through first-party registry paths", asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("Logs renderer virtualizes ten thousand rows with search and label filters", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  const start = Date.UTC(2026, 9, 10);
+  const times = Array.from({ length: 10000 }, (_, index) => start + index * 1000);
+  const lines = Array.from({ length: 10000 }, (_, index) =>
+    index === 2500 ? "needle request failed" : `request ${index} ok`,
+  );
+  const snapshot = (from: number, to: number, level: string) => ({
+    schema: {
+      refId: "A",
+      name: "Logs",
+      fields: [
+        { name: "Time", type: "time", config: {} },
+        {
+          name: "Line",
+          type: "string",
+          config: {},
+          labels: { app: "api", level },
+        },
+      ],
+    },
+    data: { values: [times.slice(from, to), lines.slice(from, to)] },
+  });
+  const created = await page.request.post(endpoint + "/api/v1/dashboards", {
+    data: {
+      name: "Logs dashboard",
+      panels: [{
+        id: "logs",
+        title: "Service logs",
+        metric: "",
+        unit: "",
+        aggregation: "last",
+        visualization: "logs",
+        config: {
+          id: 1,
+          type: "logs",
+          gridPos: { x: 0, y: 0, w: 24, h: 18 },
+          options: {},
+          targets: [{
+            refId: "Snapshot",
+            queryType: "snapshot",
+            datasource: { uid: "grafana", type: "grafana" },
+            snapshot: [
+              snapshot(0, 5000, "error"),
+              snapshot(5000, 10000, "info"),
+            ],
+          }],
+        },
+      }],
+    },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const saved = await created.json();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    endpoint + `/d/${saved.id}/logs-dashboard?from=${start}&to=${start + 10000000}&timezone=utc`,
+  );
+  const panel = page.getByRole("region", { name: "Service logs", exact: true });
+  await expect(panel).toHaveAttribute("data-log-count", "10000");
+  const viewport = panel.getByRole("log", { name: "Log lines", exact: true });
+  await expect(viewport).toBeVisible();
+  expect(await panel.locator(".native-logs-row").count()).toBeLessThan(60);
+  expect(
+    await viewport.evaluate((element) => element.scrollHeight),
+  ).toBeGreaterThan(200000);
+  const search = panel.getByRole("searchbox", { name: "Search logs", exact: true });
+  await search.fill("needle");
+  await expect(panel).toHaveAttribute("data-log-count", "1");
+  await expect(panel.locator(".native-logs-row")).toContainText(
+    "needle request failed",
+  );
+  await search.fill("");
+  await panel.getByLabel("Label key", { exact: true }).selectOption("level");
+  await panel.getByLabel("Label value", { exact: true }).selectOption("error");
+  await expect(panel).toHaveAttribute("data-log-count", "5000");
+  await panel.getByLabel("Label value", { exact: true }).selectOption("info");
+  await expect(panel).toHaveAttribute("data-log-count", "5000");
+  await panel.getByLabel("Label key", { exact: true }).selectOption("");
+  await expect(panel).toHaveAttribute("data-log-count", "10000");
+  await search.fill("missing line");
+  await expect(panel).toHaveAttribute("data-log-count", "0");
+  await expect(panel).toContainText("No logs match the current filters");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});

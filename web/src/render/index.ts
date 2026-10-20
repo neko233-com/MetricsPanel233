@@ -1,4 +1,5 @@
 import { registerRenderer } from "./registry";
+import LogsRenderer from "./logs/LogsRenderer";
 import StatRenderer from "./stat/StatRenderer";
 import { TableRenderer } from "./table/TableRenderer";
 import TimeSeriesRenderer from "./timeseries/TimeSeriesRenderer";
@@ -33,8 +34,14 @@ registerRenderer({
   capabilities: { streaming: true },
   component: StatRenderer,
 });
+registerRenderer({
+  kind: "logs",
+  label: "Logs",
+  capabilities: { streaming: true },
+  component: LogsRenderer,
+});
 
-export { StatRenderer, TableRenderer, TimeSeriesRenderer };
+export { LogsRenderer, StatRenderer, TableRenderer, TimeSeriesRenderer };
 export { getRenderer, registeredRenderers, registerRenderer } from "./registry";
 export { nextFrame, runInFrameSlices } from "./frame-budget";
 export { appendedRows, frameSignature, reuseIfSame } from "./incremental";
