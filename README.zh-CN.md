@@ -720,6 +720,8 @@ CI 从 [Google Cloud 官方缓存](https://docs.cloud.google.com/artifact-regist
 
 开发：在仓库根目录运行 cd web && npm ci && npm run dev:workspace，一条命令启动 Go API 与 Vite/HMR；打开 http://127.0.0.1:5173，按 Ctrl+C 同时停止服务。
 
+编码 agent 的仓库地图、跨模块契约、验证命令与决策记录见 [agent guide](docs/agent/README.md)。
+
 ## API 与结构
 
 `metricspanel schema` 返回机器可读 API 清单。原生 API `/api/v1`，Prometheus 兼容 API `/prometheus/api/v1`。

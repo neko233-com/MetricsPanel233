@@ -43,3 +43,5 @@ Run the narrowest relevant Go or frontend check first. For broad changes, use th
 ## Contract documentation
 
 docs/architecture.md maps runtime boundaries and docs/project-goals.md defines product scope. The design and HTTP contract documents under docs explain narrower behaviors and must state their scope and known limitations. Prefer one focused contract page per substantial subsystem over duplicating implementation details across the README.
+
+Start coding work from the [agent guide](docs/agent/README.md): it holds the repo map, cross-cutting contracts, verification commands and the decision log for agents. Read the narrowest page before changing behavior, and keep the guide current when a contract changes.

@@ -641,6 +641,7 @@ The Docker suite uses one `suite` container and one volume, limited to 2 CPUs, 2
 - [Project goals](docs/project-goals.md) — product scope, first-party UI policy and performance evidence.
 - [Development guide](docs/development.md) — setup, fast development, validation and contribution workflow.
 - [Architecture overview](docs/architecture.md) — subsystem ownership and runtime data flow.
+- [Agent guide](docs/agent/README.md) — repo map, contracts, verification commands and decision log for coding agents.
 - [Grafana compatibility matrix](docs/grafana-compatibility.md) and [product parity status](docs/grafana-product-parity.md) — implemented behavior and open gaps.
 - [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md).
 - [Chinese README](README.zh-CN.md) — translated project overview and user guide.

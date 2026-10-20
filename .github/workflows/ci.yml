@@ -1,8 +1,9 @@
 name: Validate
 on:
+  # Full validation is expensive (race tests, browser suite, Docker). Run it
+  # only for a release tag or an explicit manual dispatch, not every push/PR.
   push:
-    branches: [main]
-  pull_request:
+    tags: ["v*"]
   workflow_dispatch:
 permissions:
   contents: read
