@@ -36,12 +36,12 @@ const GrafanaTimeSeries = lazy(() => import("./GrafanaTimeSeries"));
 function ownTimeSeriesPreferred() {
   if (typeof window === "undefined") return false;
   try {
-    return (
-      new URLSearchParams(window.location.search).get("renderer") === "own" ||
-      window.localStorage.getItem("metricspanel-renderer") === "own"
-    );
+    const requested = new URLSearchParams(window.location.search).get("renderer");
+    if (requested === "compat") return false;
+    if (requested === "own") return true;
+    return window.localStorage.getItem("metricspanel-renderer") !== "compat";
   } catch {
-    return false;
+    return true;
   }
 }
 

@@ -25,9 +25,9 @@
   Plugins 页面。Grafana 主题仅保留给可选导入/插件兼容层。
 - **Loki/Tempo 后端**：Loki LogQL range/instant 查询与 logs frames、Tempo TraceQL 搜索表格和 `/ready` 健康检查；
   专用编辑器和 Trace 详情仍待补。
-- **自有渲染器框架**：`web/src/render` 契约、registry、自有 Table、自有 TimeSeries 核心、分帧调度器
-  （`runInFrameSlices`/`nextFrame`）、增量签名工具；Table 默认自有，TimeSeries 通过 `?renderer=own`
-  或 localStorage 启用，兼容桥暂为默认。`docs/renderer-framework.md` 记录覆盖矩阵与性能预算；
+- **自有渲染器框架**：`web/src/render` 契约、registry、自有 Table、自有 TimeSeries、分帧调度器
+  （`runInFrameSlices`/`nextFrame`）、增量签名工具；Table 与 TimeSeries 均默认自有，TimeSeries 可用
+  `?renderer=compat` 或 localStorage 回退兼容桥。`docs/renderer-framework.md` 记录覆盖矩阵与性能预算；
   `web/scripts/render-bench.mjs` 提供可复现的首帧/内存基准。
 
 ## 2026-10-20 本批落地

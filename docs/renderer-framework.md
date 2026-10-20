@@ -61,7 +61,7 @@ requires it. Unknown kinds show a named error instead of silently rendering noth
 
 | Kind | Status | Notes |
 | --- | --- | --- |
-| Time series | Implemented (core, opt-in) | Own uPlot renderer; lines, comparison, legend, tooltip, zoom, annotations; log/percent/multi-axis parity pending. Enable with `?renderer=own` or localStorage |
+| Time series | Implemented (default) | Own uPlot renderer; lines, comparison, legend, tooltip, zoom, annotations, log axes, percent stacking and multiple axes. `?renderer=compat` or localStorage restores the bridge |
 | Table | Implemented (core) | Own HTML table; sorting, pagination, page numbers, footer reducers, display formatting |
 | Stat / Gauge / Bar gauge | Planned | Reuse normalized field stats and threshold colors |
 | Text / Markdown | Planned | Sanitized HTML renderer |
@@ -103,7 +103,8 @@ configurable panel (`RENDER_BENCH_POINTS`, `RENDER_BENCH_SERIES`) and reports fi
 
 ## Migration
 
-1. Own Table is the product default; own TimeSeries is opt-in until log/percent/multi-axis parity passes the
-   time-series browser contracts. The Grafana bridge remains for compatibility resources and plugins.
+1. Own Table and TimeSeries are the product defaults; TimeSeries covers log axes, percent stacking and multiple axes.
+   `?renderer=compat` or localStorage `metricspanel-renderer=compat` restores the Grafana bridge for compatibility
+   resources, plugins and troubleshooting.
 2. Finish TimeSeries parity, then move Stat/Gauge/Logs/Traces/Vector.
 3. Remove `@grafana/ui` from the default bundle and leave it only in the optional import/plugin chunk.

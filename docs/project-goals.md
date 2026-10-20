@@ -88,11 +88,12 @@ import/plugin compatibility layer under `web/src/grafana`.
 
 ### Current migration state
 
-The login/setup pages, common dialog, user management, dashboards list, Getting Started and Table use first-party
-implementations. The first-party uPlot TimeSeries renderer is available with `?renderer=own`/localStorage while the
-compatibility bridge remains the default until log axes, percent stacking and multi-axis parity are complete. The
-Grafana theme provider remains only for compatibility modules. Remaining work: finish TimeSeries parity, then
-Stat/Gauge/Logs/Traces/Vector and removal of unused Grafana compatibility pages from the default bundle.
+The login/setup pages, common dialog, user management, dashboards list, Getting Started, Table and TimeSeries use
+first-party implementations. The first-party uPlot TimeSeries renderer covers lines, comparison, legend, tooltip,
+zoom, log axes, percent stacking and multiple axes; `?renderer=compat` or localStorage restores the compatibility
+bridge when needed. The Grafana theme provider remains only for compatibility modules. Remaining work: move
+Stat/Gauge/Logs/Traces/Vector to first-party renderers and remove unused Grafana compatibility pages from the default
+bundle.
 
 ## Performance evidence
 

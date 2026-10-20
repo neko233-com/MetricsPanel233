@@ -33,9 +33,10 @@ distributed multi-tenant platform. Grafana import/export is optional migration s
 ## Renderers
 
 - Product primitives live in `web/src/ui`; product renderers in `web/src/render`.
-- Table is the default first-party renderer.
-- TimeSeries is first-party and opt-in via `?renderer=own` or localStorage until its remaining Grafana option
-  contracts are complete; the compatibility bridge remains default.
+- Table and TimeSeries are the default first-party renderers.
+- TimeSeries covers lines, comparison, legend, tooltip, zoom, log axes, percent stacking, multiple axes and
+  annotations. Use `?renderer=compat` or localStorage `metricspanel-renderer=compat` to restore the compatibility
+  bridge for imported-resource edge cases and troubleshooting.
 - Stat/gauge/bar-gauge/text are product-owned HTML paths in the panel host.
 - The Grafana bridge is allowed only for imported resources and plugins under `web/src/grafana`.
 

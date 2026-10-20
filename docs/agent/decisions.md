@@ -15,10 +15,11 @@ import/plugin compatibility. The product navigation no longer advertises Grafana
 
 The first-party renderer framework is in `web/src/render`:
 
-- Own Table is the default and passes the table browser contracts.
-- Own TimeSeries passed the time-series contract in isolation but still has edge cases in workspace time-range
-  interactions. It is opt-in (`?renderer=own` or localStorage), while the compatibility bridge remains default.
-- Do not flip the default until the full browser suite is green with the own renderer.
+- Own Table and TimeSeries are the defaults. The workspace time-range/date-math/zoom contract passed once the own
+  legend exposed `data-testid="series-icon"` to the canvas assertion harness; the full browser suite is green with
+  the own renderer (67 passed / 2 skipped).
+- `?renderer=compat` or localStorage `metricspanel-renderer=compat` restores the compatibility bridge for
+  imported-resource edge cases and troubleshooting. Do not re-flip the default without the full suite.
 - `frame-budget.ts` and `incremental.ts` exist for cooperative slicing and model reuse; Worker decimation is next.
 
 ## 2026-10-20 — no push-triggered CI

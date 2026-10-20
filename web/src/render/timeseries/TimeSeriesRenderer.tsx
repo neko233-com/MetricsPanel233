@@ -692,7 +692,7 @@ export default function TimeSeriesRenderer({
                       ),
                     )}
                   >
-                    <i style={{ background: item.color }} />
+                    <i style={{ background: item.color }} data-testid="series-icon" />
                     <span>{item.name}</span>
                   </button>
                   <strong>{formatValue(item.field, last, resolved.timezone)}</strong>
