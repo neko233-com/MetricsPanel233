@@ -315,6 +315,15 @@ test("Grafana table includes every row and supports paging and sorting", async (
   await region.getByRole("button", { name: /^\d+$/ }).last().click();
   await expect(region).toContainText("Record 1000");
   await expect(region).not.toContainText("Showing first 500 rows");
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect.poll(async () => region.evaluate((element) => {
+    const scroller = element.querySelector(".native-data-table-scroll") as HTMLElement;
+    return {
+      documentOverflow: document.documentElement.scrollWidth - innerWidth,
+      panelOverflow: element.scrollWidth - element.clientWidth,
+      tableVisible: scroller.scrollHeight > 0,
+    };
+  })).toEqual({ documentOverflow: 0, panelOverflow: 0, tableVisible: true });
   const qa = process.env.METRICSPANEL_NATIVE_PANEL_QA_DIR;
   if (qa) {
     await mkdir(qa, { recursive: true });

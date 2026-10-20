@@ -30,8 +30,8 @@ npx playwright test
 ```
 
 The suite is intentionally not triggered by every push. It covers dashboards, variables, alerts, plugins, OTLP/
-collector forms, Import, Table and TimeSeries contracts. Fix persistent failures; a single retry is configured for
-known long-dialog timing sensitivity.
+collector forms, Import, Table and TimeSeries contracts, plus responsive containment at 390/768/1280 widths and
+dynamic panel height. Fix persistent failures; a single retry is configured for known long-dialog timing sensitivity.
 
 ## Docker Linux
 

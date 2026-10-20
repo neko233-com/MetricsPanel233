@@ -242,6 +242,55 @@ test("annotations clip at plot boundaries and panel/dashboard zoom preserves sav
   expect(issues).toEqual([]);
 });
 
+test("time series canvas tracks viewport width and panel height without overflowing", async ({ page, endpoint }) => {
+  test.setTimeout(60000);
+  const issues = errors(page);
+  const saved = await open(page, endpoint, "Responsive series", [panel(7, "Responsive series", 12)]);
+  const region = page.getByRole("region", { name: "Responsive series", exact: true });
+  await expect(region.locator(".uplot canvas")).toBeVisible();
+  const layout = () => region.evaluate((element) => {
+    const canvas = element.querySelector(".uplot canvas") as HTMLCanvasElement;
+    const host = element.querySelector(".native-timeseries-plot-host") as HTMLElement;
+    const canvasRect = canvas.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    return {
+      viewport: innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      hostLeft: hostRect.left,
+      hostRight: hostRect.right,
+      canvasWidth: canvasRect.width,
+      hostWidth: hostRect.width,
+      canvasHeight: canvasRect.height,
+    };
+  });
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(async () => {
+      const current = await layout();
+      return Math.abs(current.canvasWidth - current.hostWidth);
+    }).toBeLessThanOrEqual(2);
+    const current = await layout();
+    expect(current.documentWidth).toBeLessThanOrEqual(current.viewport);
+    expect(current.hostLeft).toBeGreaterThanOrEqual(0);
+    expect(current.hostRight).toBeLessThanOrEqual(current.viewport + 1);
+  }
+  const before = (await layout()).canvasHeight;
+  const resized = await page.request.patch(endpoint + `/api/v1/dashboards/${saved.id}/layout`, {
+    headers: { "If-Match": String(saved.updated_at) },
+    data: { panels: [{ id: "7", x: 0, y: 0, w: 24, h: 24 }] },
+  });
+  expect(resized.ok(), await resized.text()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Responsive series", exact: true })).toBeVisible();
+  await expect(region.locator(".uplot canvas")).toBeVisible();
+  await expect.poll(async () => (await layout()).canvasHeight).toBeGreaterThan(before + 20);
+  const current = await layout();
+  expect(current.documentWidth).toBeLessThanOrEqual(current.viewport);
+  expect(current.hostRight).toBeLessThanOrEqual(current.viewport + 1);
+  await saveScreenshot(page, "time-series-responsive.png");
+  expect(issues).toEqual([]);
+});
+
 test("comparison frames align on the current time range and retain dashed styling without rewriting source", async ({ page, endpoint }) => {
   const issues = errors(page);
   const current = panel(7, "Time comparison", 1);
