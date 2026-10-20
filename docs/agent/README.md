@@ -9,6 +9,7 @@ remain authoritative.
 2. [Contracts](contracts.md) — product scope, auth, collection, storage and renderer boundaries.
 3. [Verification](verification.md) — which checks to run and when.
 4. [Decisions](decisions.md) — why the product is not a Grafana clone and why renderers are staged.
+5. [Skill references](skills.md) — external design/QA skills and their boundaries.
 
 ## Working rules
 
