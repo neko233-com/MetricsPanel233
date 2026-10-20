@@ -7,6 +7,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type FormEvent,
 } from "react";
 import {
   Activity,
@@ -24,18 +25,27 @@ import {
   Search,
   Server,
   Terminal,
+  UsersRound,
   X,
 } from "lucide-react";
 import {
   api,
+  authLogin,
+  authLogout,
+  authSetup,
+  authStatus,
   dashboardUID,
   ApiError,
   message,
+  type AuthUser,
   type Dashboard,
   type Metric,
   type Stats,
   type Target,
 } from "./api";
+import { Alert, Button, Field, Input } from "./ui";
+import { SessionContext } from "./ui/session";
+import { Users } from "./features/Users";
 import { DashboardView } from "./features/DashboardView";
 import { Dashboards } from "./features/Dashboards";
 import { Explore } from "./features/Explore";
@@ -70,15 +80,15 @@ type View =
   | "collectors"
   | "alerts"
   | "plugins"
+  | "users"
   | "cli";
 type AppView = View | "app";
-const navigation = [
+const baseNavigation = [
   { id: "overview", name: "Overview", icon: LayoutDashboard },
   { id: "dashboards", name: "Dashboards", icon: ChartNoAxesColumn },
   { id: "explore", name: "Explore", icon: Search },
   { id: "collectors", name: "Collectors", icon: Server },
   { id: "alerts", name: "Alerts", icon: Bell },
-  { id: "plugins", name: "Plugins", icon: Puzzle },
   { id: "cli", name: "Command line", icon: Terminal },
 ] as const;
 export default function App() {
@@ -114,7 +124,10 @@ export default function App() {
       if (/^\/a\/[^/]+/.test(location.pathname)) return "app";
       if (/^\/d\/[^/]+/.test(location.pathname)) return "dashboard";
       const hash = location.hash.slice(1);
-      return navigation.some((n) => n.id === hash)
+      // Compatibility management routes stay reachable by URL but are not
+      // part of the product navigation.
+      if (hash === "plugins") return "plugins";
+      return baseNavigation.some((n) => n.id === hash)
         ? (hash as View)
         : "overview";
     }),
@@ -140,12 +153,37 @@ export default function App() {
   const [tick, setTick] = useState(0),
     [range, setRange] = useState<TimeSelection>(initialRange.value),
     [auth, setAuth] = useState(false),
+    [authMode, setAuthMode] = useState<"unknown" | "local" | "token">(
+      "unknown",
+    ),
+    [setupRequired, setSetupRequired] = useState(false),
+    [user, setUser] = useState<AuthUser | null>(null),
     [token, setToken] = useState(""),
+    [credentials, setCredentials] = useState({ login: "", password: "" }),
+    [setup, setSetup] = useState({
+      token: "",
+      login: "",
+      name: "",
+      email: "",
+      password: "",
+      confirm: "",
+    }),
+    [authBusy, setAuthBusy] = useState(false),
     [connectionError, setConnectionError] = useState(""),
     [notice, setNotice] = useState<{
       text: string;
       severity: NoticeSeverity;
     } | null>(null);
+  const navigation = user?.isServerAdmin
+    ? [
+        ...baseNavigation,
+        {
+          id: "users" as const,
+          name: "Users",
+          icon: UsersRound,
+        },
+      ]
+    : baseNavigation;
   const notify = useCallback(
     (text: string, error = false) =>
       setNotice({ text, severity: error ? "error" : "success" }),
@@ -258,7 +296,37 @@ export default function App() {
     [notify],
   );
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await authStatus();
+        if (cancelled) return;
+        if (!status || status.mode === "token") {
+          setAuthMode("token");
+          await load();
+          return;
+        }
+        setAuthMode("local");
+        setSetupRequired(status.setupRequired);
+        if (status.authenticated && status.user) {
+          sessionStorage.removeItem("metricspanel-token");
+          setUser(status.user);
+          setAuth(false);
+          await load();
+        } else {
+          setAuth(true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuthMode("token");
+          setConnectionError(message(error));
+          await load();
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
   useEffect(() => {
     const resized = () => setRefreshWidth(window.innerWidth);
@@ -390,6 +458,205 @@ export default function App() {
       : view === "dashboard"
         ? current?.name || "Dashboard"
         : navigation.find((n) => n.id === view)?.name;
+  async function finishLogin() {
+    const status = await authStatus();
+    if (status?.authenticated && status.user) {
+      sessionStorage.removeItem("metricspanel-token");
+      setUser(status.user);
+      setSetupRequired(status.setupRequired);
+      setAuth(false);
+      setConnectionError("");
+      await load();
+    }
+  }
+  async function submitLogin(e: FormEvent) {
+    e.preventDefault();
+    setAuthBusy(true);
+    setConnectionError("");
+    try {
+      await authLogin(credentials.login, credentials.password);
+      await finishLogin();
+    } catch (error) {
+      setConnectionError(message(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+  async function submitSetup(e: FormEvent) {
+    e.preventDefault();
+    setConnectionError("");
+    if (setup.password !== setup.confirm) {
+      setConnectionError(tr("Passwords do not match."));
+      return;
+    }
+    if (setup.password.length < 12) {
+      setConnectionError(tr("Use at least 12 characters for the password."));
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      await authSetup({
+        token: setup.token.trim(),
+        login: setup.login,
+        name: setup.name,
+        email: setup.email,
+        password: setup.password,
+      });
+      await finishLogin();
+    } catch (error) {
+      setConnectionError(message(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+  async function disconnect() {
+    if (authMode === "local") {
+      await authLogout().catch(() => {});
+      setUser(null);
+      setAuth(true);
+    } else {
+      sessionStorage.removeItem("metricspanel-token");
+      setAuth(true);
+    }
+  }
+  if (authMode === "unknown")
+    return (
+      <main className="login" role="status" aria-live="polite">
+        <Activity size={42} />
+        <h1>{tr("MetricsPanel233")}</h1>
+        <p>{tr("Connecting to your workspace…")}</p>
+      </main>
+    );
+  if (auth && authMode === "local" && setupRequired)
+    return (
+      <main className="login">
+        {languageButton}
+        <Activity size={42} />
+        <h1>{tr("Set up MetricsPanel233")}</h1>
+        <p>
+          {tr(
+            "Enter the setup token printed by the server, then create the administrator account.",
+          )}
+        </p>
+        <form onSubmit={submitSetup}>
+          <Field label={tr("Setup token")} required>
+            <Input
+              autoFocus
+              aria-label={tr("Setup token")}
+              value={setup.token}
+              onChange={(e) => setSetup({ ...setup, token: e.target.value })}
+              required
+              autoComplete="off"
+            />
+          </Field>
+          <Field label={tr("Login")} required>
+            <Input
+              aria-label={tr("Login")}
+              value={setup.login}
+              onChange={(e) => setSetup({ ...setup, login: e.target.value })}
+              required
+              autoComplete="username"
+            />
+          </Field>
+          <Field label={tr("Name")} required>
+            <Input
+              aria-label={tr("Name")}
+              value={setup.name}
+              onChange={(e) => setSetup({ ...setup, name: e.target.value })}
+              required
+              autoComplete="name"
+            />
+          </Field>
+          <Field label={tr("Email")}>
+            <Input
+              type="email"
+              aria-label={tr("Email")}
+              value={setup.email}
+              onChange={(e) => setSetup({ ...setup, email: e.target.value })}
+              autoComplete="email"
+            />
+          </Field>
+          <Field label={tr("Password")} required>
+            <Input
+              type="password"
+              aria-label={tr("Password")}
+              value={setup.password}
+              onChange={(e) =>
+                setSetup({ ...setup, password: e.target.value })
+              }
+              required
+              minLength={12}
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field label={tr("Confirm password")} required>
+            <Input
+              type="password"
+              aria-label={tr("Confirm password")}
+              value={setup.confirm}
+              onChange={(e) => setSetup({ ...setup, confirm: e.target.value })}
+              required
+              autoComplete="new-password"
+            />
+          </Field>
+          {connectionError && (
+            <Alert severity="error" title={tr(connectionError)} />
+          )}
+          <Button type="submit" variant="primary" disabled={authBusy}>
+            {tr("Create administrator")}
+          </Button>
+        </form>
+        <small>
+          {tr(
+            "The setup token is shown once in the server console and disappears after initialization.",
+          )}
+        </small>
+      </main>
+    );
+  if (auth && authMode === "local")
+    return (
+      <main className="login">
+        {languageButton}
+        <Activity size={42} />
+        <h1>{tr("MetricsPanel233")}</h1>
+        <p>{tr("Sign in to your workspace.")}</p>
+        <form onSubmit={submitLogin}>
+          <Field label={tr("Login")} required>
+            <Input
+              autoFocus
+              aria-label={tr("Login")}
+              value={credentials.login}
+              onChange={(e) =>
+                setCredentials({ ...credentials, login: e.target.value })
+              }
+              required
+              autoComplete="username"
+            />
+          </Field>
+          <Field label={tr("Password")} required>
+            <Input
+              type="password"
+              aria-label={tr("Password")}
+              value={credentials.password}
+              onChange={(e) =>
+                setCredentials({ ...credentials, password: e.target.value })
+              }
+              required
+              autoComplete="current-password"
+            />
+          </Field>
+          {connectionError && (
+            <Alert severity="error" title={tr(connectionError)} />
+          )}
+          <Button type="submit" variant="primary" disabled={authBusy}>
+            {tr("Sign in")}
+          </Button>
+        </form>
+        <small>
+          {tr("Sessions are stored in an HttpOnly same-site cookie.")}
+        </small>
+      </main>
+    );
   if (auth)
     return (
       <main className="login">
@@ -404,9 +671,8 @@ export default function App() {
             await load();
           }}
         >
-          <label>
-            {tr("API token")}
-            <input
+          <Field label={tr("API token")} required>
+            <Input
               autoFocus
               type="password"
               value={token}
@@ -414,16 +680,27 @@ export default function App() {
               required
               autoComplete="current-password"
             />
-          </label>
-          {connectionError && <p className="form-error">{connectionError}</p>}
-          <button className="primary">{tr("Connect workspace")}</button>
+          </Field>
+          {connectionError && (
+            <Alert severity="error" title={tr(connectionError)} />
+          )}
+          <Button type="submit" variant="primary">
+            {tr("Connect workspace")}
+          </Button>
         </form>
         <small>{tr("The token is kept in this browser tab's session.")}</small>
       </main>
     );
   return (
-    <div className="app-shell">
-      {sidebarOpen && (
+    <SessionContext.Provider
+      value={{
+        user,
+        canEdit: !user || user.role === "Editor" || user.role === "Admin",
+        canAdmin: !user || user.isServerAdmin,
+      }}
+    >
+      <div className="app-shell">
+        {sidebarOpen && (
         <button
           className="sidebar-overlay"
           onClick={() => setSidebarOpen(false)}
@@ -477,18 +754,19 @@ export default function App() {
         <div className="workspace">
           <Monitor size={22} />
           <div>
-            <span>{tr("Local workspace")}</span>
-            <small className="mono">{tr("SQLite \u00B7 self-hosted")}</small>
+            <span>{user ? user.name : tr("Local workspace")}</span>
+            <small className="mono">
+              {user
+                ? `${user.role}${user.email ? ` \u00B7 ${user.email}` : ""}`
+                : tr("SQLite \u00B7 self-hosted")}
+            </small>
           </div>
-          {sessionStorage.getItem("metricspanel-token") && (
+          {(user || sessionStorage.getItem("metricspanel-token")) && (
             <button
               className="icon-button"
-              title={tr("Disconnect")}
-              aria-label={tr("Disconnect workspace")}
-              onClick={() => {
-                sessionStorage.removeItem("metricspanel-token");
-                setAuth(true);
-              }}
+              title={tr("Sign out")}
+              aria-label={tr("Sign out")}
+              onClick={() => void disconnect()}
             >
               <LogOut size={17} />
             </button>
@@ -572,6 +850,7 @@ export default function App() {
                   onRefreshChoice={changeRefresh}
                   reload={load}
                   notify={notify}
+                  onNavigate={navigate}
                 />
               )
             ) : (
@@ -633,6 +912,9 @@ export default function App() {
           {view === "alerts" && (
             <Alerts tick={tick} metrics={metrics} notify={notify} />
           )}
+          {view === "users" && user?.isServerAdmin && (
+            <Users notify={notify} currentUser={user} />
+          )}
         </main>
       </div>
       {notice && (
@@ -663,6 +945,7 @@ export default function App() {
           </button>
         </div>
       )}
-    </div>
+      </div>
+    </SessionContext.Provider>
   );
 }

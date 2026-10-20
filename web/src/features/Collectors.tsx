@@ -181,7 +181,10 @@ export function Collectors({
           {tr(
             "MySQL, Redis and PostgreSQL support direct connections. ClickHouse, Elasticsearch, Hadoop, HDFS, Hive, Kafka, Spark and Flink use their metrics APIs. Existing Prometheus exporters use the HTTP collector. Push samples with",
           )}
-          <code>{tr("metricspanel ingest")}</code>.
+          <code>{tr("metricspanel ingest")}</code>.{" "}
+          {tr(
+            "OpenTelemetry exporters can push OTLP/HTTP metrics to POST /v1/metrics.",
+          )}
         </p>
       </div>
       {editor && (

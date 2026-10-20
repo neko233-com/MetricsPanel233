@@ -13,6 +13,9 @@ export function setLocale(value: Locale) {
 const zh: Record<string, string> = {
   "Table frame": "表格结果集",
   "rows": "行",
+  "Sort by column": "按列排序",
+  "descending": "降序",
+  "OpenTelemetry exporters can push OTLP/HTTP metrics to POST /v1/metrics.": "OpenTelemetry exporter 可将 OTLP/HTTP 指标推送到 POST /v1/metrics。",
   "Dashboard not found. Open the dashboard list to choose another dashboard.": "仪表盘不存在，请从仪表盘列表选择其他仪表盘。",
   "dashboard changed; reload before editing panels": "仪表盘已更改，请重新加载后再编辑面板。",
   "dashboard changed; reload before saving annotation queries": "仪表盘已更改，请重新加载后再保存注释查询。",
@@ -494,6 +497,7 @@ const zh: Record<string, string> = {
   "d retention": "天保留",
   "Collection status": "采集状态",
   Name: "名称",
+  "Sort by name or value": "按名称或数值排序",
   Status: "状态",
   "Last seen": "最近采集",
   Uptime: "运行时间",

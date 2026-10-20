@@ -29,9 +29,21 @@ import {
   type PanelTimeRange,
   type TimeSelection,
 } from "./time-range";
+import { TableRenderer, TimeSeriesRenderer } from "../render";
 const PluginPanel = lazy(() => import("./PluginPanel"));
-const GrafanaTable = lazy(() => import("./GrafanaTable"));
 const GrafanaTimeSeries = lazy(() => import("./GrafanaTimeSeries"));
+
+function ownTimeSeriesPreferred() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      new URLSearchParams(window.location.search).get("renderer") === "own" ||
+      window.localStorage.getItem("metricspanel-renderer") === "own"
+    );
+  } catch {
+    return false;
+  }
+}
 
 function display(
   field: Field,
@@ -182,6 +194,24 @@ export default function GrafanaPanel({
     </div>
   );
   if (type === "timeseries") {
+    const timeSeriesProps = {
+      panel,
+      frames,
+      values,
+      range: effective,
+      timeInfo,
+      controls: zoomControls,
+      annotations: annotations.events,
+      annotationDashboard: dashboard,
+      annotationError: annotations.error,
+      loading,
+      queryError: error,
+      streaming,
+      onRange: changePanelRange,
+      onEdit,
+      onRemove,
+    };
+    if (ownTimeSeriesPreferred()) return <TimeSeriesRenderer {...timeSeriesProps} />;
     return (
       <Suspense
         fallback={
@@ -190,22 +220,7 @@ export default function GrafanaPanel({
           </section>
         }
       >
-        <GrafanaTimeSeries
-          panel={panel}
-          frames={frames}
-          range={effective}
-          timeInfo={timeInfo}
-          controls={zoomControls}
-          annotations={annotations.events}
-          annotationDashboard={dashboard}
-          annotationError={annotations.error}
-          loading={loading}
-          queryError={error}
-          streaming={streaming}
-          onRange={changePanelRange}
-          onEdit={onEdit}
-          onRemove={onRemove}
-        />
+        <GrafanaTimeSeries {...timeSeriesProps} />
       </Suspense>
     );
   }
@@ -341,14 +356,12 @@ export default function GrafanaPanel({
           />
         ))}
       {type === "table" && (
-        <Suspense fallback={<p role="status">{t("Loading metrics…")}</p>}>
-          <GrafanaTable
-            panel={panel}
-            frames={frames}
-            values={values}
-            range={effective}
-          />
-        </Suspense>
+        <TableRenderer
+          panel={panel}
+          frames={frames}
+          values={values}
+          range={effective}
+        />
       )}
       {["stat", "gauge", "bargauge"].includes(type) && (
         <div

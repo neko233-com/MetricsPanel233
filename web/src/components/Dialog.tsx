@@ -1,6 +1,6 @@
-import { t as tr } from "../i18n";
 import { useEffect, useRef, type ReactNode, type CSSProperties } from "react";
-import { X } from "lucide-react";
+import { AppModal } from "../ui";
+
 export function Dialog({
   title,
   children,
@@ -12,50 +12,23 @@ export function Dialog({
   onClose: () => void;
   style?: CSSProperties;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
+  const opened = useRef(false);
   useEffect(() => {
-    const dialog = ref.current!;
-    dialog.showModal();
-    dialog
-      .querySelector<HTMLElement>(
-        "[autofocus], input:not([disabled]), textarea:not([disabled]), select:not([disabled])",
-      )
-      ?.focus();
-    return () => dialog.close();
+    if (opened.current) return;
+    opened.current = true;
+    // Match the previous native dialog behavior: focus the first usable field.
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          "[role=dialog] [autofocus], [role=dialog] input:not([disabled]), [role=dialog] textarea:not([disabled]), [role=dialog] select:not([disabled])",
+        )
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
   return (
-    <dialog
-      ref={ref}
-      aria-label={title}
-      style={style}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      onClick={(e) => {
-        if (e.target === ref.current) {
-          const rect = ref.current!.getBoundingClientRect();
-          if (
-            e.clientX < rect.left ||
-            e.clientX > rect.right ||
-            e.clientY < rect.top ||
-            e.clientY > rect.bottom
-          )
-            onClose();
-        }
-      }}
-    >
-      <div className="dialog-heading">
-        <h2>{title}</h2>
-        <button
-          className="icon-button"
-          aria-label={tr("Close dialog")}
-          onClick={onClose}
-        >
-          <X size={20} />
-        </button>
-      </div>
+    <AppModal title={title} onClose={onClose} style={style}>
       {children}
-    </dialog>
+    </AppModal>
   );
 }

@@ -1,6 +1,8 @@
 import { t as tr } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Download, Folder as FolderIcon, Move, Plus, Trash2, Upload } from "lucide-react";
+import { Button } from "../ui";
+import { useSession } from "../ui/session";
 import { api, downloadRaw, jsonBody, message, type Dashboard, type Folder } from "../api";
 import { Dialog } from "../components/Dialog";
 import { DashboardImport } from "./DashboardImport";
@@ -18,6 +20,7 @@ export function Dashboards({
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
 }) {
+  const { canEdit } = useSession();
   const [creating, setCreating] = useState(false),
     [name, setName] = useState(""),
     [error, setError] = useState(""),
@@ -51,17 +54,17 @@ export function Dashboards({
           <h1>{tr("Dashboards")}</h1>
           <p>{dashboards.length} {tr("dashboards")} · {folders.length} {tr("folders")}</p>
         </div>
-        {tab === "dashboards" && <div className="toolbar">
-          <button onClick={() => setImporting({})}>
+        {tab === "dashboards" && canEdit && <div className="toolbar">
+          <Button onClick={() => setImporting({})}>
             <Upload size={17} />
             {tr("Import dashboard")}
-          </button>
-          <button onClick={() => input.current?.click()}>
+          </Button>
+          <Button onClick={() => input.current?.click()}>
             <Upload size={17} />
             {tr("Import JSON")}
-          </button>
-          <button
-            className="primary"
+          </Button>
+          <Button
+            variant="primary"
             onClick={() => {
               setCreating(true);
               setName("");
@@ -71,7 +74,7 @@ export function Dashboards({
           >
             <Plus size={18} />
             {tr("New dashboard")}
-          </button>
+          </Button>
         </div>}
       </div>
       <div className="dashboard-tabs" role="tablist" aria-label={tr("Dashboard resources")} onKeyDown={(event) => {

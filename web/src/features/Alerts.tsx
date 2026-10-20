@@ -19,6 +19,7 @@ import {
   type Metric,
 } from "../api";
 import { Dialog } from "../components/Dialog";
+import { useSession } from "../ui/session";
 import { NotificationSettings } from "./NotificationSettings";
 import { getLocale, t } from "../i18n";
 import {
@@ -121,6 +122,7 @@ export function Alerts({
   metrics: Metric[];
   notify: (text: string, error?: boolean) => void;
 }) {
+  const { canEdit } = useSession();
   const [rules, setRules] = useState<RuleView[]>([]),
     [history, setHistory] = useState<Event[]>([]),
     [error, setError] = useState(""),
@@ -222,7 +224,7 @@ export function Alerts({
             )}
           </p>
         </div>
-        {section === "rules" && (
+        {section === "rules" && canEdit && (
           <button className="primary" onClick={() => setEditor("new")}>
             <Plus size={18} />
             {t("Create alert")}
@@ -339,7 +341,7 @@ export function Alerts({
                     "Watch an exporter, service or metric with a single PromQL condition.",
                   )}
                 </p>
-                {rules.length === 0 && (
+                {rules.length === 0 && canEdit && (
                   <button className="primary" onClick={() => setEditor("new")}>
                     {t("Create alert")}
                   </button>

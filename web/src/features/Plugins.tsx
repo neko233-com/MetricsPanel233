@@ -659,6 +659,8 @@ function SourceDialog({
             onChange={(e) => setForm({ ...form, type: e.target.value })}
           >
             <option value="prometheus">Prometheus</option>
+            <option value="loki">Loki</option>
+            <option value="tempo">Tempo</option>
             <option value="mysql">MySQL</option>
             <option value={POSTGRES_DATASOURCE}>PostgreSQL</option>
             {plugins
@@ -682,7 +684,11 @@ function SourceDialog({
                 ? form.type === "mysql"
                   ? "127.0.0.1:3306"
                   : "127.0.0.1:5432"
-                : "http://localhost:9090"
+                : form.type === "loki"
+                  ? "http://localhost:3100"
+                  : form.type === "tempo"
+                    ? "http://localhost:3200"
+                    : "http://localhost:9090"
             }
           />
         </label>

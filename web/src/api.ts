@@ -156,12 +156,119 @@ export class ApiError extends Error {
   }
 }
 
+export type AuthUser = {
+  id: number;
+  login: string;
+  name: string;
+  email?: string;
+  role: "None" | "Viewer" | "Editor" | "Admin";
+  orgId: number;
+  isServerAdmin: boolean;
+  disabled?: boolean;
+  version?: number;
+};
+export type AuthStatus = {
+  mode: "local" | "token";
+  setupRequired: boolean;
+  authenticated: boolean;
+  user?: AuthUser;
+};
+
+let rotating: Promise<boolean> | null = null;
+async function rotateSession(): Promise<boolean> {
+  if (!rotating) {
+    rotating = fetch("/api/user/auth-tokens/rotate", {
+      method: "POST",
+      credentials: "same-origin",
+    })
+      .then((response) => response.ok)
+      .catch(() => false)
+      .finally(() => {
+        rotating = null;
+      });
+  }
+  return rotating;
+}
+
+// Session cookies are same-origin. A rotated session returns 401 once; rotate
+// and replay the original request instead of surfacing a login error.
+async function fetchWithSession(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  retry = true,
+): Promise<Response> {
+  const response = await fetch(input, { ...init, credentials: "same-origin" });
+  if (response.status === 401 && retry) {
+    const body = await response.clone().json().catch(() => null);
+    if (body?.messageId === "metricspanel.auth.rotation_required" && (await rotateSession())) {
+      return fetch(input, { ...init, credentials: "same-origin" });
+    }
+  }
+  return response;
+}
+
+export async function authStatus(): Promise<AuthStatus | null> {
+  const response = await fetchWithSession("/api/auth/status", {
+    cache: "no-store",
+  });
+  const contentType = response.headers.get("content-type") || "";
+  if (response.status === 404 || !contentType.includes("application/json"))
+    return null;
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  return (await response.json()) as AuthStatus;
+}
+
+export async function authLogin(login: string, password: string): Promise<void> {
+  const response = await fetch("/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: login, password }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      body?.message || `HTTP ${response.status}`,
+      response.status,
+    );
+  }
+}
+
+export async function authSetup(input: {
+  token: string;
+  login: string;
+  name: string;
+  email: string;
+  password: string;
+}): Promise<void> {
+  const response = await fetch("/api/setup", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      body?.message || `HTTP ${response.status}`,
+      response.status,
+    );
+  }
+}
+
+export async function authLogout(): Promise<void> {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
-  const response = await fetch(
+  const response = await fetchWithSession(
     path.startsWith("/prometheus/") || path.startsWith("/api/")
       ? path
       : `/api/v1${path}`,
@@ -187,7 +294,7 @@ export async function api<T>(
 export const jsonBody = (data: unknown) => JSON.stringify(data);
 export async function apiText(path: string, options: RequestInit = {}): Promise<string> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
-  const response = await fetch(path.startsWith("/api/") ? path : `/api/v1${path}`, {
+  const response = await fetchWithSession(path.startsWith("/api/") ? path : `/api/v1${path}`, {
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -258,7 +365,7 @@ export function parseLabels(text: string): Labels {
 }
 export async function downloadRaw(name: string, path: string, options: RequestInit = {}): Promise<void> {
   const token = sessionStorage.getItem("metricspanel-token") || "";
-  const response = await fetch(
+  const response = await fetchWithSession(
     path.startsWith("/prometheus/") || path.startsWith("/api/")
       ? path
       : `/api/v1${path}`,

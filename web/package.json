@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:workspace": "node ../scripts/dev.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:unit": "node --test test/*.test.cjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:ui-smoke": "node scripts/ui-smoke.mjs",
+    "test:auth-smoke": "node scripts/auth-smoke.mjs"
   },
   "dependencies": {
     "@emotion/css": "11.13.5",
@@ -28,7 +31,8 @@
     "react-dom": "^19.2.0",
     "react-router": "7.18.4",
     "rxjs": "^7.8.2",
-    "systemjs": "6.15.1"
+    "systemjs": "6.15.1",
+    "uplot": "1.6.32"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",

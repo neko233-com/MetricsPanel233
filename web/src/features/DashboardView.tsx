@@ -19,6 +19,8 @@ import {
 } from "../api";
 import { Chart } from "../components/Chart";
 import { Dialog } from "../components/Dialog";
+import { useSession } from "../ui/session";
+import { GettingStarted } from "./GettingStarted";
 import type { TimeSelection } from "../grafana/time-range";
 import { TimeRangePicker } from "../components/TimeRangePicker";
 import { RefreshPicker } from "../components/RefreshPicker";
@@ -58,6 +60,7 @@ export function DashboardView({
   onRefreshChoice,
   reload,
   notify,
+  onNavigate,
 }: {
   dashboard: Dashboard;
   stats: Stats | null;
@@ -66,12 +69,14 @@ export function DashboardView({
   tick: number;
   range: TimeSelection;
   onRange: (v: TimeSelection) => void;
+  onNavigate: (view: "collectors" | "explore" | "alerts") => void;
   refresh: () => void;
   refreshChoice: string;
   onRefreshChoice: (value: string) => void;
   reload: () => Promise<void>;
   notify: (s: string, error?: boolean) => void;
 }) {
+  const { canEdit } = useSession();
   const [editor, setEditor] = useState<{
     panel: Panel | "new";
     baseline: Dashboard;
@@ -180,36 +185,42 @@ export function DashboardView({
           </p>
         </div>
         <div className="toolbar">
-          <DashboardVariablesButton onClick={() => setEditingVariables(true)} />
-          <button
-            disabled={!dashboard.panels.length}
-            onClick={() => setEditingQueries(true)}
-          >
-            <Pencil size={17} />
-            {tr("Panel queries")}
-          </button>
-          <DashboardLayoutButton
-            disabled={!dashboard.panels.length}
-            onClick={() => setEditingLayout(true)}
-          />
-          <DashboardHistoryButton dashboard={dashboard} reload={reload} />
-          <DashboardSnapshotButton
-            dashboard={dashboard}
-            panels={entries.map((entry) => ({
-              ...entry,
-              panel: variableState.variables.length
-                ? nativePanelForSDK(entry.panel)
-                : entry.panel,
-            }))}
-            range={range}
-            reload={reload}
-          />
-          <AnnotationQueriesButton
-            dashboard={dashboard}
-            values={variableState.effective}
-            range={range}
-            reload={reload}
-          />
+          {canEdit && (
+            <>
+              <DashboardVariablesButton
+                onClick={() => setEditingVariables(true)}
+              />
+              <button
+                disabled={!dashboard.panels.length}
+                onClick={() => setEditingQueries(true)}
+              >
+                <Pencil size={17} />
+                {tr("Panel queries")}
+              </button>
+              <DashboardLayoutButton
+                disabled={!dashboard.panels.length}
+                onClick={() => setEditingLayout(true)}
+              />
+              <DashboardHistoryButton dashboard={dashboard} reload={reload} />
+              <DashboardSnapshotButton
+                dashboard={dashboard}
+                panels={entries.map((entry) => ({
+                  ...entry,
+                  panel: variableState.variables.length
+                    ? nativePanelForSDK(entry.panel)
+                    : entry.panel,
+                }))}
+                range={range}
+                reload={reload}
+              />
+              <AnnotationQueriesButton
+                dashboard={dashboard}
+                values={variableState.effective}
+                range={range}
+                reload={reload}
+              />
+            </>
+          )}
           <TimeRangePicker value={range} onChange={onRange} />
           <RefreshPicker value={refreshChoice} onChange={onRefreshChoice} />
           <button
@@ -219,10 +230,12 @@ export function DashboardView({
           >
             <RefreshCw size={19} />
           </button>
-          <button className="primary" onClick={() => openEditor()}>
-            <Plus size={18} />
-            {tr("Add panel")}
-          </button>
+          {canEdit && (
+            <button className="primary" onClick={() => openEditor()}>
+              <Plus size={18} />
+              {tr("Add panel")}
+            </button>
+          )}
         </div>
       </div>
       {dashboard.id === "system" ? (
@@ -261,6 +274,14 @@ export function DashboardView({
             </strong>
           </div>
         </div>
+      ) : null}
+      {dashboard.id === "system" ? (
+        <GettingStarted
+          targets={targets}
+          metrics={metrics}
+          tick={tick}
+          onNavigate={onNavigate}
+        />
       ) : null}
       <DashboardVariableBar state={variableState} />
       <div className="chart-grid dashboard-panel-grid">
