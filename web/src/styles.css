@@ -207,6 +207,44 @@ pre {
   display: flex;
   min-height: 100vh;
 }
+@media (min-width: 701px) {
+  .app-shell.sidebar-collapsed .sidebar {
+    width: 72px;
+  }
+  .app-shell.sidebar-collapsed .workspace-main {
+    margin-left: 72px;
+    width: calc(100% - 72px);
+  }
+  .app-shell.sidebar-collapsed .brand {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-shell.sidebar-collapsed .brand span,
+  .app-shell.sidebar-collapsed .sidebar nav button span,
+  .app-shell.sidebar-collapsed .sidebar nav .app-nav-link span,
+  .app-shell.sidebar-collapsed .workspace > div {
+    display: none;
+  }
+  .app-shell.sidebar-collapsed .sidebar nav button,
+  .app-shell.sidebar-collapsed .sidebar nav .app-nav-link {
+    justify-content: center;
+    gap: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-shell.sidebar-collapsed .workspace {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-shell.sidebar-collapsed .workspace .icon-button {
+    margin-left: 0;
+  }
+}
+.sidebar-toggle {
+  display: inline-flex;
+}
 .plugin-app-actions,
 .app-secret-field,
 .app-tabs {
@@ -1567,6 +1605,9 @@ dialog::backdrop {
   }
   .mobile-menu {
     display: inline-flex !important;
+  }
+  .sidebar-toggle {
+    display: none !important;
   }
   .topbar > div {
     gap: 10px;

@@ -640,6 +640,8 @@ const zh: Record<string, string> = {
     "运行 metricspanel serve 以连接工作空间。",
   "Main navigation": "主导航",
   "Open navigation": "展开导航",
+  "Collapse navigation": "收起导航",
+  "Expand navigation": "展开导航",
   "Close navigation": "关闭导航",
   "Close dialog": "关闭对话框",
   Disconnect: "断开连接",

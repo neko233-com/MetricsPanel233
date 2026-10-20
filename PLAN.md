@@ -29,7 +29,7 @@
 
 | 工作流 | 权重 | 完成度 | 主要缺口 |
 | --- | ---: | ---: | --- |
-| 产品 Shell 与自有 UI | 15% | 70% | 左导航 Shell、ReactBits 动效层 |
+| 产品 Shell 与自有 UI | 15% | 85% | ReactBits 动效层（可选） |
 | 渲染器 | 20% | 50% | Logs、Traces、Heatmap、Vector |
 | 采集 | 15% | 80% | 更多 exporter 与协议边界 |
 | 存储与查询 | 15% | 75% | rollup、块级 min/max、大范围规划 |
@@ -38,7 +38,7 @@
 | 文档与 agent 契约 | 10% | 85% | 随行为变更持续同步 |
 | 性能 | 10% | 40% | Worker 降采样、大范围基准 |
 
-**加权总进度：67%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
+**加权总进度：69%**（±5 个百分点）。每完成一个执行项，更新本表与 `docs/status.md`。
 
 ## 执行队列
 
@@ -50,10 +50,11 @@
   - 证据：`web/src/render`，完整套件 69 passed / 2 skipped，commit `404c0d1`。
   - 验收：registry 解析、浏览器契约、390/768/1280、无 `@grafana/ui` 产品引用。
 
-- [ ] **S1 — 左侧导航 + 右侧内容 Shell**
+- [x] **S1 — 左侧导航 + 右侧内容 Shell**
   - 范围：可折叠左侧导航、右侧主内容区、顶栏；保留现有路由、权限、深链和移动端行为。
   - 验收：390/768/1280 无横向溢出；键盘可完成导航与折叠；Viewer 看不到写操作；现有浏览器套件全绿。
-  - 证据：待补。
+  - 证据：桌面折叠/展开、localStorage 持久化、键盘 Enter、390 移动抽屉、768/1280 无溢出；完整套件
+    69 passed / 2 skipped（1 个既有变量用例首次抖动、重试通过，跟踪为 F1）。
 
 - [ ] **R1 — Logs 渲染器**
   - 范围：Loki frames、虚拟化行、标签过滤、搜索、空态/错误态。
@@ -72,6 +73,10 @@
   - 验收：100k 点基准；峰值与断点保持；首帧预算写入 `docs/performance-baseline.md`。
 
 ### P1 深度与交付
+
+- [ ] **F1 — 稳定仪表盘变量解析时序**
+  - 现象：`dashboard-variables` 偶发在预览或保存后面板查询中出现未解析的 `$var`。
+  - 验收：`npx playwright test dashboard-variables.spec.ts --retries=0` 连续 3 次通过；面板不得在变量未就绪时发查询。
 
 - [ ] **D1 — ClickHouse rollup 与大范围查询**
   - 范围：rollup/降采样、块级 min/max、保留期与 TTL 操作。

@@ -8344,3 +8344,71 @@ test("Grafana template import, variables and desktop navigation", async ({
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("Workspace shell collapses the left navigation and keeps content responsive", async ({
+  page,
+  endpoint,
+}) => {
+  test.setTimeout(60000);
+  const issues: string[] = [];
+  page.on("pageerror", (error) => issues.push(error.message));
+  await page.addInitScript(() =>
+    localStorage.setItem("metricspanel-locale", "en"),
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(endpoint + "/#overview");
+  await expect(
+    page.getByRole("button", { name: "Overview", exact: true }),
+  ).toBeVisible();
+  const shell = page.locator(".app-shell");
+  const sidebar = page.locator(".sidebar");
+  expect((await sidebar.boundingBox())!.width).toBeGreaterThan(200);
+  await page
+    .getByRole("button", { name: "Collapse navigation", exact: true })
+    .click();
+  await expect(shell).toHaveClass(/sidebar-collapsed/);
+  await expect
+    .poll(async () => (await sidebar.boundingBox())!.width)
+    .toBeLessThanOrEqual(80);
+  await expect(
+    page.getByRole("button", { name: "Dashboards", exact: true }).locator("span"),
+  ).toBeHidden();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.reload();
+  await expect(shell).toHaveClass(/sidebar-collapsed/);
+  const expand = page.getByRole("button", {
+    name: "Expand navigation",
+    exact: true,
+  });
+  await expand.focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())!.width)
+    .toBeGreaterThan(200);
+  await expect(shell).not.toHaveClass(/sidebar-collapsed/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "Open navigation", exact: true })
+    .click();
+  await expect(sidebar).toHaveClass(/open/);
+  await page
+    .getByRole("button", { name: "Close navigation", exact: true })
+    .click();
+  await expect(sidebar).not.toHaveClass(/open/);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 768, height: 900 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(issues).toEqual([]);
+});

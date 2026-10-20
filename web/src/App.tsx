@@ -21,6 +21,8 @@ import {
   LogOut,
   Menu,
   Monitor,
+  PanelLeftClose,
+  PanelLeftOpen,
   Puzzle,
   Search,
   Server,
@@ -134,7 +136,14 @@ export default function App() {
     [dashboardID, setDashboardID] = useState(() =>
       /^\/d\/[^/]+/.test(location.pathname) ? "" : "system",
     ),
-    [sidebarOpen, setSidebarOpen] = useState(false);
+    [sidebarOpen, setSidebarOpen] = useState(false),
+    [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+      try {
+        return localStorage.getItem("metricspanel-sidebar") === "collapsed";
+      } catch {
+        return false;
+      }
+    });
   const [dashboards, setDashboards] = useState<Dashboard[]>([]),
     [apps, setApps] = useState<
       {
@@ -452,6 +461,20 @@ export default function App() {
     if (next !== "dashboard")
       history.replaceState({}, "", `/${location.search}#${next}`);
   }
+  function toggleSidebar() {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      try {
+        localStorage.setItem(
+          "metricspanel-sidebar",
+          next ? "collapsed" : "expanded",
+        );
+      } catch {
+        /* storage can be unavailable in private browsing */
+      }
+      return next;
+    });
+  }
   const title =
     view === "app"
       ? "Application"
@@ -699,7 +722,9 @@ export default function App() {
         canAdmin: !user || user.isServerAdmin,
       }}
     >
-      <div className="app-shell">
+      <div
+        className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      >
         {sidebarOpen && (
         <button
           className="sidebar-overlay"
@@ -715,6 +740,8 @@ export default function App() {
             navigate("overview");
           }}
           className="brand"
+          aria-label={tr("MetricsPanel233")}
+          title={tr("MetricsPanel233")}
         >
           <Activity size={38} strokeWidth={2} />
           <span>{tr("MetricsPanel233")}</span>
@@ -723,6 +750,8 @@ export default function App() {
           {navigation.map((item) => (
             <button
               key={item.id}
+              aria-label={tr(item.name)}
+              title={tr(item.name)}
               className={
                 view === item.id ||
                 (view === "dashboard" && item.id === "dashboards")
@@ -740,6 +769,8 @@ export default function App() {
               className="app-nav-link"
               key={app.id}
               href={`/a/${encodeURIComponent(app.id)}/`}
+              aria-label={app.name}
+              title={app.name}
               aria-current={
                 view === "app" && location.pathname.split("/")[2] === app.id
                   ? "page"
@@ -781,6 +812,27 @@ export default function App() {
         )}
         <header className="topbar">
           <div>
+            <button
+              className="icon-button sidebar-toggle"
+              onClick={toggleSidebar}
+              aria-label={
+                sidebarCollapsed
+                  ? tr("Expand navigation")
+                  : tr("Collapse navigation")
+              }
+              aria-expanded={!sidebarCollapsed}
+              title={
+                sidebarCollapsed
+                  ? tr("Expand navigation")
+                  : tr("Collapse navigation")
+              }
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen size={20} />
+              ) : (
+                <PanelLeftClose size={20} />
+              )}
+            </button>
             <button
               className="icon-button mobile-menu"
               onClick={() => setSidebarOpen(true)}
