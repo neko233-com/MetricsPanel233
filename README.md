@@ -63,16 +63,29 @@ editable bounded templates and no-send previews. Agent HTTP discovery documents 
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
 
-The current server source is [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), the completed local panel-readability correction; Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
+The current server source is [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), the panel-readability correction verified in private deployment `0.2.9`; Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
+Published aggregate [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) pins this exact composition.
+An independent official recursive checkout matched all four clean worktrees and passed the required-submodule
+public-source/history checker, exit 0; this is composition evidence, not a new CI or runtime result.
 Its **141/141 frontend units**, TypeScript/Vite and version `0.2.8` embedded webui builds passed. The same **9 focused
 browser cases passed without retries in 29.4 s**, including friendly default-overview legends for Go heap allocation,
 goroutines and cumulative HTTP requests, with native derived-rate naming where applicable. Native rate labels are
 not applied to cumulative raw-counter totals. The private deployment `0.2.8` attempt failed while preparing the
 release rollback archive **before stopping the service**. The healthy `0.2.7` service was not replaced or subjected
 to a runtime rollback. The public [Express233 archive fix](https://github.com/neko233-com/express233/commit/c80ce429972b02cbdd41861dd4170179c46ff008)
-passed ten isolated Linux script checks across two repetitions, with zero skips, in 4.301 s; its CI remains pending.
-Parameters for new immutable deployment `0.2.9` are prepared, **not triggered**. Final deployment and live legend
-acceptance remain pending; the latest public five-platform server release is still v0.2.6.
+passed ten isolated Linux script checks across two repetitions, with zero skips, in 4.301 s. All six latest Express233
+CI checks now passed: [CI attempt 2](https://github.com/neko233-com/express233/actions/runs/39612617923/attempts/2) and
+[Lint](https://github.com/neko233-com/express233/actions/runs/39612617925) succeeded. The initial Windows API/store
+packages hit a 600 s cumulative timeout; with those Git trees unchanged, one same-source retry of the failed Windows
+job passed in 376 s of tests / 6 min 41 s for the job. The reviewed script was atomically installed with SHA verification,
+root ownership and mode 0755, preserving a root-protected backup. Immutable deployment **0.2.9 succeeded** from `ed444317`,
+passing same-source native token/local, full Go and embedded-UI gates. Actual HTTPS health/version/source, protected
+non-root runtime and the existing Admin session were verified. The live overview now shows all three friendly
+self-metric legends; Details exposes full identifiers, units, latest valid values and query time explicitly distinguished
+from collection time. Numeric uptime, Chinese restart/time-zone help, CPU 85/95 and disk 80/90 lines, and fifteen-day
+retention remained intact. All five business instances reported within **9–15 s** after reload; this is continued
+reporting, not a real-player lifecycle test. Runtime readiness passed with the stopped-data/key snapshot retained,
+and the successful deployment required no runtime rollback. The latest public five-platform server release remains v0.2.6.
 
 The intermediate `c79971b8` source passed 139 frontend units, TypeScript/Vite and embedded webui builds. Its UI-patch cycle's first full browser run recorded
 **98 cases: 93 passed, 2 SQL-environment skipped, 3 failed**. After correcting an SDK comparison suffix, a fixture request ID
@@ -84,8 +97,8 @@ built and deployed version `0.2.7`, passing its same-source native token/local g
 and embedded UI build. Actual checks confirmed version/source, protected non-root runtime, preserved Admin session,
 five fresh business instances, fifteen-day retention, Chinese uptime help and risk lines. This is **intermediate**
 acceptance: the live self-metric legends still showed raw names because those three self metrics were missing from the known-metric map.
-That missing-map correction is included in `ed444317`; its final live legend acceptance has not yet been recorded.
-No new tag, public five-platform archive or CI success is claimed for this UI source.
+That missing-map correction is included in `ed444317` and was verified live in `0.2.9` as recorded above.
+No new tag, public five-platform archive or server/aggregate CI success is claimed for this UI source.
 
 The preceding published aggregate `77796f9c` pins server `85630554` (v0.2.6), Go SDK `4f63688e` and Rust SDK `f38673c6`.
 Its [exact-composition CI](https://github.com/neko233-com/metrics233-all/actions/runs/39596963802) passed, including real Go/Rust SDK integration against server `85630554`.

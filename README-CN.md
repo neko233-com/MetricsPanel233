@@ -39,14 +39,23 @@ metrics233 = { git = "https://github.com/neko233-com/metrics-lib-rust", rev = "b
 支持实时继承模板或独立仪表盘。玩家地区与 SQL Entity 统计采用全量虚拟列表；飞书支持卡片、可编辑有界模板和不发送预览。
 Agent HTTP 发现接口说明权限、配置 schema 与 CAS 更新流程。
 
-当前服务源码为面板可读性最终本地修正 [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0)，Go SDK `4f63688e`、Rust SDK `f38673c6` 不变。
+当前服务源码为已通过私有部署 `0.2.9` 线上验收的面板可读性修正 [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0)，Go SDK `4f63688e`、Rust SDK `f38673c6` 不变。
+已公开父仓库 [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) 固定这套组合；独立官方递归检出四个工作树均干净，
+必需子模块公开源码/历史门禁 exit 0。这是组合核验，不是新的 CI 或运行验收。
 最终 **141/141** 前端单测、TypeScript/Vite 与 `0.2.8` 嵌入 webui 构建通过；同组 **9 项浏览器无重试全部通过，29.4 秒**，
 默认 overview 的 Go 堆分配内存、协程数、累计 HTTP 请求数三项自身指标均显示友好图例（含 native 派生 rate 显示），
 native rate 标签不误用于原始 Counter 累计值。
 私有部署 `0.2.8` 在**停服前准备发布文件回滚归档**时失败；健康的 `0.2.7` 继续服务，未换包，也未发生运行时回滚。
 公开的 [Express233 归档修复](https://github.com/neko233-com/express233/commit/c80ce429972b02cbdd41861dd4170179c46ff008)
-已通过隔离 Linux 真实脚本双轮验证（10 项通过、零跳过，4.301 秒），其 CI 仍待完成。
-新不可变部署版本 `0.2.9` 的参数已准备、**尚未触发**；最终部署和真实图例仍待验收，最新公开五平台版本仍为 v0.2.6。
+已通过隔离 Linux 真实脚本双轮验证（10 项通过、零跳过，4.301 秒），六项最新 CI 检查现已全部成功：
+[CI 第二次执行](https://github.com/neko233-com/express233/actions/runs/39612617923/attempts/2) 与 [Lint](https://github.com/neko233-com/express233/actions/runs/39612617925) 均通过。
+首轮 Windows API/store 包累计运行达到 600 秒而超时；两处 Git tree 未变，仅对失败的 Windows job 同源重跑一次，测试 376 秒、job 6 分 41 秒后通过。
+已审核脚本经 SHA 核对后原子替换，保持 root 所有、0755 权限，旧脚本保留受控 root 备份。
+固定 `ed444317` 的不可变部署 **0.2.9 已成功**，同源 native token/local、完整 Go 与嵌入 UI 门禁通过。
+实际 HTTPS 健康/版本/源码、受保护的非 root 进程和既有 Admin 会话均核实；主页面三项自身指标已显示友好图例，
+详情保留完整标识、单位、最新有效值，并明确查询时间不是采集时间。数字运行时长、中文重启/时区说明、CPU85/95与磁盘80/90风险线、15天保留均保持。
+业务页 reload 后五实例最近上报均为 **9–15 秒**，这只证明持续上报，不代表真实玩家生命周期验收。
+运行时就绪门禁通过，停服后数据/密钥快照保留，成功部署没有发生运行时回滚；最新公开五平台版本仍为 v0.2.6。
 
 中间源码 `c79971b8` 通过 139 项前端单测、TypeScript/Vite 与嵌入 webui 构建；该轮 UI 修正的首个完整浏览器结果为 **98 项：93 通过、2 SQL 环境跳过、3 失败**；
 随后修正 SDK 比较后缀、夹具请求 ID 与旧 PromQL 主视图断言，最终定向 **9 项无重试全部通过，23.6 秒**。
@@ -55,8 +64,8 @@ native rate 标签不误用于原始 Counter 累计值。
 固定源码的正式私有流水线已成功构建并部署 `0.2.7`，同源 native token/local 门禁、完整 Go 测试、139 项前端单测与嵌入构建均通过；
 现场已核实版本/源码、受保护的非 root 进程、保留的 Admin 会话、五个新鲜业务实例、15 天保留、中文运行时长说明与风险线。
 这属于**中间版本验收**：实际自身指标图例仍显示原始名字，已定位为已知指标映射遗漏上述三项自身指标。
-三项映射已在 `ed444317` 仅前端补齐，最终线上真实图例仍待核验。
-本次源码尚无新 tag、公开五平台归档或新 CI 成功证据。
+三项映射已在 `ed444317` 仅前端补齐，并完成上述 `0.2.9` 实际线上图例验收。
+本次源码尚无新 tag、公开五平台归档或新的 server/aggregate CI 成功证据。
 
 此前已公开的父仓库 `77796f9c` 固定 server `85630554`（v0.2.6）、Go SDK `4f63688e` 和 Rust SDK `f38673c6`。
 其 [精确组合 CI](https://github.com/neko233-com/metrics233-all/actions/runs/39596963802) 已通过，包含 Go/Rust SDK 对固定服务端 `85630554` 的真实集成。

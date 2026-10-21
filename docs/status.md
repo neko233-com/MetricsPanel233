@@ -8,21 +8,25 @@ The approved public child sources are:
 
 | Child | Exact source |
 | --- | --- |
-| Server | [`ed444317090daa1c7cd6b76c70e0ca8ed4d208f0`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), final local UI readability correction; no new release tag |
+| Server | [`ed444317090daa1c7cd6b76c70e0ca8ed4d208f0`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), UI readability source accepted live in private deployment `0.2.9`; no new public release tag |
 | Go SDK | [`4f63688e023bce29b1e6b79c14733e246bc277b6`](https://github.com/neko233-com/metrics233-lib-go/commit/4f63688e023bce29b1e6b79c14733e246bc277b6) |
 | Rust SDK | [`f38673c6c90ccda1bcd2503be3e20ad7a0d65efa`](https://github.com/neko233-com/metrics-lib-rust/commit/f38673c6c90ccda1bcd2503be3e20ad7a0d65efa), README-only correction; code/tag `v0.1.0` remains `bda4716538a366379f69300cb816e272f1db11de`, package `metrics233` |
 
-The server UI source above has been pushed; the Go and Rust pins are unchanged. The latest public five-platform
+The server UI source above has been pushed; the Go and Rust pins are unchanged. Published aggregate
+[`8a63870b9e4ba39df275b532a25a6a6115a95ef1`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1)
+pins this exact composition. The latest public five-platform
 release remains server `85630554` / `v0.2.6`. The current UI source `ed444317` completes the local known-metric
 correction; its private deployment `0.2.8` **failed before service stop** during release rollback-archive preparation.
-The healthy `0.2.7` service remains online without package replacement or runtime rollback. A public Express233
-archive fix has passed isolated Linux script validation; its CI remains pending. New immutable deployment `0.2.9`
-has prepared parameters but has **not been triggered**.
+That failed attempt left the healthy `0.2.7` service unchanged, without package replacement or runtime rollback.
+The public Express233 archive fix passed isolated Linux script validation and all six latest CI checks. Its reviewed
+script was atomically installed after SHA/ownership/mode checks with a protected backup. Immutable deployment
+`0.2.9` for `ed444317` **succeeded**, with actual health/source, authenticated live legends and five fresh business
+instances verified. Runtime readiness passed and the stopped-data/key snapshot was retained; no runtime rollback occurred.
 The preceding `c79971b8` / `0.2.7` succeeded with intermediate actual version/source, account/session, runtime and
 fresh-report evidence, but its real self-metric legends still exposed raw names because the Go heap-allocation,
 goroutine-count and cumulative HTTP-request mappings were absent
-from the known-metric map. Final live legend acceptance remains **pending**. No new tag, public archive or CI
-success is claimed for the current UI source.
+from the known-metric map. Those mappings were corrected in `ed444317` and accepted live in `0.2.9`. No new tag,
+public archive or server/aggregate CI success is claimed for the current UI source.
 The preceding aggregate source [`77796f9c51dc2c63222abbfadefb6fc0d09eea82`](https://github.com/neko233-com/metrics233-all/commit/77796f9c51dc2c63222abbfadefb6fc0d09eea82)
 publishes server `85630554` with the same Go/Rust pins; its completed checkout and CI evidence below belongs to that
 earlier composition. Server v0.2.6 fixes a notification timeout-classification race: an HTTP client
@@ -61,8 +65,11 @@ deployment, business-instance, browser and notification acceptance without treat
 | Intermediate source and complete browser run | The preceding `c79971b8` passed 139 frontend units and TypeScript/Vite/embedded builds. That UI-patch cycle's first complete browser run recorded **98 cases: 93 passed, 2 SQL-environment skipped, 3 failed**. Corrections addressed an SDK comparison suffix, a fixture request ID and an obsolete raw-PromQL main-view assertion. Its nine focused browser cases subsequently passed without retries in **23.6 s**; the complete run was not a success and was not rerun. |
 | Intermediate private deployment | Fixed-source formal-pipeline build and deployment version **0.2.7 succeeded**, including the same-source native token/local gate, full Go tests, 139 frontend units and embedded UI build. Actual checks confirmed health version `0.2.7`, build source `c79971b8`, non-root runtime and protected environment/control/identity files, the preserved Admin session, five business instances reporting within 9–15 s, fifteen-day retention, Chinese uptime help and risk lines. Private operational identities and artifact details remain outside this ledger. |
 | Failed private deployment 0.2.8 | Deployment `0.2.8` failed during preparation of the release rollback archive **before service stop**. The healthy `0.2.7` service was not stopped or replaced, and no runtime rollback occurred. The failure stage is established; stderr is unavailable, so no specific tar warning is asserted. This failure is not complete live readability acceptance. |
-| Express233 delivery dependency | Public fix [`c80ce429`](https://github.com/neko233-com/express233/commit/c80ce429972b02cbdd41861dd4170179c46ff008) was pushed. The release rollback archive's `data/`, `logs/` and `run/` exclusions are anchored to the release root, retaining nested release resources; consistent database backup still uses the separate stopped-data snapshot. Isolated real Linux scripts passed **10 executions across two repetitions, zero skips, 4.301 s**, including actual code/config rollback without reverting data. These fixtures are not a production rollback. Its six CI checks remain **pending**. |
-| Prepared next private deployment | Parameters for new immutable deployment **0.2.9** are prepared, **not triggered**, pending the Express233 CI gate. Final deployment and actual main-page legend/runtime/reporting acceptance remain **pending**. This does not reassign the `0.2.7` intermediate proof or claim a new public server tag/archive/CI outcome. |
+| Express233 delivery dependency | Public fix [`c80ce429`](https://github.com/neko233-com/express233/commit/c80ce429972b02cbdd41861dd4170179c46ff008) was pushed. The release rollback archive's `data/`, `logs/` and `run/` exclusions are anchored to the release root, retaining nested release resources; consistent database backup still uses the separate stopped-data snapshot. Isolated real Linux scripts passed **10 executions across two repetitions, zero skips, 4.301 s**, including actual code/config rollback without reverting data. These fixtures are not a production rollback. |
+| Express233 CI and script installation | All **six latest checks succeeded**, including [CI 39612617923 attempt 2](https://github.com/neko233-com/express233/actions/runs/39612617923/attempts/2) and [Lint 39612617925](https://github.com/neko233-com/express233/actions/runs/39612617925). The first Windows API/store packages reached the cumulative **600 s** timeout; those Git trees were unchanged. Only the failed Windows job was rerun once from the same source, passing tests in **376 s / 6 min 16 s** and the job in **6 min 41 s**. The reviewed script was atomically installed with matching SHA, root ownership and mode **0755**; the preceding script has a protected root-only backup. No private path or host hash is recorded here. |
+| Actual private deployment 0.2.9 | Immutable deployment **0.2.9** from `ed444317` **succeeded**, including same-source native token/local, full Go and embedded-UI gates. Actual public HTTPS health returned version `0.2.9` and database OK; build-info matched `ed444317`. The new active/running process remained non-root with zero effective capabilities; environment permissions remained root 0600, data directory 0700, control/identity databases 0600. Runtime readiness passed and the stopped-data/key snapshot was retained. The successful deployment chain had no error or runtime rollback. These operational results do not claim a new public server tag/archive/CI outcome; the 141-unit count above remains the known local result. |
+| Actual readability and continued reporting | The existing Admin session survived reload without console errors. Overview visibly showed **监控服务Go堆内存 / 监控服务协程数 / 监控服务HTTP请求速率**. Opening Details exposed the three complete raw identifiers, original metric/unit, latest valid value and query time explicitly distinguished from collection time. Numeric uptime, Chinese restart/time-zone explanations, CPU 85/95 and disk 80/90 risk lines, and fifteen-day retention remained configured. All **five business instances reported within 9–15 s** after a real business-page reload; this establishes continued reporting, not a real-player lifecycle. Anonymous public PromQL GET and JSON-ingest POST each returned **401**. |
+| Current independent official composition | An independent recursive checkout from official GitHub matched aggregate **8a63870b**, server **ed444317**, Go SDK **4f63688e** and Rust SDK **f38673c6**; all four worktrees were clean. The required-submodule public source/history checker completed with **exit 0**. This is exact source-composition acceptance, not a new aggregate CI or repeated runtime suite. |
 
 | Preceding v0.2.6 delivery acceptance layer | Completed evidence and limits |
 | --- | --- |
