@@ -2,7 +2,36 @@
 
 Updated: 2026-10-21. The aggregate composes independently versioned public server, Go SDK and Rust SDK repositories.
 
-## Current source: panel readability after server v0.2.6
+## Current source: template center and scoped instance dashboards
+
+Server source [`749ccfd27493e9e3b70c138743e240cfb224a84f`](https://github.com/neko233-com/metrics233-server/commit/749ccfd27493e9e3b70c138743e240cfb224a84f)
+is published and pinned by this aggregate. Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
+The latest public five-platform release is still server `85630554` / `v0.2.6`; this source has no new
+public release tag or full hosted CI result.
+
+- Template center and instance dashboards have distinct navigation. Templates preview authorized live
+  inherit bindings with complete instance scope; copies and other environments are not merged.
+- Explicit release/test/shared groups, default last 60 minutes, remembered large panels and stable refresh
+  were implemented. In-flight slow SQL reads are allowed to finish instead of being canceled every five seconds.
+- SQL defaults to the ten Entity/operation pairs with highest last-hour weighted average latency; all player
+  regions remain accessible through the virtual list. Bytes/second panel edits retain opaque configuration and CAS.
+- Feishu uses Chinese states, Beijing time and accurate cooldown wording. Tests are marked separately;
+  recovered condition values are never relabeled as actual zero utilization. Custom templates and provider ACK gates remain.
+- 147 frontend units, TypeScript/Vite/webui builds and four final-binary key browser cases passed with no retries
+  or skips. The last description-only polish passed 14 presenter units and its focused browser case. Native
+  binding/library ACL, unit-edit HTTP/CAS, full alerting/template packages and relevant vet checks also passed.
+- Private feature deployment `0.2.10` / source `12e6b9b` succeeded, including non-root runtime/file permissions,
+  retained stopped-data/key snapshot, anonymous query/ingest rejection, live inherited gateway panels and a
+  real Feishu test delivery. Final UI-only `0.2.11` / source `749ccfd` also succeeded: source and runtime
+  identity, protected permissions, readiness marker and anonymous GET/POST rejection were read back.
+  Authenticated UI retained five fresh instances, explicit environment groups, a nine-panel inherited
+  gateway preview with numeric uptime and real zero reconnects, B/s units and the last-hour SQL table.
+  The `0.2.10` real Feishu test was delivered once; its alerting tree is byte-identical in `0.2.11`.
+  Browser preview is explicitly sample data and is not an observation of the Feishu group's rendered message.
+  These are separate from
+  Docker/race/full-suite or real player-account acceptance, which were not repeated for this change.
+
+## Preceding source: panel readability after server v0.2.6
 
 The approved public child sources are:
 
