@@ -65,5 +65,8 @@ The v0.2.1 evidence above remains attributed to that earlier release. New v0.2.2
   explicit HTTP/business success. There were zero production alert rules at acceptance: new UI defaults are one hour,
   but no CPU/disk thresholds or game instrumentation were invented. Deterministic scheduling tests establish CD
   timing/restart semantics; this is not a claim of an hour-long live alerting exercise.
-- Tagged server [CI 39562946865](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865) is tracked
-  separately: repeated Docker integration passed; the full race/browser job was still running at this update.
+- Tagged server [CI 39562946865](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865) completed
+  successfully: full vet/race (store 1564.678 s), embedded Chromium 86 passed / 2 SQL-environment skipped in 7.1 min,
+  and repeated real Docker database/production runtime integration. No flaky/failing browser case was reported.
+  The [v0.2.2 release](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.2) is public with five archives,
+  checksums and provenance. The production artifact uses a separate immutable operations version for the same source.

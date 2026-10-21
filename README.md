@@ -20,7 +20,7 @@ For an existing clone, run `git submodule update --init --recursive`. The aggreg
 
 ## Run the server
 
-Download the five-platform [server v0.2.1 release](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.1)
+Download the five-platform [server v0.2.2 release](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.2)
 and verify it with the attached `SHA256SUMS` and `PROVENANCE.json`, or build from source below.
 The independently released [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 requires Go 1.23+ and has no third-party dependencies.
@@ -47,7 +47,12 @@ notification cooldowns are supported; newly created UI rules default to one hour
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
 
-Server v0.2.1 was built twice from clean commit `f0244c3`; all seven delivery files were byte-identical, and all
+Server v0.2.2 at `ecdf079` passed [complete tagged CI](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865):
+full vet/race, Chromium (86 passed / 2 SQL-environment skipped) and repeated real Docker database/runtime checks.
+Both five-platform builds and all seven official asset downloads matched. The deployed service passed restricted-token
+SDK push/query, normal-restart persistence and a real encrypted Feishu notification test. Updated aggregate CI passed at `c306889`.
+
+The earlier server v0.2.1 baseline was built twice from clean commit `f0244c3`; all seven delivery files were byte-identical, and all
 official release assets passed download hash verification. Its actual Linux amd64 archive passed authentication,
 business ingestion/query and graceful shutdown. Aggregate CI passed at `813c381`, SDK v0.1.0 tag CI passed, and
 [server v0.2.1 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39541420544) passed full vet/race,

@@ -23,11 +23,16 @@ cd metrics233-all
 契约见 [上报凭据](metrics233-server/docs/reporting-access.md)、[来源策略](metrics233-server/docs/reporting-sources.md)
 和 [告警冷却](metrics233-server/docs/alert-notification-cooldown.md)。
 
-可直接下载五平台 [server v0.2.1 正式归档](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.1)，
+可直接下载五平台 [server v0.2.2 正式归档](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.2)，
 使用附带的 `SHA256SUMS` 和 `PROVENANCE.json` 校验；独立的 [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 支持 Go 1.23+，没有第三方依赖。
 
-server v0.2.1 从干净提交 `f0244c3` 构建两轮，7 个交付文件逐字节一致，官方资产回下载哈希全部匹配；
+server v0.2.2（`ecdf079`）[标签 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865) 已全部成功：
+全库 vet/race、浏览器 86 passed / 2 SQL 环境跳过、真实数据库与生产运行 Docker 双轮通过。
+五平台双构建及 7 个官方下载文件哈希匹配；线上独立上报凭据的 SDK 写读、正常重启持久化、飞书真实回执均已验收。
+更新后子模块组合 `c306889` 的父仓库 CI 通过。
+
+此前 server v0.2.1 从干净提交 `f0244c3` 构建两轮，7 个交付文件逐字节一致，官方资产回下载哈希全部匹配；
 实际 Linux amd64 归档通过鉴权、业务写入查询及优雅关闭。父仓库 `813c381`、SDK v0.1.0 tag 和
 [server v0.2.1 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39541420544) 全部通过，包含完整 vet/race、浏览器与 Docker 检查。
 独立私有部署也已通过真实 SDK 写入查询及正常重启持久化验证；范围与证据见下方验收台账。

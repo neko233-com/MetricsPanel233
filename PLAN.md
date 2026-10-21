@@ -19,4 +19,4 @@ Optional Vite+/ReactBits experiments remain optional. Do not use them to delay t
 
 - [x] Implement restricted ingest credentials, persistent source control and one-click source UI; final Windows Go and 86-pass embedded browser suite completed.
 - [x] Implement encrypted Feishu notifications and durable firing cooldowns; API/TLS/queue/recovery and UI checks passed.
-- [~] Publish and verify server v0.2.2, exact updated aggregate pins, and actual production reporting/Feishu configuration; keep new evidence separate from v0.2.1.
+- [x] Publish and verify server v0.2.2, exact updated aggregate pins, and actual production reporting/Feishu configuration. Tagged full vet/race, 86-pass browser suite and repeated Docker passed; new evidence remains separate from v0.2.1.
