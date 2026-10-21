@@ -47,5 +47,23 @@ the Reporting sources tab, encrypted Feishu contacts and durable firing cooldown
 with v0.1.0; its README now directs senders to the restricted credential.
 Final Windows Go tests passed; frontend build and 118 unit tests passed; the final embedded-UI browser suite completed
 with **86 passed, 2 SQL-environment skipped, no retries or failures**. These counts do not convert the SQL skips into passes.
-New v0.2.2 archives, tag CI, recursive aggregate acceptance and production configuration are separate pending gates;
-the v0.2.1 evidence above remains attributed to that earlier release.
+The v0.2.1 evidence above remains attributed to that earlier release. New v0.2.2 evidence:
+
+- Five-platform builds from clean `ecdf079` ran twice; all seven files match byte-for-byte. All ten ZIPs passed CRC,
+  BUILDINFO, binary architecture and Go module inspection. All seven official uploaded assets were downloaded and
+  matched the local hashes and GitHub asset digests. Foreign macOS/ARM64 binaries were inspected, not executed.
+- Frozen-source Linux targeted vet/race ran twice: 74 executions passed, no failures/skips/races. The actual Linux
+  amd64 release archive separately passed 17 confined-runtime checks, including ingest-only authorization,
+  block/no-self-unblock, query, persistence catalog and SIGTERM; sampled memory was 16.89 MiB for that bounded fixture.
+- Fresh public recursive checkout matched both new pins. Updated aggregate
+  [CI 39563273080](https://github.com/neko233-com/metrics233-all/actions/runs/39563273080) passed at `c306889`.
+- The same fixed application source completed the real private production pipeline, public HTTPS restricted-token
+  SDK push and management query (113/50), then normal-restart readback with unchanged protected configuration/key.
+  Six management GET requests returned 200, eight restricted-credential privilege probes returned 403, and two
+  invalid-credential probes returned 401; source policy was unchanged.
+- The encrypted Feishu receiver was configured privately as the default, and one real test notification reached
+  explicit HTTP/business success. There were zero production alert rules at acceptance: new UI defaults are one hour,
+  but no CPU/disk thresholds or game instrumentation were invented. Deterministic scheduling tests establish CD
+  timing/restart semantics; this is not a claim of an hour-long live alerting exercise.
+- Tagged server [CI 39562946865](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865) is tracked
+  separately: repeated Docker integration passed; the full race/browser job was still running at this update.
