@@ -48,7 +48,7 @@ func gitFixture(t *testing.T) string {
 	if err := os.Mkdir(root, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, prefix := range []string{"", children[0], children[1]} {
+	for _, prefix := range append([]string{""}, children...) {
 		repo := filepath.Join(root, prefix)
 		if err := os.MkdirAll(repo, 0755); err != nil {
 			t.Fatal(err)
@@ -75,12 +75,33 @@ func gate(t *testing.T, root string, extra ...string) (int, string) {
 	return code, output.String()
 }
 
-func TestCanonicalThreeRepositoriesAndHistory(t *testing.T) {
+func TestCanonicalFourRepositoriesAndHistory(t *testing.T) {
 	root := gitFixture(t)
 	writeFixture(t, filepath.Join(root, children[0]), ".env.example", "METRICSPANEL_TOKEN=\n")
 	for _, args := range [][]string{{}, {"--require-submodules"}, {"--require-submodules", "--history"}} {
 		if code, output := gate(t, root, args...); code != 0 || output != "" {
 			t.Fatal("clean canonical fixture failed: " + output)
+		}
+	}
+}
+
+func TestHistoricalTwoChildContractDoesNotWeakenCurrentModules(t *testing.T) {
+	var legacy strings.Builder
+	for _, child := range children[:2] {
+		legacy.WriteString("[submodule \"" + child + "\"]\n path = " + child + "\n url = https://github.com/neko233-com/" + child + ".git\n")
+	}
+	for _, tc := range []struct {
+		historical, valid bool
+		text              string
+	}{
+		{true, true, legacy.String()}, {false, false, legacy.String()},
+		{true, false, strings.ReplaceAll(legacy.String(), "metrics233-server.git", "unapproved.git")},
+		{true, true, modulesText()}, {false, true, modulesText()},
+	} {
+		c := &checker{seen: make(map[finding]bool)}
+		c.scan(source{path: ".gitmodules", display: ".gitmodules", parent: true, historical: tc.historical}, []byte(tc.text))
+		if (len(c.findings) == 0) != tc.valid {
+			t.Fatal("historical/current module contract mismatch")
 		}
 	}
 }

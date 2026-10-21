@@ -11,7 +11,7 @@ concurrency:
 jobs:
   pinned-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,3 +38,15 @@ jobs:
       - name: SDK against the exact pinned server binary
         run: METRICS233_TEST_BINARY="$GITHUB_WORKSPACE/metrics233-server/bin/metricspanel" go test -run '^TestServerBinaryIntegration$' -count=1 -v
         working-directory: metrics233-lib-go
+      - name: Install the Rust SDK minimum supported toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
+      - name: Rust SDK lint and tests
+        run: |
+          cargo +1.88.0 fmt --all -- --check
+          cargo +1.88.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.88.0 test --locked --all-targets
+          cargo +1.88.0 test --locked --doc
+        working-directory: metrics-lib-rust
+      - name: Rust SDK against the exact pinned server binary
+        run: METRICS233_TEST_SERVER_BIN="$GITHUB_WORKSPACE/metrics233-server/bin/metricspanel" cargo +1.88.0 test --locked --features real-server-tests --test real_server
+        working-directory: metrics-lib-rust

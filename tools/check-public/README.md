@@ -11,7 +11,7 @@ Success is silent (exit 0). Findings/failures are `path:line:rule` only (exit 1)
 file contents are never printed. Quoted paths escape control characters. Paths containing a deny string or token
 are redacted. No network operations, Git mutations, index refresh, file rewriting or secret validity checks run.
 
-The parent, `metrics233-server` and `metrics233-lib-go` must be independent Git worktrees. Each uses its own staged
+The parent, `metrics233-server`, `metrics233-lib-go` and `metrics-lib-rust` must be independent Git worktrees. Each uses its own staged
 inventory and unignored untracked files. Both staged blobs and working files are scanned: cleaning a working file
 does not hide a secret still in the index. Ignored local files are outside the proposed publication set, but tracked
 ignored files remain checked. Unexpected gitlinks, symlinks and unsafe paths fail closed. Missing repositories,
@@ -36,7 +36,7 @@ file must resolve outside the parent tree and contain 1–1,024 entries (at most
 Findings identify only `deny#N`;
 its values are never printed or added to a public config. Never put private values in command arguments.
 
-`.gitmodules` permits exactly these two canonical sections, paths and HTTPS URLs, with no extra directives:
+`.gitmodules` permits exactly these three canonical sections, paths and HTTPS URLs, with no extra directives:
 
 ```ini
 [submodule "metrics233-server"]
@@ -45,9 +45,12 @@ its values are never printed or added to a public config. Never put private valu
 [submodule "metrics233-lib-go"]
     path = metrics233-lib-go
     url = https://github.com/neko233-com/metrics233-lib-go.git
+[submodule "metrics-lib-rust"]
+    path = metrics-lib-rust
+    url = https://github.com/neko233-com/metrics-lib-rust.git
 ```
 
-`--require-submodules` additionally requires both parent gitlinks to match the checked-out child HEADs.
+`--require-submodules` additionally requires all parent gitlinks to match the checked-out child HEADs.
 `--history` scans every tree/blob and commit message reachable from each local `main` (or `origin/main` in a
 detached checkout without a local branch), including removed files; grafted/shallow histories are rejected.
 Text/config sources must be UTF-8 without literal NUL bytes. Git replacement objects and lazy object fetching

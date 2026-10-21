@@ -4,3 +4,6 @@
 [submodule "metrics233-lib-go"]
 	path = metrics233-lib-go
 	url = https://github.com/neko233-com/metrics233-lib-go.git
+[submodule "metrics-lib-rust"]
+	path = metrics-lib-rust
+	url = https://github.com/neko233-com/metrics-lib-rust.git

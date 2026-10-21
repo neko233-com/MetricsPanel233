@@ -1,4 +1,4 @@
-// check-public 在发布前只读检查父仓库、server 和 Go SDK 工作树。
+// check-public 在发布前只读检查父仓库、server、Go SDK 和 Rust SDK 工作树。
 // 输出仅包含路径、行号和规则；不得输出匹配值、Git stderr 或私有 deny 配置。
 package main
 
@@ -26,7 +26,16 @@ import (
 
 const maxFileBytes = 32 * 1024 * 1024
 
-var children = []string{"metrics233-server", "metrics233-lib-go"}
+var children = []string{"metrics233-server", "metrics233-lib-go", "metrics-lib-rust"}
+
+func canonicalChild(name string) bool {
+	for _, child := range children {
+		if name == child {
+			return true
+		}
+	}
+	return false
+}
 
 type options struct {
 	root, denyFile                           string
@@ -55,6 +64,7 @@ type checker struct {
 type source struct {
 	path, display string
 	parent        bool
+	historical    bool
 }
 
 type object struct {
@@ -171,7 +181,7 @@ func (c *checker) check() {
 	if !c.loadDeny() {
 		return
 	}
-	for _, prefix := range []string{"", children[0], children[1]} {
+	for _, prefix := range append([]string{""}, children...) {
 		repo := filepath.Join(c.root, prefix)
 		display := prefix
 		if display == "" {
@@ -353,7 +363,7 @@ func (c *checker) repository(repo, prefix string) {
 	links := make(map[string]string)
 	for _, item := range entries {
 		if item.mode == "160000" {
-			if prefix == "" && (item.path == children[0] || item.path == children[1]) {
+			if prefix == "" && canonicalChild(item.path) {
 				links[item.path] = item.oid
 			} else {
 				c.add(path.Join(prefix, item.path), 0, "unexpected-gitlink")
@@ -509,9 +519,9 @@ func (c *checker) historyObjects(repo, prefix string, objects map[string]*object
 			return
 		}
 		for _, item := range entries {
-			src := source{path: item.path, display: path.Join(prefix, item.path) + version, parent: prefix == ""}
+			src := source{path: item.path, display: path.Join(prefix, item.path) + version, parent: prefix == "", historical: true}
 			if item.mode == "160000" {
-				if prefix != "" || (item.path != children[0] && item.path != children[1]) {
+				if prefix != "" || !canonicalChild(item.path) {
 					c.add(src.display, 0, "unexpected-gitlink")
 				}
 				continue
@@ -634,7 +644,14 @@ func (c *checker) scan(src source, data []byte) {
 	if text && (!utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0) {
 		c.add(src.display, 0, "invalid-text-encoding")
 	}
-	if src.path == ".gitmodules" && (!src.parent || !validGitmodules(data)) {
+	validModules := validGitmodules(data)
+	// Before the Rust SDK was introduced, the canonical public aggregate had
+	// exactly the server and Go SDK. Accept that strict historical contract only;
+	// current worktree/index must include all three current children.
+	if src.historical && !validModules {
+		validModules = validGitmodulesFor(data, children[:2])
+	}
+	if src.path == ".gitmodules" && (!src.parent || !validModules) {
 		c.add(src.display, 0, "gitmodules-not-canonical")
 	}
 	for index, line := range bytes.Split(data, []byte{'\n'}) {
@@ -655,6 +672,10 @@ func (c *checker) scan(src source, data []byte) {
 }
 
 func validGitmodules(data []byte) bool {
+	return validGitmodulesFor(data, children)
+}
+
+func validGitmodulesFor(data []byte, required []string) bool {
 	if !utf8.Valid(data) || len(data) > 64*1024 {
 		return false
 	}
@@ -667,7 +688,7 @@ func validGitmodules(data []byte) bool {
 		}
 		if strings.HasPrefix(line, "[") {
 			section = ""
-			for _, child := range children {
+			for _, child := range required {
 				if line == `[submodule "`+child+`"]` && values[child] == nil {
 					section, values[child] = child, make(map[string]string)
 				}
@@ -690,10 +711,10 @@ func validGitmodules(data []byte) bool {
 		}
 		values[section][key] = value
 	}
-	for _, child := range children {
+	for _, child := range required {
 		if len(values[child]) != 2 || values[child]["path"] != child || values[child]["url"] != "https://github.com/neko233-com/"+child+".git" {
 			return false
 		}
 	}
-	return len(values) == 2
+	return len(values) == len(required)
 }
