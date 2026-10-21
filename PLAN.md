@@ -1,12 +1,12 @@
 # metrics233-all execution plan
 
-Updated: 2026-10-21. This aggregate owns repository composition, SDK/server integration and public/private delivery boundaries. The server's detailed product roadmap remains in `metrics233-server/PLAN.md`.
+Updated: 2026-10-22. This aggregate owns repository composition, SDK/server integration and public/private delivery boundaries. The server's detailed product roadmap remains in `metrics233-server/PLAN.md`.
 
 - [x] Add the independent Rust SDK as a real third submodule; publish Git/tag and verify Windows/Linux/MSRV/real server contracts. Rust tag CI 39579220148 passed.
-- [~] Publish crate `metrics233` to crates.io and verify a fresh registry consumer. Official upload and direct identity API returned 403; Git publication is complete, registry publication is not.
+- [x] Publish crate `metrics233 0.1.0` to crates.io from clean source `3a58fff2`; verify official API/index/download checksum, a new registry-only project with an empty Cargo cache, actual server ingestion and 401/403 authorization boundaries. Verify the official page in Edge. The prior invalid-token block is resolved.
 - [x] Deploy separate local account login/ingest authentication, 15-day configurable retention, resource alert rules, Feishu cards/templates, business virtual dashboards and actual game gateway/logic instrumentation; complete the scoped production checks in the ledger. Keep sustained-load capacity claims separate; real test-account login/logout is not performed at the user's request, and nonzero player-lifecycle acceptance is not claimed.
 
-Current source composition: server `749ccfd27493e9e3b70c138743e240cfb224a84f` (template center, scoped instance dashboards and final stat-description polish), Go SDK `4f63688e023bce29b1e6b79c14733e246bc277b6`, Rust SDK `f38673c6c90ccda1bcd2503be3e20ad7a0d65efa` (README-only correction; code/tag `v0.1.0` remains `bda47165`). The latest public five-platform archives remain server `85630554` / `v0.2.6`; no new public tag or full CI is claimed for this source.
+Current source composition: server `749ccfd27493e9e3b70c138743e240cfb224a84f` (template center, scoped instance dashboards and final stat-description polish), Go SDK `4f63688e023bce29b1e6b79c14733e246bc277b6`, Rust SDK `3a58fff2901e001984b45791fb884d23e3d8f9b7` (registry installation guidance; crate `metrics233 0.1.0` published, runtime code matches original Git tag `bda47165`). The latest public five-platform archives remain server `85630554` / `v0.2.6`; no new server tag or full CI is claimed for this composition.
 
 - [x] Deliver explicit release/test/shared instance groups, 60-minute defaults, scoped template previews, remembered larger panels and refresh without clearing same-scope values.
 - [x] Replace the default SQL charts with the last-hour slow SQL Top10 table while preserving complete virtualized player regions and the full paged SQL API.

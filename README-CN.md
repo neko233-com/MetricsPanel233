@@ -28,19 +28,22 @@ cd metrics233-all
 下载后使用附带的 `SHA256SUMS` 和 `PROVENANCE.json` 校验，或从固定源码构建；独立的 [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 支持 Go 1.23+，没有第三方依赖。
 
-[Rust SDK v0.1.0 Git 版本](https://github.com/neko233-com/metrics-lib-rust/releases/tag/v0.1.0) 已独立验证；
-crates.io 上传因 HTTP 403 受阻，当前使用固定 Git 依赖。Rust 子模块新 pin `f38673c6` 仅修正 README，v0.1.0 代码与 tag 仍为 `bda47165`：
+[Rust SDK metrics233 v0.1.0](https://crates.io/crates/metrics233/0.1.0) 已正式发布到 crates.io。
+全新项目与空 Cargo 缓存已通过安装、真实服务上报和 Token 权限验收。
+Rust 子模块 `3a58fff2` 更新安装文档，库代码与原 `v0.1.0` Git 版本一致：
 
-```toml
-metrics233 = { git = "https://github.com/neko233-com/metrics-lib-rust", rev = "bda4716538a366379f69300cb816e272f1db11de" }
+```sh
+cargo add metrics233@0.1.0
 ```
 
 后台使用独立账号密码登录，上报 Token 仅授予写入权限。数据默认保留 15 天；业务实例保留完整身份，
 支持实时继承模板或独立仪表盘。玩家地区与 SQL Entity 统计采用全量虚拟列表；飞书支持卡片、可编辑有界模板和不发送预览。
 Agent HTTP 发现接口说明权限、配置 schema 与 CAS 更新流程。
 
-当前服务源码为已通过私有部署 `0.2.9` 线上验收的面板可读性修正 [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0)，Go SDK `4f63688e`、Rust SDK `f38673c6` 不变。
-已公开父仓库 [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) 固定这套组合；独立官方递归检出四个工作树均干净，
+当前服务 pin 为已通过私有部署 `0.2.11` 验收的 `749ccfd2`，Go SDK 仍为 `4f63688e`，Rust SDK 为 `3a58fff2` / crate `metrics233 0.1.0`。当前证据见 [docs/status.md](docs/status.md)。
+
+此前通过私有部署 `0.2.9` 线上验收的面板可读性源码为 [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0)，配套 Go SDK `4f63688e`、Rust SDK `f38673c6`。
+已公开父仓库 [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) 固定那套旧组合；独立官方递归检出四个工作树均干净，
 必需子模块公开源码/历史门禁 exit 0。这是组合核验，不是新的 CI 或运行验收。
 最终 **141/141** 前端单测、TypeScript/Vite 与 `0.2.8` 嵌入 webui 构建通过；同组 **9 项浏览器无重试全部通过，29.4 秒**，
 默认 overview 的 Go 堆分配内存、协程数、累计 HTTP 请求数三项自身指标均显示友好图例（含 native 派生 rate 显示），

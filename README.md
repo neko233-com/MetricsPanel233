@@ -28,12 +28,12 @@ Verify your downloads with the attached `SHA256SUMS` and `PROVENANCE.json`, or b
 The independently released [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 requires Go 1.23+ and has no third-party dependencies.
 
-The [Rust SDK v0.1.0 Git release](https://github.com/neko233-com/metrics-lib-rust/releases/tag/v0.1.0)
-is verified separately. The registry upload is blocked by HTTP 403; use the immutable Git dependency below.
-The current Rust submodule `f38673c6` only corrects its README; the v0.1.0 code/tag remains `bda47165`:
+The [Rust SDK metrics233 v0.1.0](https://crates.io/crates/metrics233/0.1.0) is published on crates.io.
+A new project with an empty Cargo cache passed installation, real server ingestion and token authorization checks.
+The current Rust pin `3a58fff2` updates installation guidance; its library code matches the original `v0.1.0` Git release.
 
-```toml
-metrics233 = { git = "https://github.com/neko233-com/metrics-lib-rust", rev = "bda4716538a366379f69300cb816e272f1db11de" }
+```sh
+cargo add metrics233@0.1.0
 ```
 
 ```sh
@@ -63,8 +63,10 @@ editable bounded templates and no-send previews. Agent HTTP discovery documents 
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
 
-The current server source is [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), the panel-readability correction verified in private deployment `0.2.9`; Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
-Published aggregate [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) pins this exact composition.
+The current server pin is `749ccfd2`, accepted in private deployment `0.2.11`; Go SDK remains `4f63688e`, and Rust SDK is `3a58fff2` / crate `metrics233 0.1.0`. See the current acceptance records in [docs/status.md](docs/status.md).
+
+The preceding panel-readability source was [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), verified in private deployment `0.2.9` with Go SDK `4f63688e` and Rust SDK `f38673c6`.
+Published aggregate [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) pins that preceding composition.
 An independent official recursive checkout matched all four clean worktrees and passed the required-submodule
 public-source/history checker, exit 0; this is composition evidence, not a new CI or runtime result.
 Its **141/141 frontend units**, TypeScript/Vite and version `0.2.8` embedded webui builds passed. The same **9 focused

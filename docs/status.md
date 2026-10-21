@@ -1,11 +1,39 @@
 # Delivery evidence
 
-Updated: 2026-10-21. The aggregate composes independently versioned public server, Go SDK and Rust SDK repositories.
+Updated: 2026-10-22. The aggregate composes independently versioned public server, Go SDK and Rust SDK repositories.
+
+## Rust SDK: official registry release and independent consumer
+
+[`metrics233 0.1.0`](https://crates.io/crates/metrics233/0.1.0) was published successfully with
+`cargo publish --registry crates-io --locked` on 2026-10-21 at 23:58:57 Beijing time.
+The packaged VCS identity is clean commit `3a58fff2901e001984b45791fb884d23e3d8f9b7`, which updates
+registry installation instructions; the library code is unchanged from the original Git release.
+Official version API, sparse index and independently downloaded archive agree on SHA-256
+`edbbfd6dea83cc6de56c055dae1f96c7cff6a3916d913a02860ae3a3807cc5fd`.
+The downloaded package's 13 source/manifest/README files match the committed source; the version is not yanked.
+
+- Rust 1.99.1 and minimum supported Rust 1.88.0 each passed all-targets compilation, 18 tests and one doc test.
+  Stable fmt and clippy with `-D warnings` passed. Packaging and the public source/history privacy check passed.
+- A new Cargo project and empty Cargo home downloaded `metrics233` from the official registry with
+  `cargo add metrics233@=0.1.0 --registry crates-io`, then passed `cargo run --locked`.
+  Cargo.lock records the official registry and the checksum above; no Git/path dependency, patch or replacement was used.
+- The consumer started an isolated real server with separate synthetic management/ingest credentials.
+  Counter values 3, 5 and 9, gauge values 7 and 9, raw records 5 and 11, and all seven identity labels were read back.
+  Missing and wrong tokens returned 401; SDK delivery with a wrong token failed without storing the sample.
+  The ingest-only token received 403 for metric queries and reporting-source administration.
+- Explicit build/start/flush/shutdown, duplicate-start rejection, idempotent shutdown, closed-client write rejection
+  and an empty pending queue passed. This uses local isolated storage, not fabricated production player activity.
+- Edge displayed the official package/version, Cargo install command and owner/repository metadata.
+  The original credential was rejected; the replacement successfully published. No credential is stored in these records.
+
+The long temporary Windows path initially exceeded a native dependency's include-path limit; repeating the
+registry-only consumer in a shorter new directory passed. This was not a library or authorization failure.
+No production service code or running gateway artifact was changed for this registry/documentation delivery.
 
 ## Current source: template center and scoped instance dashboards
 
 Server source [`749ccfd27493e9e3b70c138743e240cfb224a84f`](https://github.com/neko233-com/metrics233-server/commit/749ccfd27493e9e3b70c138743e240cfb224a84f)
-is published and pinned by this aggregate. Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
+is published and pinned by this aggregate. Go SDK remains `4f63688e`; the new Rust registry pin is `3a58fff2` as recorded above.
 The latest public five-platform release is still server `85630554` / `v0.2.6`; this source has no new
 public release tag or full hosted CI result.
 
@@ -68,12 +96,12 @@ umasks `022` and `077` passed **20 executions, zero skips**. Runtime/web were un
 The earlier browser/database/runtime evidence below keeps its original input attribution; it is not a fresh
 execution of the v0.2.6 notification fix.
 
-The Rust SDK is now a real third public submodule. Its Git/tag publication and
+The Rust SDK became a real third public submodule. Its Git/tag publication and
 [tag CI 39579220148](https://github.com/neko233-com/metrics-lib-rust/actions/runs/39579220148) passed at code/tag
-`bda47165`. The current `f38673c6` changes only README installation guidance to that immutable Git revision; runtime
-code is unchanged. Official crates.io upload and identity checks returned HTTP 403: registry publication and a fresh
-registry consumer remain **blocked**, not completed. The public Git source is available independently of that
-registry boundary. The original Go SDK v0.1.0 consumer/CI evidence below retains its original `5bb1f54` attribution;
+`bda47165`. The preceding `f38673c6` changed only README installation guidance to that immutable Git revision; runtime
+code was unchanged. At that stage, official upload and identity checks returned HTTP 403 and registry delivery was
+blocked. That credential block is now resolved by the official registry release and fresh consumer acceptance above.
+The original Go SDK v0.1.0 consumer/CI evidence below retains its original `5bb1f54` attribution;
 it is not silently reassigned to the newer Go source pin.
 
 The server already supports separate local-account administration and five-path ingest authorization, protected
