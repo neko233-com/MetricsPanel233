@@ -21,7 +21,7 @@ For an existing clone, run `git submodule update --init --recursive`. The aggreg
 
 ## Run the server
 
-The current five-platform release is [server v0.2.6](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.6).
+The latest public five-platform release remains [server v0.2.6](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.6).
 Its two clean five-platform builds match, and archive inspection plus actual Linux archive acceptance passed.
 All seven public assets passed official download verification against both the local build and GitHub asset digests.
 Verify your downloads with the attached `SHA256SUMS` and `PROVENANCE.json`, or build the pinned source below.
@@ -47,7 +47,7 @@ go build -tags webui -o bin/metricspanel ./cmd/metricspanel
 
 The executable embeds the UI and uses SQLite by default. Its existing `metricspanel` CLI, `METRICSPANEL_*` environment variables and HTTP endpoints retain their compatibility contracts. See the [server guide](metrics233-server/README.md), [business monitoring](metrics233-server/docs/business-monitoring.md), and [SDK quick start](metrics233-lib-go/README.md).
 
-The current source adds a **Reporting sources / 上报来源** tab with one-click block, reset and allowlist policies.
+The server supports a **Reporting sources / 上报来源** tab with one-click block, reset and allowlist policies.
 Use a separate reporting-only token for business senders. Encrypted Feishu contact points and durable per-instance
 notification cooldowns are supported; newly created UI rules default to one hour. See
 [reporting access](metrics233-server/docs/reporting-access.md),
@@ -63,26 +63,51 @@ editable bounded templates and no-send previews. Agent HTTP discovery documents 
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
 
-The published aggregate `77796f9c` pins server `85630554` (v0.2.6), Go SDK `4f63688e` and Rust SDK `f38673c6`.
+The current server source is [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), the completed local panel-readability correction; Go SDK `4f63688e` and Rust SDK `f38673c6` are unchanged.
+Its **141/141 frontend units**, TypeScript/Vite and version `0.2.8` embedded webui builds passed. The same **9 focused
+browser cases passed without retries in 29.4 s**, including friendly default-overview legends for Go heap allocation,
+goroutines and cumulative HTTP requests, with native derived-rate naming where applicable. Native rate labels are
+not applied to cumulative raw-counter totals. The private deployment `0.2.8` attempt failed while preparing the
+release rollback archive **before stopping the service**. The healthy `0.2.7` service was not replaced or subjected
+to a runtime rollback. The public [Express233 archive fix](https://github.com/neko233-com/express233/commit/c80ce429972b02cbdd41861dd4170179c46ff008)
+passed ten isolated Linux script checks across two repetitions, with zero skips, in 4.301 s; its CI remains pending.
+Parameters for new immutable deployment `0.2.9` are prepared, **not triggered**. Final deployment and live legend
+acceptance remain pending; the latest public five-platform server release is still v0.2.6.
+
+The intermediate `c79971b8` source passed 139 frontend units, TypeScript/Vite and embedded webui builds. Its UI-patch cycle's first full browser run recorded
+**98 cases: 93 passed, 2 SQL-environment skipped, 3 failed**. After correcting an SDK comparison suffix, a fixture request ID
+and an obsolete raw-PromQL main-view assertion, the final **9 focused cases passed without retries in 23.6 s**.
+They cover stat/gauge/bargauge, per-value time/null/zero, simple 12-series charts and explicit units, 390/768/1280 widths,
+percent/bytes dual axes, 20-series interaction, SQL Classic/V1/V2 comparison and bilingual workspace views.
+The complete browser suite was not rerun after those narrow corrections. The fixed-source private pipeline successfully
+built and deployed version `0.2.7`, passing its same-source native token/local gate, full Go tests, 139 frontend units
+and embedded UI build. Actual checks confirmed version/source, protected non-root runtime, preserved Admin session,
+five fresh business instances, fifteen-day retention, Chinese uptime help and risk lines. This is **intermediate**
+acceptance: the live self-metric legends still showed raw names because those three self metrics were missing from the known-metric map.
+That missing-map correction is included in `ed444317`; its final live legend acceptance has not yet been recorded.
+No new tag, public five-platform archive or CI success is claimed for this UI source.
+
+The preceding published aggregate `77796f9c` pins server `85630554` (v0.2.6), Go SDK `4f63688e` and Rust SDK `f38673c6`.
 Its [exact-composition CI](https://github.com/neko233-com/metrics233-all/actions/runs/39596963802) passed, including real Go/Rust SDK integration against server `85630554`.
 The earlier `f83d328e` / Rust `bda47165` [aggregate CI](https://github.com/neko233-com/metrics233-all/actions/runs/39593382915)
 passed, including both SDKs against the same pinned server; that success retains its earlier composition attribution.
-The v0.2.6 server fixes a notification timeout-classification race; targeted Linux vet/race passed **320 top-level executions**, zero skips/races.
+The preceding v0.2.6 server fixes a notification timeout-classification race; targeted Linux vet/race passed **320 top-level executions**, zero skips/races.
 The preceding runtime/web baseline passed Chromium **93 / 2 SQL-environment skipped**, two real database rounds with **6/6 SQL browser passes**,
 two final Docker runtime rounds and 80 focused Linux race executions. Bootstrap checks under umasks 022/077 passed 20 executions,
 zero skips. Those results retain their earlier source attribution. [v0.2.4 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39587248305)
 failed on the notification timeout race; [v0.2.5 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39589926276)
-was cancelled as superseded after its Docker job passed. Final [v0.2.6 server CI](https://github.com/neko233-com/metrics233-server/actions/runs/39593305372)
+was cancelled as superseded after its Docker job passed. The preceding [v0.2.6 server CI](https://github.com/neko233-com/metrics233-server/actions/runs/39593305372)
 passed both jobs: full vet/race across 20 tested packages, 120 frontend units, three release-script checks,
 Chromium **93 passed / 2 SQL-environment skipped**, and two Docker rounds. The browser skips are not passes;
 the separate real-database results above retain their source attribution. The v0.2.6 release is public, and all seven official downloads match the verified build and asset digests.
 
-Production v0.2.6 passed deployment, account/password cutover, restart persistence and a real authenticated browser check.
+The preceding production v0.2.6 acceptance passed deployment, account/password cutover, restart persistence and a real authenticated browser check.
 The legacy management token was cleared while the reporting-only credential and encryption key were preserved.
 One gateway and four logic instances continued reporting every fifteen seconds after restart; live templates,
 fifteen-day retention, numeric uptime and host thresholds were verified. The SQL Entity list loaded all **106/106**
 rows in descending average-duration order. An authoritative zero-player snapshot displayed an empty region list.
-A controlled real player login/logout and nonzero geographic-distribution exercise remain pending.
+At the user's request, no real test-account login/logout exercise will be performed, and no test account is required to continue.
+Nonzero player-lifecycle or geographic-distribution acceptance is not claimed.
 A real-clock Feishu exercise sent one grouped firing and one grouped recovery with successful ACKs; its second cycle
 within the one-hour cooldown sent neither another firing nor an orphan recovery. These production results are
 separate from release publication and sustained-load capacity. The earlier failed upgrade and v0.2.3 rollback remain historical evidence.
