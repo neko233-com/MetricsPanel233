@@ -2,12 +2,13 @@
 
 **English** · [简体中文](README-CN.md)
 
-A single-node performance and business monitoring stack, with a small Go SDK for application instrumentation.
+A single-node performance and business monitoring stack, with independent Go and Rust instrumentation SDKs.
 
 | Submodule | Purpose |
 | --- | --- |
 | [metrics233-server](https://github.com/neko233-com/metrics233-server) | Collection, SQLite time-series storage, dashboards, Explore and alerts in one native executable; optional ClickHouse storage. |
 | [metrics233-lib-go](https://github.com/neko233-com/metrics233-lib-go) | Zero third-party dependencies; fluent Gauge/Counter instrumentation, bounded batching, explicit push lifecycle and retries. |
+| [metrics-lib-rust](https://github.com/neko233-com/metrics-lib-rust) | Rust crate `metrics233`: fluent Gauge/Counter, bounded HTTPS batching and explicit start/flush/shutdown; Rust 1.88+. |
 
 ## Get the complete stack
 
@@ -20,10 +21,20 @@ For an existing clone, run `git submodule update --init --recursive`. The aggreg
 
 ## Run the server
 
-Download the five-platform [server v0.2.2 release](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.2)
-and verify it with the attached `SHA256SUMS` and `PROVENANCE.json`, or build from source below.
+The current five-platform release is [server v0.2.6](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.6).
+Its two clean five-platform builds match, and archive inspection plus actual Linux archive acceptance passed.
+All seven public assets passed official download verification against both the local build and GitHub asset digests.
+Verify your downloads with the attached `SHA256SUMS` and `PROVENANCE.json`, or build the pinned source below.
 The independently released [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 requires Go 1.23+ and has no third-party dependencies.
+
+The [Rust SDK v0.1.0 Git release](https://github.com/neko233-com/metrics-lib-rust/releases/tag/v0.1.0)
+is verified separately. The registry upload is blocked by HTTP 403; use the immutable Git dependency below.
+The current Rust submodule `f38673c6` only corrects its README; the v0.1.0 code/tag remains `bda47165`:
+
+```toml
+metrics233 = { git = "https://github.com/neko233-com/metrics-lib-rust", rev = "bda4716538a366379f69300cb816e272f1db11de" }
+```
 
 ```sh
 cd metrics233-server/web
@@ -43,9 +54,39 @@ notification cooldowns are supported; newly created UI rules default to one hour
 [source policies](metrics233-server/docs/reporting-sources.md) and
 [alert cooldowns](metrics233-server/docs/alert-notification-cooldown.md).
 
+Local account/password login is separate from reporting credentials. Retention defaults to fifteen days.
+Business instances retain their complete scope, inherit live dashboard templates or use independent copies;
+player regions and SQL Entity statistics use full virtualized lists. Feishu notifications support cards,
+editable bounded templates and no-send previews. Agent HTTP discovery documents roles, schemas and CAS updates.
+
 ## Verification
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
+
+The published aggregate `77796f9c` pins server `85630554` (v0.2.6), Go SDK `4f63688e` and Rust SDK `f38673c6`.
+Its [exact-composition CI](https://github.com/neko233-com/metrics233-all/actions/runs/39596963802) passed, including real Go/Rust SDK integration against server `85630554`.
+The earlier `f83d328e` / Rust `bda47165` [aggregate CI](https://github.com/neko233-com/metrics233-all/actions/runs/39593382915)
+passed, including both SDKs against the same pinned server; that success retains its earlier composition attribution.
+The v0.2.6 server fixes a notification timeout-classification race; targeted Linux vet/race passed **320 top-level executions**, zero skips/races.
+The preceding runtime/web baseline passed Chromium **93 / 2 SQL-environment skipped**, two real database rounds with **6/6 SQL browser passes**,
+two final Docker runtime rounds and 80 focused Linux race executions. Bootstrap checks under umasks 022/077 passed 20 executions,
+zero skips. Those results retain their earlier source attribution. [v0.2.4 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39587248305)
+failed on the notification timeout race; [v0.2.5 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39589926276)
+was cancelled as superseded after its Docker job passed. Final [v0.2.6 server CI](https://github.com/neko233-com/metrics233-server/actions/runs/39593305372)
+passed both jobs: full vet/race across 20 tested packages, 120 frontend units, three release-script checks,
+Chromium **93 passed / 2 SQL-environment skipped**, and two Docker rounds. The browser skips are not passes;
+the separate real-database results above retain their source attribution. The v0.2.6 release is public, and all seven official downloads match the verified build and asset digests.
+
+Production v0.2.6 passed deployment, account/password cutover, restart persistence and a real authenticated browser check.
+The legacy management token was cleared while the reporting-only credential and encryption key were preserved.
+One gateway and four logic instances continued reporting every fifteen seconds after restart; live templates,
+fifteen-day retention, numeric uptime and host thresholds were verified. The SQL Entity list loaded all **106/106**
+rows in descending average-duration order. An authoritative zero-player snapshot displayed an empty region list.
+A controlled real player login/logout and nonzero geographic-distribution exercise remain pending.
+A real-clock Feishu exercise sent one grouped firing and one grouped recovery with successful ACKs; its second cycle
+within the one-hour cooldown sent neither another firing nor an orphan recovery. These production results are
+separate from release publication and sustained-load capacity. The earlier failed upgrade and v0.2.3 rollback remain historical evidence.
+The earlier v0.2.4 reproducible archives retain their own version attribution.
 
 Server v0.2.2 at `ecdf079` passed [complete tagged CI](https://github.com/neko233-com/metrics233-server/actions/runs/39562946865):
 full vet/race, Chromium (86 passed / 2 SQL-environment skipped) and repeated real Docker database/runtime checks.
@@ -65,6 +106,6 @@ cd metrics233-lib-go && go test ./... && go vet ./...
 go run ./tools/check-public/main.go --root . --history --require-submodules --allow-synthetic-test-ips
 ```
 
-Production deployment configuration is maintained in a separate private operations repository. Keep hostnames, SSH details, control-plane configuration, `.env`, keys and local databases out of all three public repositories. Public examples contain placeholders only.
+Production deployment configuration is maintained in a separate private operations repository. Keep hostnames, SSH details, control-plane configuration, `.env`, keys and local databases out of all four public repositories. Public examples contain placeholders only.
 
 Licensed under [Apache-2.0](LICENSE).
