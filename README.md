@@ -20,6 +20,11 @@ For an existing clone, run `git submodule update --init --recursive`. The aggreg
 
 ## Run the server
 
+Download the five-platform [server v0.2.1 release](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.1)
+and verify it with the attached `SHA256SUMS` and `PROVENANCE.json`, or build from source below.
+The independently released [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
+requires Go 1.23+ and has no third-party dependencies.
+
 ```sh
 cd metrics233-server/web
 npm ci
@@ -34,6 +39,12 @@ The executable embeds the UI and uses SQLite by default. Its existing `metricspa
 ## Verification
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
+
+Server v0.2.1 was built twice from clean commit `f0244c3`; all seven delivery files were byte-identical, and all
+official release assets passed download hash verification. Its actual Linux amd64 archive passed authentication,
+business ingestion/query and graceful shutdown. Aggregate CI passed at `328c8ca`, and SDK v0.1.0 tag CI passed;
+the [server v0.2.1 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39541420544) and private live
+deployment remain separate acceptance layers. See the status ledger for pending checks.
 
 ```sh
 cd metrics233-lib-go && go test ./... && go vet ./...
