@@ -42,9 +42,10 @@ Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) 
 
 Server v0.2.1 was built twice from clean commit `f0244c3`; all seven delivery files were byte-identical, and all
 official release assets passed download hash verification. Its actual Linux amd64 archive passed authentication,
-business ingestion/query and graceful shutdown. Aggregate CI passed at `328c8ca`, and SDK v0.1.0 tag CI passed;
-the [server v0.2.1 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39541420544) and private live
-deployment remain separate acceptance layers. See the status ledger for pending checks.
+business ingestion/query and graceful shutdown. Aggregate CI passed at `813c381`, SDK v0.1.0 tag CI passed, and
+[server v0.2.1 CI](https://github.com/neko233-com/metrics233-server/actions/runs/39541420544) passed full vet/race,
+browser and Docker checks. The private deployment separately passed real SDK writes/queries and normal-restart
+persistence; see the status ledger for scope and evidence.
 
 ```sh
 cd metrics233-lib-go && go test ./... && go vet ./...
