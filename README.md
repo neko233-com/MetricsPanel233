@@ -36,6 +36,13 @@ go build -tags webui -o bin/metricspanel ./cmd/metricspanel
 
 The executable embeds the UI and uses SQLite by default. Its existing `metricspanel` CLI, `METRICSPANEL_*` environment variables and HTTP endpoints retain their compatibility contracts. See the [server guide](metrics233-server/README.md), [business monitoring](metrics233-server/docs/business-monitoring.md), and [SDK quick start](metrics233-lib-go/README.md).
 
+The current source adds a **Reporting sources / 上报来源** tab with one-click block, reset and allowlist policies.
+Use a separate reporting-only token for business senders. Encrypted Feishu contact points and durable per-instance
+notification cooldowns are supported; newly created UI rules default to one hour. See
+[reporting access](metrics233-server/docs/reporting-access.md),
+[source policies](metrics233-server/docs/reporting-sources.md) and
+[alert cooldowns](metrics233-server/docs/alert-notification-cooldown.md).
+
 ## Verification
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.

@@ -15,8 +15,8 @@ Updated: 2026-10-21. The aggregate pins independently versioned public server an
 | Private operations | The single private pipeline built fixed source `f0244c3`, verified the immutable content and provenance, and completed an actual Express233 deployment to the reviewed unique target. Toolchain, source transport, Unix socket test paths and readiness API issues found by real execution were corrected without removing tests. No private deployment repository is a public submodule. |
 | Actual target acceptance | HTTPS served the token-login UI and public health 200; anonymous queries returned 401. The process ran as a non-root systemd service with a matching PIDFile and a loopback-only listener. Published SDK v0.1.0 pushed synthetic counter snapshots 100/104/113 and gauge 42/42/50; authenticated PromQL returned 113/50. A normal restart changed PID and preserved those same stored values, encryption key and protected environment. This is synthetic acceptance, not evidence of production game instrumentation or sustained-load capacity. |
 
-This aggregate revision pins server `f0244c3da55821be845359f00318174242064a6f` and SDK
-`5bb1f54eb4ab93f1d648ad2b73df8a17d686a6e0`; both child commits are publicly available with matching remote SHA
+This aggregate revision pins server `ecdf079d5224600e49566ceac5040980ad4e76d4` and SDK
+`4f63688e023bce29b1e6b79c14733e246bc277b6`; both child commits are publicly available with matching remote SHA
 readback. The original repository is now `metrics233-all`. Its previously verified `328c8ca` composition pinned
 server `6d8b8ea`; that CI result remains evidence for the earlier composition.
 
@@ -39,3 +39,13 @@ Private reverse-proxy replacements have their own configuration, backup and per-
 the monitoring stack's runtime acceptance does not establish correctness for unrelated sites or gateways.
 Performance measurements and protocol subsets remain workload-specific; see the server contracts for limits.
 No production hostname, host identity, credential or control-plane URL is part of this ledger.
+
+## Reporting access and notification controls
+
+The new pins add independent ingest-only credentials, durable canonical-IP source observations and Admin policies,
+the Reporting sources tab, encrypted Feishu contacts and durable firing cooldowns. The SDK API remains compatible
+with v0.1.0; its README now directs senders to the restricted credential.
+Final Windows Go tests passed; frontend build and 118 unit tests passed; the final embedded-UI browser suite completed
+with **86 passed, 2 SQL-environment skipped, no retries or failures**. These counts do not convert the SQL skips into passes.
+New v0.2.2 archives, tag CI, recursive aggregate acceptance and production configuration are separate pending gates;
+the v0.2.1 evidence above remains attributed to that earlier release.

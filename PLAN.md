@@ -16,3 +16,7 @@ Updated: 2026-10-21. This aggregate owns repository composition, SDK/server inte
 - [x] Complete the actual HTTPS endpoint, non-root loopback runtime, SDK business push/query and normal-restart persistence acceptance.
 
 Optional Vite+/ReactBits experiments remain optional. Do not use them to delay the monitoring workflow. Do not mark queued CI, compiled scripts or a listening port as successful production acceptance.
+
+- [x] Implement restricted ingest credentials, persistent source control and one-click source UI; final Windows Go and 86-pass embedded browser suite completed.
+- [x] Implement encrypted Feishu notifications and durable firing cooldowns; API/TLS/queue/recovery and UI checks passed.
+- [~] Publish and verify server v0.2.2, exact updated aggregate pins, and actual production reporting/Feishu configuration; keep new evidence separate from v0.2.1.

@@ -18,6 +18,11 @@ cd metrics233-all
 
 服务构建与开发见 [服务端 README](metrics233-server/README-CN.md)，业务接入见 [业务监控说明](metrics233-server/docs/business-monitoring.md) 与 [Go SDK](metrics233-lib-go/README.md)。现有 `metricspanel` CLI、`METRICSPANEL_*` 环境变量和 HTTP 路由继续使用既有契约。
 
+当前源码新增 **上报来源** tab，支持一键拉黑、解除与允许名单；给业务程序分发独立仅上报 Token，
+不能查询或自行解封。支持飞书加密通知和持久化告警 CD，新建规则默认一小时。
+契约见 [上报凭据](metrics233-server/docs/reporting-access.md)、[来源策略](metrics233-server/docs/reporting-sources.md)
+和 [告警冷却](metrics233-server/docs/alert-notification-cooldown.md)。
+
 可直接下载五平台 [server v0.2.1 正式归档](https://github.com/neko233-com/metrics233-server/releases/tag/v0.2.1)，
 使用附带的 `SHA256SUMS` 和 `PROVENANCE.json` 校验；独立的 [Go SDK v0.1.0](https://github.com/neko233-com/metrics233-lib-go/releases/tag/v0.1.0)
 支持 Go 1.23+，没有第三方依赖。
