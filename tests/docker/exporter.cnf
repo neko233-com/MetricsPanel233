@@ -1,5 +1,0 @@
-[client]
-user=exporter
-password=integration-exporter-password
-host=mysql
-port=3306

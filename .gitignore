@@ -1,34 +1,31 @@
+# Local runtime/build state, including preserved pre-split artifacts.
 /data/
 /bin/
-/web/node_modules/
-/web/dist/
-*.exe
-*.db
-*.db-shm
-*.db-wal
+/dist/
+/web/
+/.cache/
+/.codely-cli/
+CODELY.md
 .env
 .env.*
 !.env.example
+*.key
+*.pem
+*.pfx
+*.db
+*.db-wal
+*.db-shm
+*.exe
 *.log
-/.cache/
-/web/test-results/
-/web/playwright-report/
-*.tsbuildinfo
-
-# Self-contained release archives
-/dist/
 *.zip
 *.tar.gz
+*.tsbuildinfo
 
-# Local agent state
-/.codely-cli/
+# Deployment material belongs outside the public aggregate.
+/deploy-*/
+/.secrets/
+/.local/
 
-# Coverage and tool caches
-/coverage/
-/web/coverage/
-/web/.vite/
-/web/node_modules/.vite/
-
-# OS/editor noise
+# Each submodule owns its own generated outputs.
 .DS_Store
 Thumbs.db

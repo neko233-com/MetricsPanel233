@@ -1,59 +1,40 @@
-name: Validate
+name: Validate aggregate
 on:
-  # Full validation is expensive (race tests, browser suite, Docker). Run it
-  # only for a release tag or an explicit manual dispatch, not every push/PR.
   push:
     tags: ["v*"]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: validate-${{ github.ref }}
+  group: aggregate-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  test:
+  pinned-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.0
           cache: true
+          cache-dependency-path: metrics233-server/go.sum
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.14.0
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: metrics233-server/web/package-lock.json
+      - name: Check public files, index, history and pinned submodules
+        run: go run ./tools/check-public/main.go --root . --history --require-submodules --allow-synthetic-test-ips
       - run: npm ci && npm run test:unit && npm run build
-        working-directory: web
+        working-directory: metrics233-server/web
+      - run: mkdir -p bin && go build -tags webui -trimpath -o bin/metricspanel ./cmd/metricspanel
+        working-directory: metrics233-server
       - run: go vet ./... && go test -race ./... -count=1
-      - run: mkdir -p bin && go build -tags webui -o bin/metricspanel ./cmd/metricspanel
-      - run: npx playwright install --with-deps chromium && npm run test:e2e
-        working-directory: web
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      METRICSPANEL_TEST_CLICKHOUSE_IMAGE: mirror.gcr.io/clickhouse/clickhouse-server:26.8-alpine@sha256:11f32c76f576b5fd993cbcfffe4349caac6a67c2e58bb846f4da421889573a69
-      METRICSPANEL_TEST_EXPORTER_IMAGE: mirror.gcr.io/prom/mysqld-exporter:v0.20.0@sha256:abed8dac117b4ae5b70757f988e44795935b9a72c3b58d720c67ba688f8cb79e
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.27.0
-          cache: true
-      - name: Use public Docker Hub cache
-        shell: bash
-        run: |
-          mirror_config=$(mktemp)
-          trap 'rm -f "$mirror_config" "$mirror_config.updated"' EXIT
-          if [ -f /etc/docker/daemon.json ]; then
-            sudo cat /etc/docker/daemon.json | tee "$mirror_config" > /dev/null
-          else
-            printf '{}\n' > "$mirror_config"
-          fi
-          jq '."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' "$mirror_config" > "$mirror_config.updated"
-          sudo install -m 0644 "$mirror_config.updated" /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.Mirrors}}'
-      - run: go test -tags=integration ./tests/integration -count=2 -v -timeout=25m
+        working-directory: metrics233-lib-go
+      - name: SDK against the exact pinned server binary
+        run: METRICS233_TEST_BINARY="$GITHUB_WORKSPACE/metrics233-server/bin/metricspanel" go test -run '^TestServerBinaryIntegration$' -count=1 -v
+        working-directory: metrics233-lib-go

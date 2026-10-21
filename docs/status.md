@@ -1,92 +1,19 @@
-# Project status and progress protocol
+# Delivery evidence
 
-Updated: 2026-10-20. This file is the durable progress ledger. Update it whenever a progress unit completes.
+Updated: 2026-10-21. The aggregate pins independently versioned public server and Go SDK repositories.
 
-## Reporting protocol (permanent)
+| Boundary | Current evidence |
+| --- | --- |
+| Server module migration | All 649 source files were copied and verified before the original paths were removed. Imports and module now use `github.com/neko233-com/metrics233-server`; CLI and HTTP contracts are preserved. |
+| Server checks | Windows full Go vet/tests passed after the module rename. Formal Docker runtime was rebuilt from the child and passed token/local auth, HTTPS proxy, roles, business ingest, restart and full-data restore; SQL browser cases are covered by the earlier repeated database run. See the server's `docs/docker-validation.md`. |
+| Go SDK | Standard library only, Go 1.23+, fluent Counter/Gauge, atomic registration batches, bounded delivery, context deadlines/retry and explicit Run/Close. Tests, vet and a real server binary integration are maintained in its own repository. |
+| Public release gate | Scans public worktrees and Git index/history without printing matched secrets. Checks the exact two public submodule identities and commits. Real deployment literals can be supplied through a private deny-file outside this checkout. |
+| Private operations | Deployment source, production identities and environment configuration live in a separate private repository. Its pipeline is the only production release entry point; no deployment repository is a public submodule. |
 
-After each completed progress unit, report in this order:
-
-1. **目标 (Goal)** — the outcome this unit was meant to deliver.
-2. **做了什么 (Done)** — commits, files, behavior changes and evidence.
-3. **接下做什么 (Next)** — ordered next units, each with an acceptance check.
-4. **总进度 (Overall %)** — weighted overall completion plus the per-workstream table below.
-5. **风险 / 阻塞 (Risks / blockers)** — what could invalidate the claim.
-6. **验证 (Verification)** — commands actually run and their results.
-
-Rules:
-
-- Update the ledger and percentage in the same change as the work.
-- Never report a unit as done without executable evidence; distinguish local, browser, Docker and CI evidence.
-- Percentages are progress estimates, not release promises. State the weighting basis.
-- Keep the report in the user's language (Chinese in this project).
-
-## Completion ledger
-
-Weights reflect product risk and user-visible value.
-
-| Workstream | Weight | Progress | Basis and remaining work |
-| --- | --- | --- | --- |
-| Product shell and first-party UI | 15% | 85% | Collapsible left navigation, right content, persistence and keyboard path are covered; the optional ReactBits motion layer is not started |
-| Renderers | 20% | 85% | Table, TimeSeries, Stat, Gauge, BarGauge, Logs, Traces, Heatmap, Histogram and Vector are first-party; Tempo trace detail remains; optional chart kinds are out of scope |
-| Collection | 15% | 85% | Pull scrapes and push receivers (OTLP, Prometheus remote write, native JSON) share the store and role policy; broader exporter coverage remains |
-| Storage and query | 15% | 75% | SQLite default, ClickHouse optional, retention and 64-dimension vectors; rollups, block min/max and large-range planning remain |
-| Auth and security | 15% | 85% | Local accounts, Setup token, sessions, roles, rate limiting, headers, public-deployment guide; periodic security review remains |
-| Ops and delivery | 10% | 80% | Single binary, Docker verification, cleanup scripts, tag-only CI with a green full run; release checklist and upgrade notes remain |
-| Docs and agent contract | 10% | 85% | Product goals, architecture, renderer matrix, agent guide and external skill references; keep in sync with each behavior change |
-| Performance | 10% | 40% | Frame budget and incremental model reuse exist; LTTB/min-max downsampling, Worker transfer and large-range benchmarks remain |
-
-**Weighted overall: 77%** (sum of weight × progress). Treat this as ±5 points until the renderer matrix and
-downsampling land.
-
-## Definition of done by workstream
-
-### Renderers
-
-- Each kind has a registry entry, a typed contract and a browser test that asserts real paint or DOM output.
-- Product pages never import `@grafana/ui`; the compatibility bridge remains only for imported resources, plugins and
-  the explicit `?renderer=compat` fallback.
-- Responsive containment (390/768/1280), dynamic panel size and empty/error states are covered.
-
-### Performance
-
-- A reproducible benchmark reports first-frame time, draw time, decimation ratio and heap for a fixed large frame.
-- Downsampling preserves peaks and gaps; zooming re-queries instead of silently discarding detail.
-- Budgets are recorded in `docs/performance-baseline.md`; no universal latency claim without measurements.
-
-### Product shell
-
-- Collapsible left navigation, right content region, keyboard focus order and mobile collapse work at 390/768/1280.
-- Routing, permissions and deep links are unchanged; the shell uses `web/src/ui` primitives.
-- ReactBits, if introduced, is limited to decorative motion and respects reduced-motion preferences.
-
-### Collection, storage and security
-
-- New collectors and query paths ship with protocol tests and a failure-mode test (timeout, auth, malformed input).
-- ClickHouse-only behavior states its SQLite fallback or limitation.
-- Security-relevant changes update `docs/public-deployment.md` and the Admin/Editor/Viewer matrix.
-
-## Recent delivered units
-
-| Date | Unit | Evidence |
-| --- | --- | --- |
-| 2026-10-20 | Agent contract, tag-only CI, external skill reference | `docs/agent/*`; CI run 39436800402 green for `a51c275` |
-| 2026-10-20 | First-party TimeSeries default with compat fallback | Full browser suite 68 passed / 2 skipped; `?renderer=compat` fallback |
-| 2026-10-20 | Responsive acceptance for charts and tables | 390/768/1280 width tests, dynamic panel height, narrow table containment |
-| 2026-10-20 | Stat/Gauge/BarGauge renderer registry entries | `StatRenderer` shared reducer/empty states; browser test asserts stat text, meter ARIA values, bar fraction and no page overflow |
-| 2026-10-20 | Shell left navigation and right content | Collapsible desktop rail with localStorage, keyboard toggle, mobile drawer, 390/768/1280 no-overflow test |
-| 2026-10-20 | Logs renderer | Virtualized 10k rows, search, label key/value filters, empty/error states; browser contract asserts DOM row count and filter counts |
-| 2026-10-20 | Traces renderer | Tempo search table, search, duration/start sorting, optional status and `?traceId=` deep link; browser contract covers all paths |
-| 2026-10-20 | Push + pull collection modes | Prometheus remote write (`/api/v1/write`, snappy protobuf), OTLP/HTTP and native JSON push alongside scrape pull; receiver and role tests; `docs/collection-modes.md` |
-| 2026-10-20 | Heatmap, histogram and vector renderers | Canvas time-bucket heatmap, normalized histogram bars and 64-dimension vector heat strips; three browser contracts cover counts, hover and overflow |
-
-## Next units (ordered)
-
-Execution order and acceptance criteria are maintained in [PLAN.md](../PLAN.md); this table only tracks progress.
-
-1. **Trace detail** — backend Tempo trace lookup plus span tree/timeline. Acceptance: real fixture, span hierarchy,
-   duration/error state and deep link.
-2. **Worker downsampling** — LTTB or min/max with transferables; acceptance: benchmark at 100k points and visual
-   peak preservation.
-3. **Stabilize dashboard variable timing** — `dashboard-variables` must pass three consecutive `--retries=0` runs.
-4. **Vite+ evaluation** — isolated comparison of build, lint, test and CI cost. Acceptance: documented decision, no
-   migration until parity is proven.
+The original GitHub repository is now `metrics233-all`. Server `6d8b8ea4242ef9181798d63a804fd2f98811db41` and SDK
+`5bb1f54eb4ab93f1d648ad2b73df8a17d686a6e0` have been published with matching remote SHA readback and registered
+as real gitlinks. The SDK also passed actual Go 1.23.12 Linux vet/tests/race with networking disabled and a real
+renamed-server Windows binary integration. The public gate passed with reachable history, index, submodule HEAD
+checks and an external private deny-file. Fresh recursive-clone, CI and the target HTTPS/runtime results are
+recorded when completed. Local test evidence does not imply that a remote deployment has succeeded. Performance measurements and
+protocol subsets remain workload-specific; see the server contracts for limits.

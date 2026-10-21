@@ -1,0 +1,6 @@
+[submodule "metrics233-server"]
+	path = metrics233-server
+	url = https://github.com/neko233-com/metrics233-server.git
+[submodule "metrics233-lib-go"]
+	path = metrics233-lib-go
+	url = https://github.com/neko233-com/metrics233-lib-go.git
