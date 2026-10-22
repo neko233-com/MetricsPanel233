@@ -63,7 +63,7 @@ editable bounded templates and no-send previews. Agent HTTP discovery documents 
 
 Run Go/frontend commands inside the owning child. The [execution plan](PLAN.md) and [status ledger](docs/status.md) distinguish unit, browser, Docker, archive and online acceptance.
 
-The current server pin is `749ccfd2`, accepted in private deployment `0.2.11`; Go SDK remains `4f63688e`, and Rust SDK is `3a58fff2` / crate `metrics233 0.1.0`. See the current acceptance records in [docs/status.md](docs/status.md).
+The current server pin is `be00a25b`; its deployed runtime source is `24d3805f` / private version `0.2.13`, followed only by acceptance documentation. Go SDK remains `4f63688e`, and Rust SDK is `3a58fff2` / crate `metrics233 0.1.0`. See the current acceptance records in [docs/status.md](docs/status.md).
 
 The preceding panel-readability source was [`ed444317`](https://github.com/neko233-com/metrics233-server/commit/ed444317090daa1c7cd6b76c70e0ca8ed4d208f0), verified in private deployment `0.2.9` with Go SDK `4f63688e` and Rust SDK `f38673c6`.
 Published aggregate [`8a63870b`](https://github.com/neko233-com/metrics233-all/commit/8a63870b9e4ba39df275b532a25a6a6115a95ef1) pins that preceding composition.

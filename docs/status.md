@@ -2,6 +2,33 @@
 
 Updated: 2026-10-22. The aggregate composes independently versioned public server, Go SDK and Rust SDK repositories.
 
+## Current source: native panels, managed collectors and real MySQL
+
+Server `be00a25b0d51ab7522abb936778c19ccd37eeb78` adds acceptance documentation to deployed runtime source
+`24d3805f8556ce66fd119ad45cfe70902a4a2dc9` / private version `0.2.13`. Go and Rust SDK pins remain unchanged.
+No new public server archive tag or hosted-CI result is claimed.
+
+- Eleven native metric panels include categorical bars/pie, discrete states, corrected histograms and heatmaps.
+  Complete category lists are virtualized; missing intervals stay blank. Navigation has monitoring/metadata/system
+  groups, counts omit thousands separators, and explicit intranet identities remain separate from release/test/shared.
+- Admin host management uses encrypted credentials, pinned SSH, checksummed platform artifacts and dedicated
+  non-login collector accounts. Host tokens cannot become browser/admin credentials. Configuration revisions,
+  pause/resume and revocation are distinct operations. Private LAN installation needs an executor in that LAN;
+  subsequent configuration and samples use outbound HTTPS. This is not a general remote shell or automatic LAN relay.
+- A real Darwin arm64 collector was installed and updated from the approved artifact: 11080050 bytes, protected
+  bootstrap, matching executable SHA and actual 467-sample MySQL batches. Its eighteen dashboard panels use
+  read-only native status/capacity metrics, Chinese legends and a 60-minute range. A real round trip reached
+  paused revision 2/2 and resumed collecting revision 3/3. Existing custom dashboard content survived the server update.
+- 155 frontend units, builds, owning Go packages/vet and Edge panel/virtual-list/host workflows passed. Docker
+  end-to-end on the native-panel runtime source passed in 201.59 seconds for SQLite and ClickHouse, with real
+  MariaDB/Redis/PostgreSQL/ClickHouse checks and complete resource cleanup. The later installer-only correction
+  passed parent-ticket/cached-credential regressions, a real Mac installation and full formal-worker Go/frontend gates.
+- Both immutable production versions `0.2.12` and `0.2.13` succeeded. Exact runtime source, protected non-root
+  process/files, retained stopped-data snapshot, normal HTTPS and 401/403 ingest/account boundaries were read back.
+  Edge displayed real MySQL values and fresh intranet game reports alongside the existing game/gateway instances.
+  The Rust gateway now uses the official registry dependency. No player test-account login was performed.
+  Private identities, addresses, receipts and screenshots remain in the separate deployment ledger.
+
 ## Rust SDK: official registry release and independent consumer
 
 [`metrics233 0.1.0`](https://crates.io/crates/metrics233/0.1.0) was published successfully with
@@ -30,10 +57,10 @@ The long temporary Windows path initially exceeded a native dependency's include
 registry-only consumer in a shorter new directory passed. This was not a library or authorization failure.
 No production service code or running gateway artifact was changed for this registry/documentation delivery.
 
-## Current source: template center and scoped instance dashboards
+## Previous source: template center and scoped instance dashboards
 
 Server source [`749ccfd27493e9e3b70c138743e240cfb224a84f`](https://github.com/neko233-com/metrics233-server/commit/749ccfd27493e9e3b70c138743e240cfb224a84f)
-is published and pinned by this aggregate. Go SDK remains `4f63688e`; the new Rust registry pin is `3a58fff2` as recorded above.
+was the preceding aggregate composition. Go SDK remains `4f63688e`; Rust registry pin `3a58fff2` is recorded above.
 The latest public five-platform release is still server `85630554` / `v0.2.6`; this source has no new
 public release tag or full hosted CI result.
 
