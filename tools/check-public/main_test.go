@@ -106,6 +106,27 @@ func TestHistoricalTwoChildContractDoesNotWeakenCurrentModules(t *testing.T) {
 	}
 }
 
+func TestHistoricalThreeChildContractAndClientLanguageSourceScanning(t *testing.T) {
+	var legacy strings.Builder
+	for _, child := range children[:3] {
+		legacy.WriteString("[submodule \"" + child + "\"]\n path = " + child + "\n url = https://github.com/neko233-com/" + child + ".git\n")
+	}
+	for _, historical := range []bool{false, true} {
+		c := &checker{seen: make(map[finding]bool)}
+		c.scan(source{path: ".gitmodules", display: ".gitmodules", parent: true, historical: historical}, []byte(legacy.String()))
+		if (len(c.findings) == 0) != historical {
+			t.Fatal("three-module history must not weaken the current six-module contract")
+		}
+	}
+	for _, file := range []string{"Client.cs", "Consumer.mjs", "Consumer.cjs", "Client.csproj"} {
+		c := &checker{seen: make(map[finding]bool)}
+		c.scan(source{path: file, display: file}, []byte("https://192.168.1.2/private"))
+		if len(c.findings) == 0 {
+			t.Fatal("client language private URL not scanned: " + file)
+		}
+	}
+}
+
 func TestStagedSecretIsDetectedAfterWorkingCopyWasCleaned(t *testing.T) {
 	root := gitFixture(t)
 	repo := filepath.Join(root, children[0])

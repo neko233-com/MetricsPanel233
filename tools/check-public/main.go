@@ -1,4 +1,4 @@
-// check-public 在发布前只读检查父仓库、server、Go SDK 和 Rust SDK 工作树。
+// check-public 在发布前只读检查父仓库及全部正式公共子模块工作树。
 // 输出仅包含路径、行号和规则；不得输出匹配值、Git stderr 或私有 deny 配置。
 package main
 
@@ -26,7 +26,7 @@ import (
 
 const maxFileBytes = 32 * 1024 * 1024
 
-var children = []string{"metrics233-server", "metrics233-lib-go", "metrics-lib-rust"}
+var children = []string{"metrics233-server", "metrics233-lib-go", "metrics-lib-rust", "metrics233-client-sdk-typescript", "metrics233-client-sdk-csharp", "metrics233-client-sdk-rust"}
 
 func canonicalChild(name string) bool {
 	for _, child := range children {
@@ -638,18 +638,17 @@ func privateHTTP(line []byte) bool {
 func (c *checker) scan(src source, data []byte) {
 	extension := strings.ToLower(path.Ext(src.path))
 	text := src.path == ".gitmodules" || strings.HasPrefix(path.Base(src.path), ".env")
-	for _, candidate := range []string{".go", ".md", ".json", ".yml", ".yaml", ".toml", ".ini", ".conf", ".sh", ".ps1", ".cmd", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".svg", ".txt"} {
+	for _, candidate := range []string{".go", ".md", ".json", ".yml", ".yaml", ".toml", ".ini", ".conf", ".sh", ".ps1", ".cmd", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".cs", ".csproj", ".html", ".css", ".svg", ".txt", ".lock"} {
 		text = text || extension == candidate
 	}
 	if text && (!utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0) {
 		c.add(src.display, 0, "invalid-text-encoding")
 	}
 	validModules := validGitmodules(data)
-	// Before the Rust SDK was introduced, the canonical public aggregate had
-	// exactly the server and Go SDK. Accept that strict historical contract only;
-	// current worktree/index must include all three current children.
+	// Only the exact earlier two/three-child public compositions are accepted
+	// in history. The current worktree/index must contain all six children.
 	if src.historical && !validModules {
-		validModules = validGitmodulesFor(data, children[:2])
+		validModules = validGitmodulesFor(data, children[:2]) || validGitmodulesFor(data, children[:3])
 	}
 	if src.path == ".gitmodules" && (!src.parent || !validModules) {
 		c.add(src.display, 0, "gitmodules-not-canonical")

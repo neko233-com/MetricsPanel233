@@ -1,10 +1,13 @@
 # metrics233-all agent guide
 
-This repository pins three independently versioned public Git submodules:
+This repository pins six independently versioned public Git submodules:
 
 - `metrics233-server`: Go monitoring server, first-party React UI, storage and collectors. Read its `AGENTS.md` and narrow `docs/agent` contracts before changing it.
 - `metrics233-lib-go`: standard-library-only Go instrumentation and push SDK. Read its README and lifecycle contract before changing it.
 - `metrics-lib-rust`: bounded Rust reporting SDK (crate name `metrics233`; registry publication is a separate acceptance gate); read its README and explicit lifecycle contract before changing it.
+- `metrics233-client-sdk-typescript`: zero-runtime-dependency TypeScript reporting client, explicit lifecycle and bounded native JSON delivery.
+- `metrics233-client-sdk-csharp`: .NET Standard 2.0 / .NET 8 / .NET 10 Counter/Gauge client (`Metrics233.Client`).
+- `metrics233-client-sdk-rust`: unified Rust client name, re-exporting the verified `metrics233` transport. Keep one implementation.
 
 Use Simplified Chinese for collaboration. Preserve unrelated changes and stage only the requested delivery. Keep the user-owned `CODELY.md` untracked.
 

@@ -7,3 +7,12 @@
 [submodule "metrics-lib-rust"]
 	path = metrics-lib-rust
 	url = https://github.com/neko233-com/metrics-lib-rust.git
+[submodule "metrics233-client-sdk-typescript"]
+	path = metrics233-client-sdk-typescript
+	url = https://github.com/neko233-com/metrics233-client-sdk-typescript.git
+[submodule "metrics233-client-sdk-csharp"]
+	path = metrics233-client-sdk-csharp
+	url = https://github.com/neko233-com/metrics233-client-sdk-csharp.git
+[submodule "metrics233-client-sdk-rust"]
+	path = metrics233-client-sdk-rust
+	url = https://github.com/neko233-com/metrics233-client-sdk-rust.git
