@@ -11,6 +11,6 @@ Updated: 2026-10-22. The aggregate owns composition, SDK/server integration and 
 - [x] Original crates.io metrics233 0.1.0 availability and clean-cache registry dependency consumption verified. New Rust alias remains usable through its fixed Git tag.
 - [ ] Publish the new metrics233-client-sdk-rust alias to crates.io when valid publish-new credentials are available; the existing credential was rejected with 403. GitHub delivery is complete. npm/NuGet registry uploads likewise are separate from the published installable GitHub artifacts.
 - [x] Private 0.2.20 operation-discovery/staleness follow-up deployed; live operations/roles, all six resource associations and 132-row complete-set SQL ranking read back successfully.
-- [ ] Push the final aggregate gitlinks/docs and verify a new recursive checkout plus six-module public-source/history gate.
+- [x] Final aggregate composition pushed at ac55170e876781f561feb7c966f0cede0581b067. A fresh recursive checkout matched all six pinned modules and passed the public-source/history gate; the following receipt update changes documentation only.
 
 Source pushes, package installation, registry publication, hosted CI and online deployment are distinct. No production addresses or credentials are stored in this aggregate. Real player-account login/logout is omitted at the user's request; nonzero player-lifecycle acceptance is not claimed. Overall server roadmap weighting remains 94%, with exact per-layer evidence in docs/status.md.
