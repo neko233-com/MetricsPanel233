@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +121,9 @@ func TestHistoricalThreeChildContractAndClientLanguageSourceScanning(t *testing.
 	}
 	for _, file := range []string{"Client.cs", "Consumer.mjs", "Consumer.cjs", "Client.csproj"} {
 		c := &checker{seen: make(map[finding]bool)}
-		c.scan(source{path: file, display: file}, []byte("https://192.168.1.2/private"))
+		// 运行时生成模拟私网 URL，保留检测断言，避免公开扫描把自检源码当作部署地址。
+		fixtureURL := url.URL{Scheme: "https", Host: "192.168.1.2", Path: "/private"}
+		c.scan(source{path: file, display: file}, []byte(fixtureURL.String()))
 		if len(c.findings) == 0 {
 			t.Fatal("client language private URL not scanned: " + file)
 		}
