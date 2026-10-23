@@ -11,7 +11,7 @@ Updated: 2026-10-22. Source, local tests, packages, hosted CI, browser evidence 
 | metrics-lib-rust | 3a58fff2901e001984b45791fb884d23e3d8f9b7 | Official crates.io metrics233 0.1.0 is available; this pin only updates its guidance. |
 | metrics233-client-sdk-typescript | 152ee85e628cca8a3126cc61b2bb9593c062a1ba | GitHub v0.1.0 plus installable tgz; npm registry upload is separate. |
 | metrics233-client-sdk-csharp | 95a93a7d1b19d1f5d14b555996d0afa7c37a1209 | GitHub v0.1.0 plus Metrics233.Client NuGet artifact; NuGet.org upload is separate. |
-| metrics233-client-sdk-rust | a78427ed0d98213b2402e2b4ec4203caa6429733 | GitHub v0.1.0 code/artifact is 3cb5fedf6e26514a134a593a3a6de4b6325ffb4d; current pin only corrects Git installation guidance. Alias crates.io upload returned 403. |
+| metrics233-client-sdk-rust | 8c78e875f278e9d764733486367bb1afe260ee71 | Official crates.io 0.1.0 and GitHub v0.1.0 share identical immutable package bytes. Current pin records installation and real-server acceptance. |
 
 ## Accepted online behavior
 
@@ -26,7 +26,7 @@ Updated: 2026-10-22. Source, local tests, packages, hosted CI, browser evidence 
 
 - TypeScript: zero runtime dependencies, 10 local tests including a real native server, exact retry/partial ACK, finite bounds, redirect rejection, Retry-After and credential isolation. The official GitHub tgz was downloaded, SHA/provenance-checked, installed into a fresh cache/project, type-checked and successfully reported to an isolated real server.
 - CSharp: netstandard2.0/net8.0/net10.0 build and NuGet pack, thread-safe cumulative counter/zero/ACK/retry/deadline tests and actual native-server ingestion/isolation. A fresh NuGet cache/project restored the package and reported successfully; the installed DLL hash matched the build. Official GitHub bytes matched that tested artifact. Unity/IL2CPP/device acceptance is not claimed.
-- Rust: MSRV 1.88 tests and real-server correct/wrong-token checks; Clippy/doc/package checks. A new project with an empty Cargo home used cargo add on the fixed public Git source, downloaded metrics233 0.1.0 from crates.io, compiled and reported successfully. The new alias package upload was rejected with 403; fixed Git installation works while valid publication credentials are pending.
+- Rust: MSRV 1.88 tests and real-server correct/wrong-token checks; Clippy/doc/package checks. Both metrics233 0.1.0 and metrics233-client-sdk-rust 0.1.0 are officially published. A new Darwin arm64 project installed the alias through official cargo add, compiled and reported successfully; reopened embedded storage returned Counter 5 and Gauge 233, wrong/missing-token 401 and ingest-only management-read 403 passed. Official alias package SHA-256: 209401a867d0a0787e76eb36f6f481c96e24a43505743b45592ebf410b99eb2a. Windows fresh compilation hit OS error 1455 and is not counted as passing; the native consumer and Rust 1.88 tag CI are separate successful gates. See the child's docs/registry-v0.1.0.md for cache/source provenance.
 - All three SDK tag workflows succeeded: [TypeScript](https://github.com/neko233-com/metrics233-client-sdk-typescript/actions/runs/39768659392), [CSharp](https://github.com/neko233-com/metrics233-client-sdk-csharp/actions/runs/39768665546), [Rust](https://github.com/neko233-com/metrics233-client-sdk-rust/actions/runs/39768672606). Hosted transport/package checks and local actual-server tests are distinct gates.
 
 ## Final follow-up gates

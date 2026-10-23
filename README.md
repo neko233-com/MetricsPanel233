@@ -81,10 +81,11 @@ The UI is embedded in the executable. For public access, use an HTTPS proxy, loo
 
 ## Install reporting clients
 
-The original Rust transport is available from crates.io:
+The unified Rust SDK is available from crates.io (Rust 1.88+):
 
 ```sh
-cargo add metrics233@0.1.0
+cargo add metrics233-client-sdk-rust@0.1.0
+cargo add tokio --features rt-multi-thread,macros
 ```
 
 The unified SDKs have independent source repositories and versioned GitHub packages. Rust can also use its fixed Git source:
@@ -93,7 +94,7 @@ The unified SDKs have independent source repositories and versioned GitHub packa
 cargo add metrics233-client-sdk-rust --git https://github.com/neko233-com/metrics233-client-sdk-rust.git --tag v0.1.0
 ```
 
-TypeScript installs its GitHub `.tgz` with `npm install <package-file-or-URL>`. CSharp installs `Metrics233.Client.0.1.0.nupkg` from a local NuGet feed. See each module's README for lifecycle, capacity, HTTPS and authentication contracts. Registry uploads are separate from GitHub/package publication; the new Rust alias currently needs valid publication credentials.
+TypeScript installs its GitHub `.tgz` with `npm install <package-file-or-URL>`. CSharp installs `Metrics233.Client.0.1.0.nupkg` from a local NuGet feed. See each module's README for lifecycle, capacity, HTTPS and authentication contracts. npm/NuGet registry uploads remain separate from GitHub/package publication. Both Rust names are available from crates.io; the unified entry re-exports the original `metrics233 = 0.1.0` transport and adds no second implementation.
 
 All SDKs are inert on construction. Explicitly start periodic delivery if needed and await flush/shutdown. Counter increments are cumulative, Gauge keeps the latest value, queues and payloads are bounded, and unacknowledged batches retain their timestamps. Uptime is a number, and process CPU explicitly uses one-core percent instead of being confused with whole-host usage.
 

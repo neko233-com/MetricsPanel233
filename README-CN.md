@@ -81,10 +81,11 @@ UI 嵌入单个可执行文件。公网使用 HTTPS 代理、loopback 监听和�
 
 ## SDK 安装与使用
 
-原 Rust 传输库可以从 crates.io 正式安装：
+统一命名的 Rust SDK 已可从 crates.io 正式安装（Rust 1.88+）：
 
 ```sh
-cargo add metrics233@0.1.0
+cargo add metrics233-client-sdk-rust@0.1.0
+cargo add tokio --features rt-multi-thread,macros
 ```
 
 统一命名的 SDK 使用各自仓库与版本化 GitHub 安装包。Rust 也可直接使用固定 Git 版本：
@@ -93,7 +94,7 @@ cargo add metrics233@0.1.0
 cargo add metrics233-client-sdk-rust --git https://github.com/neko233-com/metrics233-client-sdk-rust.git --tag v0.1.0
 ```
 
-TypeScript 的 `.tgz` 可用 `npm install <安装包文件或URL>`；C# 的 `Metrics233.Client.0.1.0.nupkg` 可放入本地 NuGet 源安装。用法、容量和鉴权边界见各 SDK README。GitHub 安装包与 npm/NuGet/crates.io 上架分别验收；新 Rust 别名包当前仍需要有效的注册表发布凭据。
+TypeScript 的 `.tgz` 可用 `npm install <安装包文件或URL>`；C# 的 `Metrics233.Client.0.1.0.nupkg` 可放入本地 NuGet 源安装。用法、容量和鉴权边界见各 SDK README。npm/NuGet 上架与 GitHub 安装包分别验收。两个 Rust 包名现均可从 crates.io 安装；统一入口固定复用原 `metrics233 = 0.1.0`，没有另一套传输实现。
 
 SDK 构造不联网、不读环境变量、不自动启动任务；需要定时发送时显式启动，退出前等待刷新和关闭。Counter 累加增量，Gauge 保存最新值；队列和请求体有上限，未确认批次保留原时间戳。运行时长用数字展示，进程 CPU 标明“单核占比”，不与整机使用率混淆。
 
