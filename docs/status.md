@@ -1,12 +1,12 @@
 # Delivery evidence
 
-Updated: 2026-10-22. Source, local tests, packages, hosted CI, browser evidence and production deployment are separate acceptance layers.
+Updated: 2026-10-23. Source, local tests, packages, hosted CI, browser evidence and production deployment are separate acceptance layers.
 
 ## Current composition
 
 | Module | Source | Published/runtime boundary |
 | --- | --- | --- |
-| metrics233-server | 4d5df325a8876dbd1da772365f209248a4ce679f | Accepted private 0.2.20 runtime is e5f93cb41065d4d88c5605006cdc64c8edff72dd; the current pin adds acceptance documentation only. |
+| metrics233-server | 6257aaae207bd5d5a54754dc69f5e8f43e3a7cd3 | Accepted private 0.2.21 UI/runtime source is 548ab439f37034e8c5e0f38e1a7f0816bbdd923d. This pin preserves later SQL/transport source and merges the UI acceptance receipt; that separate feature's deployment gate is not inferred from the UI release. |
 | metrics233-lib-go | 4f63688e023bce29b1e6b79c14733e246bc277b6 | Go SDK release 0.1.0; real game reporting remains active. |
 | metrics-lib-rust | 3a58fff2901e001984b45791fb884d23e3d8f9b7 | Official crates.io metrics233 0.1.0 is available; this pin only updates its guidance. |
 | metrics233-client-sdk-typescript | 152ee85e628cca8a3126cc61b2bb9593c062a1ba | GitHub v0.1.0 plus installable tgz; npm registry upload is separate. |
@@ -15,6 +15,7 @@ Updated: 2026-10-22. Source, local tests, packages, hosted CI, browser evidence 
 
 ## Accepted online behavior
 
+- Private 0.2.21 passed complete fixed-source worker tests/vet, 167 frontend units/build, native token/account readiness, cross-platform collector builds, archive and actual-download verification, then the exact production deployment. Edge verified the six actual reporting identities, the redesigned directory and physical-host/process/business layout, current CPU/memory/disk, decimal MB/GB, browser-local full timestamps/GMT clock, recent-hour trends and SQL multi-sort. Desktop 2514×1234 and 1586×992, plus mobile 390×844, passed the rendered flow and console checks. Concept-to-render fidelity and the explicit functional differences are documented in the child console-redesign contract.
 - Private 0.2.17 cut over 16661384 real samples to embedded XOR/Zstd time series and local Badger/HNSW vectors with reopened exact float/count verification, including 40 normalized empty-label series. Independent control/identity/key files remained protected. Active native statistics initially occupied about 42 MB; the stopped legacy control file occupied 588 MB. Retained backups are separate from these active-storage figures.
 - Private 0.2.19 completed the full fixed-source worker gates and exact target deployment. All six real game/gateway identities have explicit physical-host associations. Process CPU/RSS/uptime and the corresponding host CPU/memory/disk queries returned actual observations; five inherited business templates remained intact.
 - Edge displayed the actual intranet instance resource gauges/capacity, last-hour curves and game process resources. The formal game SQL view sorted all 84 eligible rows before Top10; header primary sort, Shift-added secondary sort and the priority editor were exercised on the production page.
